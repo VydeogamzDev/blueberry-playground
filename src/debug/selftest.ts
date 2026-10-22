@@ -11,6 +11,7 @@ import type { Syringe } from '../entities/Syringe';
 import type { Flask } from '../entities/Flask';
 import type { Creature } from '../entities/Creature';
 import type { Entity } from '../world/Entity';
+import type { Part } from '../world/Part';
 import { getItem } from '../catalog/items';
 import { makeTestKit } from './testkit';
 import { saveToString, loadFromString } from '../world/SaveLoad';
@@ -771,6 +772,58 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (!wc || wc.a.entity !== fresh) return 'weld missed a just-spawned crate';
       kit.advance(1);
       if (Math.abs(fresh.parts[0].y - 2) > 0.02) return 'crate welded to the background fell';
+      return true;
+    }],
+    ['extra: contact groups make the same contacts as the filter hook', () => {
+      // a heap of people and dogs, someone holding a rifle firing into it: before
+      // every step, each pair Rapier considers gets the verdict the hook alone would
+      // give, and entities sharing a color are out of each other's reach
+      kit.reset();
+      const world = game.physics.world;
+      const allowed = (a: Part, b: Part) => !(a.group !== 0 && a.group === b.group) && !a.noCollide?.has(b) && !b.noCollide?.has(a);
+      const passes = (g1: number, g2: number) => ((g1 >>> 16) & g2 & 0xffff) !== 0 && ((g2 >>> 16) & g1 & 0xffff) !== 0;
+      const color = (p: Part) => (p.contactGroups >>> 16) & ~0x1f;
+      let wrong = '';
+      let pairs = 0;
+      let shared = 0;
+      const cg = game.contactGroups;
+      const update = cg.update;
+      cg.update = () => {
+        update.call(cg);
+        const parts = game.entities.flatMap((e) => e.parts).filter((p) => !p.destroyed && !p.noCollideAll && !p.onlyStatic);
+        for (const p of parts) for (const c of p.colliders) world.contactPairsWith(c, (o) => {
+          const q = game.physics.partOf(o);
+          if (!q || q === p) return;
+          pairs++;
+          const hooked = ((c.activeHooks() | o.activeHooks()) & 1) !== 0;
+          const now = passes(c.collisionGroups(), o.collisionGroups()) && (!hooked || allowed(p, q));
+          if (now !== allowed(p, q)) wrong ||= `${p.entity.def.id} ${p.name} / ${q.entity.def.id} ${q.name}: ${now ? 'touch' : 'kept apart'}`;
+          if (c.activeHooks() === 0 && o.activeHooks() === 0) wrong ||= `${p.name} / ${q.name}: no hook, Rapier may reuse their contacts`;
+        });
+        for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) {
+          const a = parts[i];
+          const b = parts[j];
+          if (a.group === b.group || !color(a) || color(a) !== color(b) || Math.hypot(a.x - b.x, a.y - b.y) > 3) continue;
+          shared++;
+          for (const c1 of a.colliders) for (const c2 of b.colliders) if (c1.contactCollider(c2, 0.05)) wrong ||= `${a.name} / ${b.name} share a color within reach`;
+        }
+      };
+      try {
+        for (let i = 0; i < 4; i++) kit.spawn('human', -0.4 + (i % 2) * 0.5, 0.4 + i * 0.6, { angle: i * 1.3 });
+        for (let i = 0; i < 2; i++) kit.spawn('dog', -0.2 + i * 0.4, 3.5 + i * 0.7);
+        const shooter = human(-4);
+        kit.advance(0.5);
+        const g = arm(shooter);
+        if (!g) return 'the shooter did not take the rifle';
+        for (let i = 0; i < 12; i++) {
+          g.fire();
+          kit.advance(0.25);
+        }
+      } finally {
+        cg.update = update;
+      }
+      if (wrong) return wrong;
+      if (pairs < 1000 || shared < 100) return `checked too little: ${pairs} pairs, ${shared} same-color part pairs nearby`;
       return true;
     }],
     ['extra: undo and redo: spawn, rope, delete, freeze and move', () => {

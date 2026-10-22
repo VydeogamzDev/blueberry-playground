@@ -46,14 +46,20 @@ export const GROUP = {
   DYNAMIC: 1 << 1,
   DEBRIS: 1 << 2,
   NOCOLLIDE: 1 << 3,
+  /** Dynamic parts that have no color (see systems/ContactGroups). */
+  PLAIN: 1 << 4,
 } as const;
 
+/** The bits left over, handed out as colors by systems/ContactGroups. */
+export const COLOR_SHIFT = 5;
+export const COLOR_BITS = 0xffff & ~((1 << COLOR_SHIFT) - 1);
+
 export function groups(membership: number, filter: number): number {
-  return ((membership & 0xffff) << 16) | (filter & 0xffff);
+  return (((membership & 0xffff) << 16) | (filter & 0xffff)) >>> 0;
 }
 
 export const GROUPS_STATIC = groups(GROUP.STATIC, GROUP.DYNAMIC | GROUP.DEBRIS | GROUP.NOCOLLIDE);
-export const GROUPS_DYNAMIC = groups(GROUP.DYNAMIC, GROUP.STATIC | GROUP.DYNAMIC | GROUP.DEBRIS);
+export const GROUPS_DYNAMIC = groups(GROUP.DYNAMIC | GROUP.PLAIN, GROUP.STATIC | GROUP.DYNAMIC | GROUP.DEBRIS);
 /** Debris (gibs, shells) collides with the world and objects but not other debris. */
 export const GROUPS_DEBRIS = groups(GROUP.DEBRIS, GROUP.STATIC | GROUP.DYNAMIC);
 /** "No collide" objects only touch the static environment. */

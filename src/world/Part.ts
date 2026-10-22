@@ -85,6 +85,12 @@ export class Part {
   noCollideAll = false;
   /** Touches only the floor and walls, never other things (an animal's tail: it would snag on everything). */
   onlyStatic = false;
+  /** How far (m) its colliders reach from the body's origin. */
+  reach = 0;
+  /** The collision groups and hooks last set on its colliders, and on how many (see ContactGroups). */
+  contactGroups = GROUPS_DYNAMIC;
+  contactHook = RAPIER.ActiveHooks.FILTER_CONTACT_PAIRS;
+  contactN = 0;
 
   // interpolation state (meters / radians)
   x = 0;
@@ -154,6 +160,7 @@ export class Part {
     // Rapier derives the mass of rounded shapes from the inner (un-rounded) shape,
     // so scale density to make mass match the full visible area.
     let densityScale = 1;
+    const off = Math.hypot(s.kind === 'poly' ? 0 : s.x ?? 0, s.kind === 'poly' ? 0 : s.y ?? 0) * PX;
     switch (s.kind) {
       case 'box': {
         const r = Math.min(s.r ?? 0, Math.min(s.w, s.h) / 2 - 0.05) * PX;
@@ -161,16 +168,19 @@ export class Part {
         const hy = (s.h * PX) / 2 - r;
         if (r > 0) densityScale = (s.w * PX * s.h * PX) / Math.max(1e-6, 4 * hx * hy);
         desc = r > 0 ? RAPIER.ColliderDesc.roundCuboid(hx, hy, r) : RAPIER.ColliderDesc.cuboid(hx, hy);
+        this.reach = Math.max(this.reach, off + (Math.hypot(s.w, s.h) * PX) / 2);
         desc.setTranslation((s.x ?? 0) * PX * f, (s.y ?? 0) * PX).setRotation((s.angle ?? 0) * f);
         break;
       }
       case 'ball':
         desc = RAPIER.ColliderDesc.ball(s.r * PX).setTranslation((s.x ?? 0) * PX * f, (s.y ?? 0) * PX);
+        this.reach = Math.max(this.reach, off + s.r * PX);
         break;
       case 'capsule':
         desc = RAPIER.ColliderDesc.capsule(s.halfH * PX, s.r * PX)
           .setTranslation((s.x ?? 0) * PX * f, (s.y ?? 0) * PX)
           .setRotation((s.angle ?? 0) * f);
+        this.reach = Math.max(this.reach, off + (s.halfH + s.r) * PX);
         break;
       case 'poly': {
         const pts = new Float32Array(s.pts.length * 2);
@@ -179,6 +189,7 @@ export class Part {
           pts[i * 2 + 1] = p[1] * PX;
         });
         desc = s.r ? RAPIER.ColliderDesc.roundConvexHull(pts, s.r * PX) : RAPIER.ColliderDesc.convexHull(pts);
+        for (const p of s.pts) this.reach = Math.max(this.reach, (Math.hypot(p[0], p[1]) + (s.r ?? 0)) * PX);
         if (s.r) {
           let area = 0;
           let perim = 0;
@@ -414,11 +425,13 @@ export class Part {
 
   setNoCollideAll(on: boolean): void {
     this.noCollideAll = on;
-    for (const c of this.colliders) c.setCollisionGroups(on || this.onlyStatic ? GROUPS_NOCOLLIDE : GROUPS_DYNAMIC);
+    this.contactGroups = on || this.onlyStatic ? GROUPS_NOCOLLIDE : GROUPS_DYNAMIC;
+    for (const c of this.colliders) c.setCollisionGroups(this.contactGroups);
   }
 
   setOnlyStatic(): void {
     this.onlyStatic = true;
+    this.contactGroups = GROUPS_NOCOLLIDE;
     for (const c of this.colliders) c.setCollisionGroups(GROUPS_NOCOLLIDE);
   }
 

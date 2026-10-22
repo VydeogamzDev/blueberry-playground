@@ -11,6 +11,7 @@ import { Explosions } from '../systems/Explosions';
 import { Connections } from '../systems/Connections';
 import { Fire } from '../systems/Fire';
 import { Puddles } from '../systems/Puddles';
+import { ContactGroups } from '../systems/ContactGroups';
 import type { Entity } from './Entity';
 import type { Part } from './Part';
 import type { ItemDef, SpawnOptions } from './types';
@@ -35,6 +36,7 @@ export class Game {
   readonly projectiles: Projectiles;
   readonly explosions: Explosions;
   readonly connections: Connections;
+  readonly contactGroups: ContactGroups;
   readonly fire: Fire;
 
   readonly entities: Entity[] = [];
@@ -88,6 +90,7 @@ export class Game {
     this.projectiles = new Projectiles(this);
     this.explosions = new Explosions(this);
     this.connections = new Connections(this);
+    this.contactGroups = new ContactGroups(this);
     this.fire = new Fire(this);
     this.sound.panFor = (x) => {
       const r = this.renderer;
@@ -416,6 +419,8 @@ export class Game {
     this.connections.preStep(dt);
     lap?.('step: control');
     wakeSettled(this);
+    this.contactGroups.update();
+    lap?.('step: groups');
     this.physics.step();
     resleepSettled(this);
     lap?.('step: physics');

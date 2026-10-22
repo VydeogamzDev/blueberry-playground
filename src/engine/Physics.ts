@@ -47,6 +47,7 @@ export class Physics {
         const p2 = map.get(c2);
         if (!p1 || !p2) return COMPUTE;
         // parts sharing a non-zero group (e.g. the limbs of one ragdoll) never touch
+        // (mostly kept apart by collision groups before this is asked: see ContactGroups)
         if (p1.group !== 0 && p1.group === p2.group) return null;
         if (p1.noCollide !== null && p1.noCollide.has(p2)) return null;
         if (p2.noCollide !== null && p2.noCollide.has(p1)) return null;

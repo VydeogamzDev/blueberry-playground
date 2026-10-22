@@ -24,7 +24,9 @@ const seed = process.env.SEED ? Number(process.env.SEED) >>> 0 : null;
 let exitCode = 1;
 let page;
 try {
-  page = await openGame({ still: seed !== null });
+  // the bench times the CPU: headless Chrome draws in software, and a full-size
+  // window's drawing slows the physics steps beside it (by up to half)
+  page = await openGame({ still: seed !== null, ...(benchMode ? { width: 320, height: 200 } : {}) });
   const { evaluate, errors } = page;
 
   if (seed !== null) {
