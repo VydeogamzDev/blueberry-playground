@@ -25,12 +25,13 @@ export interface Snapshot {
   connections: SavedConnection[];
 }
 
-export function capture(game: Game, list: Entity[]): Snapshot {
+/** `paint`: keep painted sprites too (in memory only: see PartState.paint). */
+export function capture(game: Game, list: Entity[], paint = false): Snapshot {
   const ents = list.filter((e) => !e.destroyed);
   const index = new Map(ents.map((e, i) => [e, i]));
   const ref = (e: Entity) => index.get(e) ?? -1;
   const entities = ents.map((e) => {
-    const s = e.serialize();
+    const s = e.serialize(paint);
     const links = e.serializeLinks(ref);
     return links ? { ...s, links } : s;
   });

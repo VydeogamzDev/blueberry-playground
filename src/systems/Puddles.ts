@@ -34,6 +34,15 @@ const KINDS: Record<number, Kind> = {
 
 const ACID_SCAR = 0x4d5a1f;
 
+/** Puddles as captured for undo: the floor cells from lo to hi. */
+export interface PuddleState {
+  lo: number;
+  hi: number;
+  h: Float32Array;
+  kind: Uint8Array;
+  burn: Float32Array;
+}
+
 /**
  * Liquid lying on the floor. Drops that land on the floor pool up, run out level,
  * and slowly evaporate. Water in a puddle puts out whatever burns in it, acid eats
@@ -133,6 +142,23 @@ export class Puddles {
     this.lo = N;
     this.hi = -1;
     this.dirty = true;
+  }
+
+  /** The puddles as they are now. */
+  capture(): PuddleState {
+    const { lo, hi } = this;
+    return { lo, hi, h: this.h.slice(lo, hi + 1), kind: this.kind.slice(lo, hi + 1), burn: this.burn.slice(lo, hi + 1) };
+  }
+
+  /** Puts the puddles back as captured. */
+  restore(s: PuddleState): void {
+    this.clear();
+    if (s.hi < s.lo) return;
+    this.h.set(s.h, s.lo);
+    this.kind.set(s.kind, s.lo);
+    this.burn.set(s.burn, s.lo);
+    this.lo = s.lo;
+    this.hi = s.hi;
   }
 
   step(dt: number): void {

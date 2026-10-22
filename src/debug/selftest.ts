@@ -16,6 +16,7 @@ import { getItem } from '../catalog/items';
 import { makeTestKit } from './testkit';
 import { saveToString, loadFromString } from '../world/SaveLoad';
 import { COARSE_DT, FIXED_DT, PX } from '../engine/constants';
+import { Liquid } from '../systems/Liquids';
 
 interface Result {
   name: string;
@@ -873,6 +874,44 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (Math.abs(back.x) > 0.05 || Math.abs(back.y - 0.45) > 0.05 || !back.frozen) return `undoing the move left it at ${back.x.toFixed(2)}, ${back.y.toFixed(2)}${back.frozen ? '' : ', thawed'}`;
       controls.undo();
       if (game.entities[0].parts[0].frozen) return 'undoing the freeze left it frozen';
+      return true;
+    }],
+    ['extra: undo brings back wounds, fire, stains and puddles', () => {
+      kit.reset();
+      const h = human(0);
+      const crate = kit.spawn('crate', 3, 0.45);
+      kit.advance(1);
+      const g = kit.spawn('pistol', -2.5, h.limbs.get('head')!.part.y + 0.03) as Firearm;
+      g.setFrozen(true);
+      kit.advance(0.05);
+      g.fire();
+      kit.advance(1.5);
+      const box = crate.parts[0];
+      box.oil = 0.5;
+      game.fire.ignite(box, 0.8);
+      game.puddles.add(Liquid.Water, -3, 30);
+      kit.advance(0.5);
+      const painted = (e: Entity) => e.parts.filter((p) => !p.destroyed && p.paintData()).length;
+      const scene = () => {
+        const c = game.entities.find((e) => e.def.id === 'crate')!.parts[0];
+        const man = game.entities.find((e) => e.def.id === 'human');
+        return { wounds: man ? painted(man) : 0, burning: c.burning, charred: c.charred, oil: c.oil, stains: game.stains.capture().n, puddle: game.puddles.total };
+      };
+      const before = scene();
+      if (!before.wounds || !before.stains || before.burning < 0.1 || before.charred <= 0 || before.puddle < 20) return `no scene to undo to: ${JSON.stringify(before)}`;
+      controls.history.record('Reset');
+      game.resetEnvironment();
+      kit.spawn('crate', 3, 0.45);
+      controls.undo();
+      const after = scene();
+      const off = (k: keyof typeof before, tol: number) => Math.abs(after[k] - before[k]) > tol;
+      if (off('wounds', 0) || off('stains', 0) || off('burning', 0.01) || off('charred', 0.01) || off('oil', 0.01) || off('puddle', 0.01)) {
+        return `undo gave ${JSON.stringify(after)}, was ${JSON.stringify(before)}`;
+      }
+      kit.advance(0.5);
+      if (!game.fire.count) return 'the restored crate does not burn';
+      controls.redo();
+      if (game.stains.capture().n || game.puddles.total || game.fire.count) return 'redo did not clear the stains, puddle and fire again';
       return true;
     }],
     ['extra: puddles: pool and spread, put out, burn, corrode', () => {

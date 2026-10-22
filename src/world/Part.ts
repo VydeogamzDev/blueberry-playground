@@ -61,6 +61,8 @@ export class Part {
   private region: Region;
   private ownsImage = false;
   private texDirty = false;
+  /** A copy of the painted image as it is now, shared by every capture until it's painted again. */
+  private paintCopy: Uint8Array | null = null;
   private readonly sprites: Sprites;
 
   // gameplay state
@@ -361,7 +363,21 @@ export class Part {
       this.ownsImage = true;
     }
     this.texDirty = true;
+    this.paintCopy = null;
     return this.image;
+  }
+
+  /** The sprite as painted (wounds, blood, scorch), or null while it's the plain art. Don't modify it. */
+  paintData(): Uint8Array | null {
+    if (!this.ownsImage) return null;
+    return (this.paintCopy ??= this.image.slice());
+  }
+
+  /** Puts back a sprite from paintData() (of a part with the same art). */
+  restorePaint(img: Uint8Array): void {
+    if (img.length !== this.image.length) return;
+    this.ownImage().set(img);
+    this.paintCopy = img;
   }
 
   /** Paints one art pixel (only where the sprite is solid), blended by alpha. */

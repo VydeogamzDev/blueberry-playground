@@ -1,5 +1,7 @@
 import type { Game } from './Game';
 import { capture, instantiate, type Snapshot } from './Snapshot';
+import type { StainState } from '../systems/Particles';
+import type { PuddleState } from '../systems/Puddles';
 
 /** How many edits can be undone. */
 const LIMIT = 40;
@@ -7,12 +9,15 @@ const LIMIT = 40;
 interface Entry {
   label: string;
   snap: Snapshot;
+  stains: StainState;
+  puddles: PuddleState;
 }
 
 /**
  * Undo/redo for the player's edits (spawning, deleting, connecting, freezing,
  * flipping, ...): before each one the whole scene is captured, and undoing puts
- * it back as it was at that moment. Stains, puddles and fire are not part of it.
+ * it back as it was at that moment: wounds, fire, stains and puddles included.
+ * Only things in flight (particles, bullets) are not part of it.
  */
 export class History {
   private past: Entry[] = [];
@@ -22,7 +27,7 @@ export class History {
 
   /** Call just before an edit; `label` names it ("Delete", "Spawn Human"). */
   record(label: string): void {
-    this.past.push({ label, snap: capture(this.game, this.game.entities) });
+    this.past.push(this.capture(label));
     if (this.past.length > LIMIT) this.past.shift();
     this.future.length = 0;
   }
@@ -39,8 +44,8 @@ export class History {
   undo(): string | null {
     const e = this.past.pop();
     if (!e) return null;
-    this.future.push({ label: e.label, snap: capture(this.game, this.game.entities) });
-    this.restore(e.snap);
+    this.future.push(this.capture(e.label));
+    this.restore(e);
     return e.label;
   }
 
@@ -48,8 +53,8 @@ export class History {
   redo(): string | null {
     const e = this.future.pop();
     if (!e) return null;
-    this.past.push({ label: e.label, snap: capture(this.game, this.game.entities) });
-    this.restore(e.snap);
+    this.past.push(this.capture(e.label));
+    this.restore(e);
     return e.label;
   }
 
@@ -58,8 +63,17 @@ export class History {
     this.future.length = 0;
   }
 
-  private restore(snap: Snapshot): void {
-    this.game.clearAll();
-    instantiate(this.game, snap);
+  private capture(label: string): Entry {
+    const g = this.game;
+    return { label, snap: capture(g, g.entities, true), stains: g.stains.capture(), puddles: g.puddles.capture() };
+  }
+
+  private restore(e: Entry): void {
+    const g = this.game;
+    g.clearAll();
+    g.fire.clear();
+    instantiate(g, e.snap);
+    g.stains.restore(e.stains);
+    g.puddles.restore(e.puddles);
   }
 }

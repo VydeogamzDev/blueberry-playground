@@ -91,6 +91,12 @@ export interface PartState {
   av: number;
   frozen: boolean;
   hp: number;
+  /** Fire, char and soaked-in oil (0..1), when any. */
+  burn?: number;
+  char?: number;
+  oil?: number;
+  /** The sprite as painted by wounds and scorching, when it is (undo history only: not JSON). */
+  paint?: Uint8Array;
 }
 
 export interface EntityState {

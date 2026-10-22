@@ -1,7 +1,7 @@
 import { RAPIER } from '../engine/Physics';
 import { Part, type PartSpec } from './Part';
 import type { Game } from './Game';
-import type { BulletHit, ContextAction, DamageKind, EntityState, ImpactInfo, ItemDef } from './types';
+import type { BulletHit, ContextAction, DamageKind, EntityState, ImpactInfo, ItemDef, PartState } from './types';
 import type { V2 } from '../engine/math';
 
 /** Base class for everything that can be spawned into the sandbox. */
@@ -206,7 +206,8 @@ export abstract class Entity {
     }
   }
 
-  serialize(): EntityState {
+  /** `paint`: keep painted sprites too (see PartState.paint). */
+  serialize(paint = false): EntityState {
     return {
       def: this.def.id,
       flip: this.flipped,
@@ -214,7 +215,13 @@ export abstract class Entity {
         if (p.destroyed) return { x: 0, y: 0, a: 0, vx: 0, vy: 0, av: 0, frozen: false, hp: -1 };
         const t = p.body.translation();
         const v = p.body.linvel();
-        return { x: t.x, y: t.y, a: p.body.rotation(), vx: v.x, vy: v.y, av: p.body.angvel(), frozen: p.frozen, hp: p.hp };
+        const s: PartState = { x: t.x, y: t.y, a: p.body.rotation(), vx: v.x, vy: v.y, av: p.body.angvel(), frozen: p.frozen, hp: p.hp };
+        if (p.burning > 0) s.burn = p.burning;
+        if (p.charred > 0) s.char = p.charred;
+        if (p.oil > 0) s.oil = p.oil;
+        const img = paint ? p.paintData() : null;
+        if (img) s.paint = img;
+        return s;
       }),
       extra: this.serializeExtra(),
     };
@@ -236,9 +243,17 @@ export abstract class Entity {
       p.body.setLinvel({ x: ps.vx, y: ps.vy }, true);
       p.body.setAngvel(ps.av, true);
       p.hp = ps.hp;
+      p.charred = ps.char ?? 0;
+      p.oil = ps.oil ?? 0;
+      if (ps.burn) this.game.fire.ignite(p, ps.burn);
       if (ps.frozen) p.setFrozen(true);
     });
     if (s.extra) this.restoreExtra(s.extra);
+    // after the extra state, which may change a part's art (a lamp turned on)
+    s.parts.forEach((ps, i) => {
+      const p = this.parts[i];
+      if (p && !p.destroyed && ps.paint) p.restorePaint(ps.paint);
+    });
   }
 
   protected restoreExtra(_extra: Record<string, unknown>): void {}
