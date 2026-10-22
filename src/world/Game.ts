@@ -60,8 +60,8 @@ export class Game {
   private pickT = 0;
   /** How long (s) the short step must look affordable before going back to it (see pickStep()). */
   private backAfter = BACK_AFTER;
-  /** Real time (s) on the short step since last going back to it. */
-  private fineT = 0;
+  /** Real time (s) on the short step since a heavy scene last went back to it (Infinity: it hasn't). */
+  private fineT = Infinity;
   private acc = 0;
   private restTick = -1;
   /** Groups of parts put to sleep together by settle(). */
@@ -363,7 +363,7 @@ export class Game {
     if (this.pickT < (coarse ? this.backAfter : 1)) return;
     this.pickT = 0;
     if (!coarse) this.backAfter = this.fineT < 10 ? Math.min(16, this.backAfter * 2) : BACK_AFTER;
-    this.fineT = 0;
+    this.fineT = coarse ? 0 : Infinity;
     this.stepDt = coarse ? FIXED_DT : COARSE_DT;
     this.acc = 0;
   }
@@ -373,7 +373,7 @@ export class Game {
     this.stepDt = FIXED_DT;
     this.pickT = 0;
     this.backAfter = BACK_AFTER;
-    this.fineT = 0;
+    this.fineT = Infinity;
     this.rateAvg = this.simRate = this.timeScale;
   }
 
