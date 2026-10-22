@@ -970,7 +970,7 @@ export class Human extends Entity implements Holder {
       this.climbWait = true;
       this.speed = 0;
       return;
-    } else if (speed && (look ? this.blockedAhead() || this.dropAhead() > 0.35 : this.cornered)) {
+    } else if (speed && (look ? this.blockedAhead() || this.dropAhead() > 0.35 || this.cliffAhead(Math.abs(speed)) : this.cornered)) {
       this.pacing = 0;
       // something in the way, or a drop: stop short of it (running scared, keep looking for a way)
       this.blocked = this.f;
@@ -1131,6 +1131,18 @@ export class Human extends Entity implements Holder {
     if (g === null) return 0;
     const ahead = this.probe(this.L('upperTorso').part.x + this.f * 0.45, g + 0.3, 0, -1, 3);
     return (ahead ? ahead.d : 3) - 0.3;
+  }
+
+  /**
+   * A drop too high to climb down from, close enough that they need to stop for
+   * it now: the legs take a moment to wind down, so the faster they go, the
+   * farther ahead (dropAhead() only sees as far as the next stride).
+   */
+  private cliffAhead(speed: number): boolean {
+    const g = this.groundUnder();
+    if (g === null) return false;
+    const ahead = this.probe(this.L('upperTorso').part.x + this.f * (0.45 + speed * 0.35), g + 0.3, 0, -1, CLIMB.down + 0.6);
+    return !ahead || ahead.d - 0.3 > CLIMB.down;
   }
 
   /**
