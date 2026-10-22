@@ -23,6 +23,7 @@ export function makeTestKit(game: Game, controls: Controls) {
       game.resetEnvironment();
       controls.clearSelection();
       controls.arm(null);
+      controls.history.clear();
       game.paused = false;
       game.timeScale = 1;
     },

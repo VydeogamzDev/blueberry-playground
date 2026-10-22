@@ -10,6 +10,8 @@ const ICONS: Record<string, string> = {
   play: '<svg viewBox="0 0 16 16"><path d="M5 3l8 5-8 5z"/></svg>',
   step: '<svg viewBox="0 0 16 16"><path d="M3 3l7 5-7 5z"/><rect x="11" y="3" width="2" height="10"/></svg>',
   slow: '<svg viewBox="0 0 16 16"><path d="M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zm0 2v4l3 2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  undo: '<svg viewBox="0 0 16 16"><path d="M5 3L2 6l3 3M2.5 6H10a3.5 3.5 0 0 1 0 7H6" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  redo: '<svg viewBox="0 0 16 16"><path d="M11 3l3 3-3 3M13.5 6H6a3.5 3.5 0 0 0 0 7h4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
   clear: '<svg viewBox="0 0 16 16"><path d="M3 4h10M6 4V2h4v2M4 4l1 10h6l1-10" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
   reset: '<svg viewBox="0 0 16 16"><path d="M3 8a5 5 0 1 0 1.5-3.5M3 2v3h3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
   save: '<svg viewBox="0 0 16 16"><path d="M3 2h8l2 2v10H3zM5 2v4h5V2M5 10h6" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>',
@@ -41,6 +43,7 @@ const HELP: [string, string][] = [
   ['Ctrl+D', 'Duplicate'],
   ['Ctrl+C / Ctrl+V', 'Copy / paste at cursor'],
   ['Ctrl+A', 'Select all'],
+  ['Ctrl+Z / Ctrl+Y', 'Undo / redo (Ctrl+Shift+Z also redoes)'],
   ['Space', 'Pause / resume'],
   ['. (period)', 'Step one physics tick'],
   ['T', 'Toggle slow motion'],
@@ -95,6 +98,8 @@ export class UI implements UIBridge {
   private toastTimer = 0;
   private btnPause!: HTMLButtonElement;
   private btnSlow!: HTMLButtonElement;
+  private btnUndo!: HTMLButtonElement;
+  private btnRedo!: HTMLButtonElement;
   private speedSel!: HTMLSelectElement;
   private catalogOpen = true;
   private touchBar!: HTMLDivElement;
@@ -290,12 +295,16 @@ export class UI implements UIBridge {
     };
     bar.appendChild(this.speedSel);
     bar.appendChild(el('div', 'tb-sep'));
+    this.btnUndo = btn('undo', 'Undo (Ctrl+Z)', () => this.controls.undo());
+    this.btnRedo = btn('redo', 'Redo (Ctrl+Y)', () => this.controls.redo());
     btn('clear', 'Clear all objects', () => {
+      this.controls.history.record('Clear all');
       this.game.clearAll();
       this.controls.clearSelection();
       this.toast('Cleared all objects');
     });
     btn('reset', 'Reset environment (objects, stains, effects)', () => {
+      this.controls.history.record('Reset');
       this.game.resetEnvironment();
       this.controls.clearSelection();
       this.game.renderer.camX = 0;
@@ -486,7 +495,9 @@ export class UI implements UIBridge {
         const file = f.files?.[0];
         if (!file) return;
         try {
-          loadFromString(this.game, await file.text());
+          const text = await file.text();
+          this.controls.history.record('Import scene');
+          loadFromString(this.game, text);
           this.controls.clearSelection();
           this.toast('Scene imported');
         } catch (err) {
@@ -528,6 +539,7 @@ export class UI implements UIBridge {
       return;
     }
     try {
+      this.controls.history.record('Load');
       loadFromString(this.game, data);
       this.controls.clearSelection();
       this.toast('Scene loaded');
@@ -597,6 +609,9 @@ export class UI implements UIBridge {
         (g.paused ? ' · PAUSED' : '') + (g.timeScale !== 1 ? ` · ${g.timeScale}×` : '') +
         (heavy ? ` · heavy scene: ${heavy}` : '');
     } else this.status.textContent = '';
+    const hist = this.controls.history;
+    this.btnUndo.disabled = !hist.canUndo;
+    this.btnRedo.disabled = !hist.canRedo;
     const targets = this.controls.touchMode ? this.controls.touchTargets() : [];
     this.touchBar.classList.toggle('hidden', !targets.length);
     if (targets.length) {

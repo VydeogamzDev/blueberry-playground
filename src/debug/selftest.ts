@@ -773,6 +773,55 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (Math.abs(fresh.parts[0].y - 2) > 0.02) return 'crate welded to the background fell';
       return true;
     }],
+    ['extra: undo and redo: spawn, rope, delete, freeze and move', () => {
+      kit.reset();
+      const ids = () => game.entities.map((e) => e.def.id).join(',');
+      const ropes = () => game.connections.list.filter((c) => c.kind === 'rope').length;
+      // two crates spawned by clicking, a rope between them, then one deleted
+      controls.arm(getItem('crate')!);
+      for (const x of [-1.5, 1.5]) {
+        kit.down(x, 0.5);
+        kit.up(x, 0.5);
+      }
+      controls.arm(null);
+      kit.advance(1);
+      if (ids() !== 'crate,crate') return `spawned ${ids()}`;
+      const [a, b] = game.entities.map((e) => e.parts[0]);
+      controls.arm(getItem('tool-rope')!);
+      kit.down(a.x, a.y);
+      kit.move(b.x, b.y);
+      kit.up(b.x, b.y);
+      controls.arm(null);
+      if (ropes() !== 1) return `${ropes()} ropes after roping`;
+      controls.deleteEntities([a.entity]);
+      if (ids() !== 'crate' || ropes()) return `after deleting: ${ids()}, ${ropes()} ropes`;
+      controls.undo();
+      if (ids() !== 'crate,crate' || ropes() !== 1) return `undoing the delete gave ${ids()}, ${ropes()} ropes`;
+      controls.undo();
+      if (ids() !== 'crate,crate' || ropes()) return `undoing the rope gave ${ids()}, ${ropes()} ropes`;
+      controls.redo();
+      if (ropes() !== 1) return 'redo did not bring the rope back';
+      controls.undo();
+      controls.undo();
+      controls.undo();
+      if (game.entities.length) return `${game.entities.length} left after undoing both spawns`;
+      if (controls.history.canUndo) return 'something still to undo';
+      // a frozen crate moved by hand goes back, then thaws
+      kit.reset();
+      kit.spawn('crate', 0, 0.45);
+      kit.advance(1);
+      controls.toggleFreeze([...game.entities]);
+      const c = game.entities[0].parts[0];
+      kit.drag(c.x, c.y, c.x + 2, c.y + 1.5, 0.3, 0.1);
+      const moved = game.entities[0].parts[0];
+      if (Math.abs(moved.x - 2) > 0.05) return `frozen crate not moved (x ${moved.x.toFixed(2)})`;
+      controls.undo();
+      const back = game.entities[0].parts[0];
+      if (Math.abs(back.x) > 0.05 || Math.abs(back.y - 0.45) > 0.05 || !back.frozen) return `undoing the move left it at ${back.x.toFixed(2)}, ${back.y.toFixed(2)}${back.frozen ? '' : ', thawed'}`;
+      controls.undo();
+      if (game.entities[0].parts[0].frozen) return 'undoing the freeze left it frozen';
+      return true;
+    }],
     ['extra: puddles: pool and spread, put out, burn, corrode', () => {
       const pour = (id: string, x: number) => {
         const f = kit.spawn(id, x, 1.8, { angle: Math.PI }) as Flask;

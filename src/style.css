@@ -247,6 +247,15 @@ canvas.cat-icon,
   background: #2e3237;
 }
 
+.tb-btn:disabled {
+  cursor: default;
+  background: transparent;
+}
+
+.tb-btn:disabled svg {
+  opacity: 0.35;
+}
+
 .tb-btn.on {
   background: #3a3423;
 }

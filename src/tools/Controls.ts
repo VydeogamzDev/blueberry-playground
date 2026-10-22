@@ -8,6 +8,7 @@ import type { Entity } from '../world/Entity';
 import type { Part } from '../world/Part';
 import type { ContextAction, ItemDef } from '../world/types';
 import { capture, instantiate, type Snapshot } from '../world/Snapshot';
+import { History } from '../world/History';
 import type { ConnKind } from '../systems/Connections';
 
 export interface UIBridge {
@@ -35,7 +36,14 @@ interface Grab {
   savedDamping: number;
   /** Where the hand holding it is (it follows the cursor, see preStep()). */
   at: V2;
+  /** A frozen object moved by hand: recorded for undo once it first moves. */
+  moved?: boolean;
 }
+
+/** What undo calls each connection tool's edit. */
+const CONN_LABEL: Record<ConnKind, string> = {
+  rope: 'Rope', weld: 'Weld', spring: 'Spring', hinge: 'Hinge', pin: 'Pin', wire: 'Wire',
+};
 
 /**
  * Drag spring tuning (stiffness per kg, damping as a fraction of stiffness), and
@@ -54,6 +62,8 @@ const PRESS_SLOP = 10;
 export class Controls {
   private game: Game;
   ui!: UIBridge;
+  /** Undo/redo of the player's edits. */
+  readonly history: History;
   sx = 0;
   sy = 0;
   wx = 0;
@@ -90,6 +100,7 @@ export class Controls {
 
   constructor(game: Game, canvas: HTMLCanvasElement) {
     this.game = game;
+    this.history = new History(game);
     this.boxEl = document.createElement('div');
     this.boxEl.className = 'select-box';
     document.body.appendChild(this.boxEl);
@@ -447,11 +458,15 @@ export class Controls {
       const ny = ty + g.offset.y;
       const dx = nx - g.part.x;
       const dy = ny - g.part.y;
+      const rot = this.rotateInput();
+      if (!g.moved && (rot !== 0 || Math.abs(dx) + Math.abs(dy) > 1e-5)) {
+        g.moved = true;
+        this.history.record('Move');
+      }
       if (Math.abs(dx) + Math.abs(dy) > 1e-5) {
         if (ent.frozen) ent.translate(dx, dy);
         else g.part.teleport(nx, ny, g.part.body.rotation());
       }
-      const rot = this.rotateInput();
       if (rot !== 0) {
         const c = g.part.body.translation();
         if (ent.frozen) ent.rotateAbout(c.x, c.y, rot * 0.025);
@@ -495,6 +510,7 @@ export class Controls {
           return Math.hypot(pa.x - this.wx, pa.y - this.wy) < 0.3;
         });
         const list = near.length ? near : conns;
+        if (list.length) this.history.record('Remove connections');
         for (const c of list) this.game.connections.remove(c);
         if (list.length) this.game.sound.snap(this.wx);
       }
@@ -505,6 +521,7 @@ export class Controls {
       return;
     }
     if (tool === 'pin') {
+      this.history.record('Pin');
       this.game.connections.create('pin', part, { x: this.wx, y: this.wy }, null, { x: this.wx, y: this.wy });
       this.game.sound.place(this.wx, 'metal');
       return;
@@ -528,13 +545,16 @@ export class Controls {
       if (tool === 'weld' || tool === 'hinge') {
         // joins whatever overlaps the start point, else fixes it to the background there
         const under = this.game.pick(c.wx, c.wy, 0, (p) => p !== c.part && !p.entity.parts.includes(c.part));
+        this.history.record(CONN_LABEL[tool]);
         this.game.connections.create(tool, c.part, { x: c.wx, y: c.wy }, under ?? null, { x: c.wx, y: c.wy });
         this.game.sound.place(c.wx, 'metal');
         return;
       }
       if (moved < 0.05) return;
+      this.history.record(CONN_LABEL[tool]);
       this.game.connections.create(tool, c.part, { x: c.wx, y: c.wy }, null, { x: this.wx, y: this.wy });
     } else {
+      this.history.record(CONN_LABEL[tool]);
       this.game.connections.create(tool, c.part, { x: c.wx, y: c.wy }, target, { x: this.wx, y: this.wy });
     }
     this.game.sound.place(this.wx, tool === 'rope' || tool === 'wire' ? 'wood' : 'metal');
@@ -547,6 +567,7 @@ export class Controls {
     if (!def || !def.create) return;
     const hh = def.halfHeight ?? 0.3;
     const y = Math.max(this.wy, WORLD.floor + hh * Math.abs(Math.cos(this.spawnAngle)) + 0.01);
+    this.history.record(`Spawn ${def.name}`);
     const e = this.game.spawn(def, this.wx, y, { angle: this.spawnAngle, flip: this.spawnFlip });
     if (e) this.game.sound.place(this.wx, e.parts[0]?.mat.sound ?? 'wood');
   }
@@ -580,6 +601,7 @@ export class Controls {
   }
 
   deleteEntities(list: Entity[]): void {
+    if (list.length) this.history.record(list.length > 1 ? `Delete ${list.length} objects` : 'Delete');
     for (const e of list) this.game.remove(e);
     this.refreshOutlines();
   }
@@ -587,6 +609,7 @@ export class Controls {
   toggleFreeze(list: Entity[]): void {
     if (!list.length) return;
     const freeze = !list.every((e) => e.frozen);
+    this.history.record(freeze ? 'Freeze' : 'Unfreeze');
     for (const e of list) e.setFrozen(freeze);
     this.game.sound.click(this.wx, freeze ? 0.5 : 0.65);
   }
@@ -601,6 +624,36 @@ export class Controls {
         }
       }
     }
+  }
+
+  setNoCollide(list: Entity[], on: boolean): void {
+    if (!list.length) return;
+    this.history.record(on ? 'No collide' : 'Collide');
+    for (const e of list) e.setNoCollide(on);
+  }
+
+  /** Undoes the last edit (see History). */
+  undo(): void {
+    this.cancelForHistory();
+    const label = this.history.undo();
+    this.ui.toast(label ? `Undid: ${label}` : 'Nothing to undo');
+    this.ui.refreshToolbar();
+  }
+
+  redo(): void {
+    this.cancelForHistory();
+    const label = this.history.redo();
+    this.ui.toast(label ? `Redid: ${label}` : 'Nothing to redo');
+    this.ui.refreshToolbar();
+  }
+
+  /** Lets go of whatever is in hand: the scene is about to be replaced. */
+  private cancelForHistory(): void {
+    this.endGrab();
+    this.releaseActivation();
+    this.connect = null;
+    this.game.connections.preview = null;
+    this.clearSelection();
   }
 
   releaseActivation(): void {
@@ -644,6 +697,7 @@ export class Controls {
   /** Duplicates keep held items, lodged blades and connections inside the selection. */
   duplicate(list: Entity[]): void {
     if (!list.length) return;
+    this.history.record('Duplicate');
     const made = instantiate(this.game, capture(this.game, this.withAttached(list)), { dx: 0.6, dy: 0.3 });
     this.selection = new Set(made);
     this.refreshOutlines();
@@ -680,6 +734,7 @@ export class Controls {
     cx /= n;
     cy /= n;
     const dy = Math.max(this.wy - cy, WORLD.floor + 0.05 - minY + 0.1);
+    this.history.record('Paste');
     const made = instantiate(this.game, clip, { dx: this.wx - cx, dy });
     this.selection = new Set(made);
     this.refreshOutlines();
@@ -687,6 +742,7 @@ export class Controls {
 
   /** Mirrors the entities as one group (a single entity flips around its center). */
   flip(list: Entity[]): void {
+    if (list.length) this.history.record('Flip');
     const made = this.game.flipEntities(list);
     this.selection = new Set(made);
     this.refreshOutlines();
@@ -694,6 +750,7 @@ export class Controls {
 
   rotateSelection(list: Entity[], angle: number): void {
     if (!list.length) return;
+    this.history.record('Rotate');
     let cx = 0;
     let cy = 0;
     for (const e of list) {
@@ -742,15 +799,21 @@ export class Controls {
     const allFrozen = list.every((x) => x.frozen);
     acts.push({ label: allFrozen ? 'Unfreeze' : 'Freeze', hint: 'Z', action: () => this.toggleFreeze(list) });
     if (!multi && e.parts.length > 1) {
-      acts.push({ label: part.frozen ? `Unfreeze ${part.name.toLowerCase()}` : `Freeze ${part.name.toLowerCase()}`, action: () => part.setFrozen(!part.frozen) });
+      acts.push({ label: part.frozen ? `Unfreeze ${part.name.toLowerCase()}` : `Freeze ${part.name.toLowerCase()}`, action: () => {
+        this.history.record(part.frozen ? 'Unfreeze' : 'Freeze');
+        part.setFrozen(!part.frozen);
+      } });
     }
     const nc = list.every((x) => x.noCollide);
-    acts.push({ label: 'No collide', checked: nc, hint: 'N', action: () => list.forEach((x) => x.setNoCollide(!nc)) });
+    acts.push({ label: 'No collide', checked: nc, hint: 'N', action: () => this.setNoCollide(list, !nc) });
     acts.push({ label: 'Flip', hint: 'R', action: () => this.flip(list) });
     acts.push({ label: 'Duplicate', hint: 'Ctrl+D', action: () => this.duplicate(list) });
     acts.push({ label: 'Copy', hint: 'Ctrl+C', action: () => this.copy(list) });
     const conns = list.flatMap((x) => this.game.connections.connectionsOf(x));
-    if (conns.length) acts.push({ label: `Remove connections (${conns.length})`, action: () => conns.forEach((c) => this.game.connections.remove(c)) });
+    if (conns.length) acts.push({ label: `Remove connections (${conns.length})`, action: () => {
+      this.history.record('Remove connections');
+      conns.forEach((c) => this.game.connections.remove(c));
+    } });
     acts.push({ label: multi ? `Delete ${list.length} objects` : 'Delete', hint: 'Del', danger: true, action: () => this.deleteEntities(list) });
     this.ui.openContextMenu(this.sx, this.sy, multi ? `${list.length} objects` : e.label, acts);
   }
@@ -775,7 +838,11 @@ export class Controls {
     this.keys.add(code);
     const ctrl = e.ctrlKey || e.metaKey;
     if (ctrl) {
-      if (code === 'KeyD') this.duplicate(this.targets());
+      if (code === 'KeyZ') {
+        if (e.shiftKey) this.redo();
+        else this.undo();
+      } else if (code === 'KeyY') this.redo();
+      else if (code === 'KeyD') this.duplicate(this.targets());
       else if (code === 'KeyC') this.copy(this.targets());
       else if (code === 'KeyV') this.paste();
       else if (code === 'KeyA') this.selectAll();
@@ -810,8 +877,7 @@ export class Controls {
         break;
       case 'KeyN': {
         const list = this.targets();
-        const nc = list.every((x) => x.noCollide);
-        list.forEach((x) => x.setNoCollide(!nc));
+        this.setNoCollide(list, !list.every((x) => x.noCollide));
         break;
       }
       case 'KeyR':
