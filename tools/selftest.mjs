@@ -5,6 +5,8 @@
  *   npm test -- liquids      only tests whose name contains "liquids"
  *   SEED=7 npm test          with Math.random seeded, to replay a failure
  *   npm run bench            time crowded scenes instead (npm run bench -- pile: one scene)
+ *   npm run bench -- --live  run 100 people in real time on the graphics card, frames held to
+ *                            a 60 Hz display (--hz=144 for another), and report the speed
  *   npm run mixcheck         measure the sound mix: busy scenes rendered offline, and every sound's level
  *   npm run mixcheck -- --wav  ...and save each scene's mix to mix-renders/<scene>.wav to listen to
  *
@@ -16,6 +18,8 @@ import { openGame } from './browser.mjs';
 
 const args = process.argv.slice(2);
 const benchMode = args.includes('--bench');
+const liveMode = benchMode && args.includes('--live');
+const hz = Number(args.find((a) => a.startsWith('--hz='))?.slice(5) ?? 60);
 const mixMode = args.includes('--mix');
 const wavMode = args.includes('--wav');
 const filter = args.find((a) => !a.startsWith('--')) ?? '';
@@ -26,7 +30,7 @@ let page;
 try {
   // the bench times the CPU: headless Chrome draws in software, and a full-size
   // window's drawing slows the physics steps beside it (by up to half)
-  page = await openGame({ still: seed !== null, ...(benchMode ? { width: 320, height: 200 } : {}) });
+  page = await openGame({ still: seed !== null, ...(liveMode ? { gpu: true, vsync: hz } : benchMode ? { width: 320, height: 200 } : {}) });
   const { evaluate, errors } = page;
 
   if (seed !== null) {
@@ -56,6 +60,17 @@ try {
       const levels = JSON.parse(await evaluate('bp.mixcheck.levels().then((r) => JSON.stringify(r))', 5 * 60 * 1000));
       for (const l of levels) console.log('  ' + pad(l.sound, 22) + pad(l.peak, 8) + l.loud);
     }
+    if (errors.length) console.log(`\nPage errors:\n  ${errors.join('\n  ')}`);
+    exitCode = errors.length ? 1 : 0;
+  } else if (liveMode) {
+    const gpu = await evaluate(`(() => { const gl = bp.game.renderer.gl.getContext(); const x = gl.getExtension('WEBGL_debug_renderer_info'); return x ? gl.getParameter(x.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER); })()`);
+    console.log(`Running crowded scenes in real time on ${gpu}, frames held to ${hz} Hz...\n`);
+    const rows = JSON.parse(await evaluate(`bp.benchLive(${JSON.stringify(filter || 'pile battle')}).then((r) => JSON.stringify(r))`, 15 * 60 * 1000));
+    console.log('Each 3 s: speed (% of real time) / frames a second / step ms (L: the long step)\n');
+    for (const r of rows) {
+      console.log(`${r.scene.padEnd(12)}${String(r.speed).padStart(4)}%   ` + r.windows.map((w) => `${w.speed}%/${w.fps}/${w.step}${w.long ? 'L' : ''}`).join('  '));
+    }
+    console.log('\nThe first column: speed after the first 3 s (a scene too heavy for the short step switches to the long one within it).');
     if (errors.length) console.log(`\nPage errors:\n  ${errors.join('\n  ')}`);
     exitCode = errors.length ? 1 : 0;
   } else if (benchMode) {

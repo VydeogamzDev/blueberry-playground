@@ -25,11 +25,32 @@ const candidates = [
 ].filter(Boolean);
 
 /**
- * @param {{ width?: number, height?: number, phone?: boolean, still?: boolean }} opts
+ * requestAnimationFrame held to a display refreshing `hz` times a second: a
+ * frame that overruns waits for the next refresh, as in a browser on a screen.
+ * (Headless Chrome otherwise runs frames as fast as it can.)
+ */
+const vsync = (hz) => `(() => {
+  const T = 1000 / ${hz};
+  const origin = performance.now();
+  window.requestAnimationFrame = (cb) => {
+    const now = performance.now();
+    const tick = origin + Math.ceil((now - origin + 0.5) / T) * T;
+    setTimeout(() => {
+      while (performance.now() < tick);
+      cb(tick);
+    }, Math.max(0, tick - now - 3));
+    return 1;
+  };
+})();`;
+
+/**
+ * @param {{ width?: number, height?: number, phone?: boolean, still?: boolean, gpu?: boolean, vsync?: number }} opts
  *   phone: emulate a 390x844 touch phone
  *   still: the game's real-time loop never runs, not even while the page loads
  *     (how many steps it takes then depends on the machine, and the physics
  *     world keeps that history), so a seeded run replays exactly
+ *   gpu: draw on the machine's graphics card rather than in software
+ *   vsync: hold frames to a display of this refresh rate (Hz)
  */
 export async function openGame(opts = {}) {
   const browser = candidates.find((p) => existsSync(p));
@@ -41,7 +62,7 @@ export async function openGame(opts = {}) {
   const profile = mkdtempSync(join(tmpdir(), 'bp-test-'));
   const proc = spawn(browser, [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',
-    '--no-default-browser-check', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+    '--no-default-browser-check', ...(opts.gpu ? ['--use-angle=default', '--enable-gpu', '--ignore-gpu-blocklist'] : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']),
     '--autoplay-policy=no-user-gesture-required', `--window-size=${opts.width ?? 1280},${opts.height ?? 800}`, 'about:blank',
   ], { stdio: 'ignore' });
   let ws;
@@ -108,6 +129,7 @@ export async function openGame(opts = {}) {
       await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
     }
     if (opts.still) await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.requestAnimationFrame = () => 0;' });
+    else if (opts.vsync) await send('Page.addScriptToEvaluateOnNewDocument', { source: vsync(opts.vsync) });
     await send('Page.navigate', { url });
     // wait for the game to boot (physics WASM, sprites, sounds' manifest)
     let ready = false;

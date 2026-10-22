@@ -43,11 +43,10 @@ export interface BenchResult {
  * seconds of simulation (two physics steps per rendered frame, as at 60 fps;
  * a scene too heavy for that is timed again at the longer step, one a frame).
  */
-export function makeBench(game: Game, controls: Controls) {
-  const kit = makeTestKit(game, controls);
+/** The crowded scenes, each built with n people (or things); some return what to do every step. */
+function makeScenes(kit: ReturnType<typeof makeTestKit>): Record<string, (n: number) => ((dt: number) => void) | void> {
   const row = (n: number, i: number) => -60 + (120 * (i + 0.5)) / n;
-
-  const scenes: Record<string, (n: number) => ((dt: number) => void) | void> = {
+  return {
     /** People standing in a row, each balancing. */
     stand(n) {
       for (let i = 0; i < n; i++) kit.spawn('human', row(n, i), 0.9);
@@ -89,6 +88,11 @@ export function makeBench(game: Game, controls: Controls) {
       for (let i = 0; i < n; i++) kit.spawn('crate', row(towers, i % towers), 0.45 + Math.floor(i / towers) * 0.9);
     },
   };
+}
+
+export function makeBench(game: Game, controls: Controls) {
+  const kit = makeTestKit(game, controls);
+  const scenes = makeScenes(kit);
 
   /** Builds a scene, lets it settle for 1.5 s, then times `seconds` of it at steps of `dt`. */
   async function time(build: (n: number) => ((dt: number) => void) | void, n: number, dt: number, seconds: number) {
@@ -163,6 +167,74 @@ export function makeBench(game: Game, controls: Controls) {
       kit.reset();
       game.resetStep();
       game.paused = wasPaused;
+      game.sound.muted = muted;
+    }
+    return out;
+  };
+}
+
+export interface LiveResult {
+  scene: string;
+  /** Per window: share of real time simulated (%), frames a second, mean step (ms), whether on the long step. */
+  windows: { speed: number; fps: number; step: number; long: boolean }[];
+  /** Share of real time simulated after the first window (the switch to the long step happens in it). */
+  speed: number;
+}
+
+/**
+ * Runs crowded scenes in the game's own frame loop, in real time, and samples
+ * how fast they go: `npm run bench -- --live` does it on the graphics card with
+ * frames held to a 60 Hz display (or --hz=144), as a player would see them.
+ */
+export function makeLiveBench(game: Game, controls: Controls) {
+  const kit = makeTestKit(game, controls);
+  const scenes = makeScenes(kit);
+  return async function live(only = 'pile battle', n = 100, windows = 7, seconds = 3): Promise<LiveResult[]> {
+    const out: LiveResult[] = [];
+    const muted = game.sound.muted;
+    game.sound.muted = true;
+    try {
+      for (const name of only.split(' ')) {
+        const build = scenes[name];
+        if (!build) continue;
+        kit.reset();
+        game.resetStep();
+        const tick = build(n) ?? null;
+        const pre = (dt: number) => tick?.(dt);
+        let frames = 0;
+        let stepSum = 0;
+        const count = () => {
+          frames++;
+          stepSum += game.stepMs;
+        };
+        game.preStepHandlers.push(pre);
+        game.frameHandlers.push(count);
+        const rows: LiveResult['windows'] = [];
+        try {
+          for (let w = 0; w < windows; w++) {
+            frames = 0;
+            stepSum = 0;
+            const t0 = performance.now();
+            const s0 = game.time;
+            await new Promise((r) => setTimeout(r, seconds * 1000));
+            const real = (performance.now() - t0) / 1000;
+            rows.push({
+              speed: Math.round(((game.time - s0) / real) * 100),
+              fps: Math.round(frames / real),
+              step: +(stepSum / Math.max(1, frames)).toFixed(1),
+              long: game.stepDt !== FIXED_DT,
+            });
+          }
+        } finally {
+          game.preStepHandlers.splice(game.preStepHandlers.indexOf(pre), 1);
+          game.frameHandlers.splice(game.frameHandlers.indexOf(count), 1);
+        }
+        const rest = rows.slice(1);
+        out.push({ scene: `${name} ${n}`, windows: rows, speed: Math.round(rest.reduce((a, r) => a + r.speed, 0) / Math.max(1, rest.length)) });
+      }
+    } finally {
+      kit.reset();
+      game.resetStep();
       game.sound.muted = muted;
     }
     return out;
