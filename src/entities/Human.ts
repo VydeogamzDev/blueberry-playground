@@ -1,6 +1,6 @@
 import { RAPIER } from '../engine/Physics';
 import { PX } from '../engine/constants';
-import { clamp, rotate, wrapAngle, type V2 } from '../engine/math';
+import { clamp, rotate, smoothstep, wrapAngle, type V2 } from '../engine/math';
 import { Entity } from '../world/Entity';
 import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
@@ -42,10 +42,10 @@ const SPECS: LimbSpec[] = [
   { key: 'lowerTorso', name: 'Lower torso', cx: 0, cy: 25, layer: 6, density: 155, hp: 120, shape: box(8, 8, 1.5), parent: 'midTorso', jx: 0, jy: 28, lo: -0.3, hi: 0.55, muscle: 3200, fragility: 1 },
   { key: 'upperLegB', name: 'Upper leg', cx: 0, cy: 17.5, layer: 3, density: 135, hp: 90, shape: box(4, 11, 1.6), parent: 'lowerTorso', jx: 0, jy: 22.5, lo: -0.6, hi: 2.2, muscle: 3200, fragility: 1 },
   { key: 'lowerLegB', name: 'Lower leg', cx: 0, cy: 7.5, layer: 4, density: 85, hp: 75, shape: box(3.5, 11, 1.5), parent: 'upperLegB', jx: 0, jy: 12.5, lo: -2.6, hi: 0.02, muscle: 3200, fragility: 1 },
-  { key: 'footB', name: 'Foot', cx: 1.5, cy: 1.5, layer: 5, density: 46, hp: 50, shape: box(8, 3, 1), parent: 'lowerLegB', jx: 0, jy: 2.5, lo: -0.6, hi: 0.7, muscle: 1100, fragility: 0.8 },
+  { key: 'footB', name: 'Foot', cx: 1.5, cy: 1.5, layer: 5, density: 46, hp: 50, shape: box(8, 3, 1), parent: 'lowerLegB', jx: 0, jy: 2.5, lo: -0.6, hi: 0.7, muscle: 350, fragility: 0.8 },
   { key: 'upperLegF', name: 'Upper leg', cx: 0, cy: 17.5, layer: 10, density: 135, hp: 90, shape: box(4, 11, 1.6), parent: 'lowerTorso', jx: 0, jy: 22.5, lo: -0.6, hi: 2.2, muscle: 3200, fragility: 1 },
   { key: 'lowerLegF', name: 'Lower leg', cx: 0, cy: 7.5, layer: 11, density: 85, hp: 75, shape: box(3.5, 11, 1.5), parent: 'upperLegF', jx: 0, jy: 12.5, lo: -2.6, hi: 0.02, muscle: 3200, fragility: 1 },
-  { key: 'footF', name: 'Foot', cx: 1.5, cy: 1.5, layer: 12, density: 46, hp: 50, shape: box(8, 3, 1), parent: 'lowerLegF', jx: 0, jy: 2.5, lo: -0.6, hi: 0.7, muscle: 1100, fragility: 0.8 },
+  { key: 'footF', name: 'Foot', cx: 1.5, cy: 1.5, layer: 12, density: 46, hp: 50, shape: box(8, 3, 1), parent: 'lowerLegF', jx: 0, jy: 2.5, lo: -0.6, hi: 0.7, muscle: 350, fragility: 0.8 },
   { key: 'upperArmB', name: 'Upper arm', cx: 0, cy: 37, layer: 0, density: 46, hp: 70, shape: box(3, 11, 1.4), parent: 'upperTorso', jx: 0, jy: 42, lo: -2.0, hi: 3.1, muscle: 140, fragility: 1 },
   { key: 'lowerArmB', name: 'Lower arm', cx: 0, cy: 27.5, layer: 1, density: 35, hp: 60, shape: box(3, 10, 1.4), parent: 'upperArmB', jx: 0, jy: 32, lo: -0.05, hi: 2.6, muscle: 60, fragility: 1 },
   { key: 'handB', name: 'Hand', cx: 0, cy: 21, layer: 2, density: 26, hp: 40, shape: box(3, 4, 1.2), parent: 'lowerArmB', jx: 0, jy: 23, lo: -1.0, hi: 1.0, muscle: 12, fragility: 0.8 },
@@ -154,6 +154,8 @@ export class Human extends Entity implements Holder {
   private t = Math.random() * 100;
   /** Forced limp (context menu). */
   limp = false;
+  /** Joint angles at the start of a get-up (blended toward the standing pose). */
+  private blendFrom: Map<Limb, number> | null = null;
   /** Items held in the hands. */
   private grips: Grip[] = [];
   /** Recently dropped items that still overlap the body. */
@@ -248,10 +250,22 @@ export class Human extends Entity implements Holder {
     if (this.state === s) return;
     this.state = s;
     this.stateT = 0;
-    // standing muscles hold posture firmly; a fallen body moves freely
-    const damp = s === 'stand' ? BALANCE.standDamping : BALANCE.limpDamping;
-    for (const l of this.order) if (!l.gone && !this.isGrabbed(l.part)) l.part.body.setAngularDamping(damp);
+    // getting up blends every joint from where it is now to the standing pose,
+    // instead of snapping the limbs into place
+    if (s === 'getup') {
+      this.blendFrom = new Map();
+      for (const l of this.order) {
+        if (l.joint && l.parent && !l.gone) this.blendFrom.set(l, wrapAngle(l.part.body.rotation() - l.parent.part.body.rotation()));
+      }
+    } else this.blendFrom = null;
+    this.applyDamping();
     this.updateMotors(true);
+  }
+
+  /** Standing muscles hold posture firmly; a fallen body moves freely. */
+  private applyDamping(): void {
+    const ang = this.state === 'stand' ? BALANCE.standDamping : BALANCE.limpDamping;
+    for (const l of this.order) if (!l.gone && !this.isGrabbed(l.part)) l.part.body.setAngularDamping(ang);
   }
 
   private isGrabbed(p: Part): boolean {
@@ -277,6 +291,8 @@ export class Human extends Entity implements Holder {
       const j = l.joint;
       if (!j || !j.isValid() || l.severed) continue;
       let target = (pose[l.spec.key] ?? 0) * f;
+      const from = this.blendFrom?.get(l);
+      if (from !== undefined) target = from + (target - from) * smoothstep(0, 1, this.stateT / 1.1);
       const arm = l.spec.muscle < 500;
       // arms holding something aim it forward
       const hold = standing ? this.armRole(l) : null;
@@ -294,7 +310,7 @@ export class Human extends Entity implements Holder {
         }
       } else if (this.grips.length && !standing && conscious && l.spec.key.startsWith('hand')) boost = 6;
       if (writhe > 0 && arm) {
-        target += Math.sin(this.t * (2.2 + l.phase * 0.3) + l.phase) * writhe * 0.8 * f;
+        target += Math.sin(this.t * (1.5 + l.phase * 0.2) + l.phase) * writhe * 0.55 * f;
       }
       const K = l.spec.muscle * boost * (l.broken ? 0.05 : 1) * (l.attached ? 1 : 0);
       if (!conscious || K <= 0) {
@@ -312,7 +328,37 @@ export class Human extends Entity implements Holder {
     }
   }
 
-  private grounded(): boolean {
+  /** Is something heavy lying on this person's head or torso? */
+  private pinned(): boolean {
+    const world = this.game.physics.world;
+    let load = 0;
+    for (const k of ['head', 'upperTorso', 'midTorso', 'lowerTorso'] as LimbKey[]) {
+      const l = this.L(k);
+      if (l.gone) continue;
+      for (const c of l.part.colliders) {
+        world.contactPairsWith(c, (o) => {
+          const op = this.game.physics.partOf(o);
+          if (!op || op.entity === this || op.frozen || op.y < l.part.y) return;
+          world.contactPair(c, o, (m) => {
+            if (m.numSolverContacts() > 0) load += op.mass;
+          });
+        });
+      }
+    }
+    return load > 6;
+  }
+
+  /** Limbs moving dangerously fast while trying to stand. */
+  private flailing(): boolean {
+    for (const l of this.order) if (!l.gone && l.attached && Math.hypot(l.part.vx, l.part.vy) > 9) return true;
+    return false;
+  }
+
+  /**
+   * Are the feet on something? With `solid`, other ragdolls don't count (people
+   * can't get up while lying on a pile of bodies).
+   */
+  private grounded(solid = false): boolean {
     const world = this.game.physics.world;
     const ray = new RAPIER.Ray({ x: 0, y: 0 }, { x: 0, y: -1 });
     for (const k of ['footF', 'footB'] as LimbKey[]) {
@@ -321,7 +367,9 @@ export class Human extends Entity implements Holder {
       ray.origin = { x: l.part.x, y: l.part.y };
       const hit = world.castRay(ray, 0.16, true, undefined, undefined, undefined, undefined, (c) => {
         const p = this.game.physics.partOf(c);
-        return !p || p.entity !== this;
+        if (!p) return true;
+        if (p.entity === this) return false;
+        return !solid || !(p.entity instanceof Human);
       });
       if (hit) return true;
     }
@@ -343,7 +391,11 @@ export class Human extends Entity implements Holder {
       const tilt = Math.abs(col.theta);
       if (!this.legsWork()) this.setState('down');
       else if (this.state === 'stand' && (tilt > 0.62 || this.airT > 0.35)) this.setState('down');
-      else if (this.state === 'getup') {
+      else if (this.state === 'getup' && this.flailing()) {
+        // something is stopping the body from rising (pinned, tangled): give up
+        this.getupFails++;
+        this.setState('down');
+      } else if (this.state === 'getup') {
         // keep trying while making progress
         if (tilt < this.getupBest - 0.05) {
           this.getupBest = tilt;
@@ -361,7 +413,7 @@ export class Human extends Entity implements Holder {
       const up = this.L('upperTorso').part;
       const rest = Math.hypot(up.vx, up.vy) < 0.6;
       const wait = 2.2 + this.getupFails * 1.5 + this.pain * 4;
-      if (this.stateT > wait && rest && col.grounded && this.legsWork() && str > 0.7 && this.pain < 0.6) {
+      if (this.stateT > wait && rest && col.grounded && this.legsWork() && str > 0.7 && this.pain < 0.6 && this.grounded(true) && !this.pinned()) {
         this.getupBest = Math.abs(col.theta);
         this.getupProgressT = 0;
         this.setState('getup');
@@ -582,7 +634,7 @@ export class Human extends Entity implements Holder {
     if (held) this.setState('down');
     else {
       this.stateT = 0;
-      p.body.setAngularDamping(this.state === 'stand' ? BALANCE.standDamping : BALANCE.limpDamping);
+      this.applyDamping();
     }
   }
   private grabbedPart: Part | null = null;

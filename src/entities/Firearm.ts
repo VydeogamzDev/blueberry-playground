@@ -48,8 +48,9 @@ export class Firearm extends Item {
     this.activatable = true;
   }
 
+  /** One shot (automatic guns keep firing while activation is held). */
   activate(): void {
-    if (!this.gun.auto) this.fire();
+    if (!this.gun.spinUp) this.fire();
   }
 
   preStep(dt: number): void {

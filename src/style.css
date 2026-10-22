@@ -108,11 +108,8 @@ canvas.cat-icon,
 }
 
 .cat-icon {
-  max-width: 28px;
-  max-height: 28px;
-  width: auto;
-  height: auto;
-  min-width: 14px;
+  max-width: 30px;
+  max-height: 30px;
 }
 
 .cat-panel {
@@ -454,4 +451,17 @@ canvas.cat-icon,
   place-items: center;
   color: var(--dim);
   font-size: 13px;
+}
+
+.tips {
+  margin-top: 12px;
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  color: #9aa1a8;
+}
+
+.tip::before {
+  content: '› ';
+  color: #e2bd57;
 }

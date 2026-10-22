@@ -48,6 +48,13 @@ const HELP: [string, string][] = [
   ['H / F1', 'This help'],
 ];
 
+const TIPS: string[] = [
+  'Drop a weapon onto a person’s hand to make them hold it. Select the person (or the weapon) and press F to use it.',
+  'Knives and swords stick into soft things when stabbed hard enough. Drag them back out.',
+  'Wire a battery to lights, motors and thrusters to power them. Wire a button to explosives or guns to trigger them.',
+  'Rope, spring, weld, hinge and pin are in the Tools category: drag from one object to another or to the background.',
+];
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -122,6 +129,10 @@ export class UI implements UIBridge {
       img.height = icon.height;
       img.getContext('2d')!.drawImage(icon, 0, 0);
       img.className = 'cat-icon';
+      let sc = Math.min(3, 26 / Math.max(icon.width, icon.height));
+      if (sc >= 2) sc = Math.floor(sc);
+      img.style.width = icon.width * sc + 'px';
+      img.style.height = icon.height * sc + 'px';
       b.appendChild(img);
       b.onclick = () => {
         if (this.category === c.id && this.catalogOpen && !this.search.value) this.toggleCatalog();
@@ -177,14 +188,11 @@ export class UI implements UIBridge {
       cv.width = src.width;
       cv.height = src.height;
       cv.getContext('2d')!.drawImage(src, 0, 0);
-      // integer-scale previews to fit the tile
-      const scale = Math.max(1, Math.min(4, Math.floor(56 / Math.max(src.width, src.height * 0.9))));
+      // integer-scale previews to fit the tile (long thin items fill the width)
+      let scale = Math.min(4, 62 / Math.max(src.width, src.height * 1.15));
+      if (scale >= 2) scale = Math.floor(scale);
       cv.style.width = src.width * scale + 'px';
       cv.style.height = src.height * scale + 'px';
-      if (src.width * scale > 64) {
-        cv.style.width = '64px';
-        cv.style.height = (src.height * 64) / src.width + 'px';
-      }
       box.appendChild(cv);
       const name = el('div', 'item-name');
       name.textContent = def.name;
@@ -306,6 +314,9 @@ export class UI implements UIBridge {
       table.appendChild(el('div', 'desc', d));
     }
     box.appendChild(table);
+    const tips = el('div', 'tips');
+    for (const t of TIPS) tips.appendChild(el('div', 'tip', t));
+    box.appendChild(tips);
     const close = el('button', 'panel-close', 'Close');
     close.onclick = () => this.help.classList.add('hidden');
     box.appendChild(close);
