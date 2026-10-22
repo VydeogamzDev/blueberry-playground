@@ -1,0 +1,381 @@
+{
+  "gun/pistol": [
+    "sfx/gun/pistol_1.ogg",
+    "sfx/gun/pistol_2.ogg",
+    "sfx/gun/pistol_3.ogg",
+    "sfx/gun/pistol_4.ogg"
+  ],
+  "gun/revolver": [
+    "sfx/gun/revolver_1.ogg",
+    "sfx/gun/revolver_2.ogg",
+    "sfx/gun/revolver_3.ogg"
+  ],
+  "gun/magnum": [
+    "sfx/gun/magnum_1.ogg",
+    "sfx/gun/magnum_2.ogg",
+    "sfx/gun/magnum_3.ogg",
+    "sfx/gun/magnum_4.ogg"
+  ],
+  "gun/smg": [
+    "sfx/gun/smg_1.ogg",
+    "sfx/gun/smg_2.ogg",
+    "sfx/gun/smg_3.ogg",
+    "sfx/gun/smg_4.ogg"
+  ],
+  "gun/rifle": [
+    "sfx/gun/rifle_1.ogg",
+    "sfx/gun/rifle_2.ogg",
+    "sfx/gun/rifle_3.ogg",
+    "sfx/gun/rifle_4.ogg"
+  ],
+  "gun/shotgun": [
+    "sfx/gun/shotgun_1.ogg",
+    "sfx/gun/shotgun_2.ogg",
+    "sfx/gun/shotgun_3.ogg",
+    "sfx/gun/shotgun_4.ogg"
+  ],
+  "gun/sniper": [
+    "sfx/gun/sniper_1.ogg",
+    "sfx/gun/sniper_2.ogg",
+    "sfx/gun/sniper_3.ogg",
+    "sfx/gun/sniper_4.ogg"
+  ],
+  "gun/casing": [
+    "sfx/gun/casing_1.ogg",
+    "sfx/gun/casing_2.ogg",
+    "sfx/gun/casing_3.ogg",
+    "sfx/gun/casing_4.ogg"
+  ],
+  "gun/dryfire": [
+    "sfx/gun/dryfire_1.ogg",
+    "sfx/gun/dryfire_2.ogg",
+    "sfx/gun/dryfire_3.ogg"
+  ],
+  "gun/pump": [
+    "sfx/gun/pump_1.ogg",
+    "sfx/gun/pump_2.ogg",
+    "sfx/gun/pump_3.ogg"
+  ],
+  "gun/reload": [
+    "sfx/gun/reload_1.ogg",
+    "sfx/gun/reload_2.ogg"
+  ],
+  "hit/flesh": [
+    "sfx/hit/flesh_1.ogg",
+    "sfx/hit/flesh_2.ogg",
+    "sfx/hit/flesh_3.ogg",
+    "sfx/hit/flesh_4.ogg"
+  ],
+  "hit/metal": [
+    "sfx/hit/metal_1.ogg",
+    "sfx/hit/metal_2.ogg",
+    "sfx/hit/metal_3.ogg",
+    "sfx/hit/metal_4.ogg"
+  ],
+  "hit/ricochet": [
+    "sfx/hit/ricochet_1.ogg",
+    "sfx/hit/ricochet_2.ogg",
+    "sfx/hit/ricochet_3.ogg",
+    "sfx/hit/ricochet_4.ogg"
+  ],
+  "hit/whizz": [
+    "sfx/hit/whizz_1.ogg",
+    "sfx/hit/whizz_2.ogg"
+  ],
+  "hit/wood": [
+    "sfx/hit/wood_1.ogg",
+    "sfx/hit/wood_2.ogg",
+    "sfx/hit/wood_3.ogg",
+    "sfx/hit/wood_4.ogg"
+  ],
+  "hit/concrete": [
+    "sfx/hit/concrete_1.ogg",
+    "sfx/hit/concrete_2.ogg",
+    "sfx/hit/concrete_3.ogg",
+    "sfx/hit/concrete_4.ogg"
+  ],
+  "hit/glass": [
+    "sfx/hit/glass_1.ogg",
+    "sfx/hit/glass_2.ogg",
+    "sfx/hit/glass_3.ogg",
+    "sfx/hit/glass_4.ogg"
+  ],
+  "impact/wood_light": [
+    "sfx/impact/wood_light_1.ogg",
+    "sfx/impact/wood_light_2.ogg",
+    "sfx/impact/wood_light_3.ogg",
+    "sfx/impact/wood_light_4.ogg"
+  ],
+  "impact/wood_medium": [
+    "sfx/impact/wood_medium_1.ogg",
+    "sfx/impact/wood_medium_2.ogg",
+    "sfx/impact/wood_medium_3.ogg",
+    "sfx/impact/wood_medium_4.ogg"
+  ],
+  "impact/wood_heavy": [
+    "sfx/impact/wood_heavy_1.ogg",
+    "sfx/impact/wood_heavy_2.ogg",
+    "sfx/impact/wood_heavy_3.ogg",
+    "sfx/impact/wood_heavy_4.ogg"
+  ],
+  "impact/metal_light": [
+    "sfx/impact/metal_light_1.ogg",
+    "sfx/impact/metal_light_2.ogg",
+    "sfx/impact/metal_light_3.ogg",
+    "sfx/impact/metal_light_4.ogg"
+  ],
+  "impact/metal_medium": [
+    "sfx/impact/metal_medium_1.ogg",
+    "sfx/impact/metal_medium_2.ogg",
+    "sfx/impact/metal_medium_3.ogg"
+  ],
+  "impact/metal_heavy": [
+    "sfx/impact/metal_heavy_1.ogg",
+    "sfx/impact/metal_heavy_2.ogg",
+    "sfx/impact/metal_heavy_3.ogg",
+    "sfx/impact/metal_heavy_4.ogg"
+  ],
+  "impact/plate_light": [
+    "sfx/impact/plate_light_1.ogg",
+    "sfx/impact/plate_light_2.ogg",
+    "sfx/impact/plate_light_3.ogg"
+  ],
+  "impact/plate_medium": [
+    "sfx/impact/plate_medium_1.ogg",
+    "sfx/impact/plate_medium_2.ogg",
+    "sfx/impact/plate_medium_3.ogg"
+  ],
+  "impact/plate_heavy": [
+    "sfx/impact/plate_heavy_1.ogg",
+    "sfx/impact/plate_heavy_2.ogg",
+    "sfx/impact/plate_heavy_3.ogg"
+  ],
+  "impact/glass_light": [
+    "sfx/impact/glass_light_1.ogg",
+    "sfx/impact/glass_light_2.ogg",
+    "sfx/impact/glass_light_3.ogg"
+  ],
+  "impact/glass_heavy": [
+    "sfx/impact/glass_heavy_1.ogg",
+    "sfx/impact/glass_heavy_2.ogg",
+    "sfx/impact/glass_heavy_3.ogg"
+  ],
+  "impact/soft": [
+    "sfx/impact/soft_1.ogg",
+    "sfx/impact/soft_2.ogg",
+    "sfx/impact/soft_3.ogg",
+    "sfx/impact/soft_4.ogg"
+  ],
+  "impact/soft_heavy": [
+    "sfx/impact/soft_heavy_1.ogg",
+    "sfx/impact/soft_heavy_2.ogg",
+    "sfx/impact/soft_heavy_3.ogg",
+    "sfx/impact/soft_heavy_4.ogg"
+  ],
+  "impact/punch": [
+    "sfx/impact/punch_1.ogg",
+    "sfx/impact/punch_2.ogg",
+    "sfx/impact/punch_3.ogg",
+    "sfx/impact/punch_4.ogg"
+  ],
+  "impact/punch_heavy": [
+    "sfx/impact/punch_heavy_1.ogg",
+    "sfx/impact/punch_heavy_2.ogg",
+    "sfx/impact/punch_heavy_3.ogg",
+    "sfx/impact/punch_heavy_4.ogg"
+  ],
+  "impact/generic_light": [
+    "sfx/impact/generic_light_1.ogg",
+    "sfx/impact/generic_light_2.ogg",
+    "sfx/impact/generic_light_3.ogg"
+  ],
+  "impact/plank": [
+    "sfx/impact/plank_1.ogg",
+    "sfx/impact/plank_2.ogg",
+    "sfx/impact/plank_3.ogg"
+  ],
+  "impact/stone": [
+    "sfx/impact/stone_1.ogg",
+    "sfx/impact/stone_2.ogg",
+    "sfx/impact/stone_3.ogg",
+    "sfx/impact/stone_4.ogg"
+  ],
+  "impact/plastic": [
+    "sfx/impact/plastic_1.ogg",
+    "sfx/impact/plastic_2.ogg",
+    "sfx/impact/plastic_3.ogg",
+    "sfx/impact/plastic_4.ogg"
+  ],
+  "impact/glass_break": [
+    "sfx/impact/glass_break_1.ogg",
+    "sfx/impact/glass_break_2.ogg",
+    "sfx/impact/glass_break_3.ogg",
+    "sfx/impact/glass_break_4.ogg"
+  ],
+  "impact/body_fall": [
+    "sfx/impact/body_fall_1.ogg",
+    "sfx/impact/body_fall_2.ogg"
+  ],
+  "gore/squish": [
+    "sfx/gore/squish_1.ogg",
+    "sfx/gore/squish_2.ogg",
+    "sfx/gore/squish_3.ogg",
+    "sfx/gore/squish_4.ogg"
+  ],
+  "gore/splat": [
+    "sfx/gore/splat_1.ogg",
+    "sfx/gore/splat_2.ogg",
+    "sfx/gore/splat_3.ogg",
+    "sfx/gore/splat_4.ogg"
+  ],
+  "gore/bone_crack": [
+    "sfx/gore/bone_crack_1.ogg",
+    "sfx/gore/bone_crack_2.ogg",
+    "sfx/gore/bone_crack_3.ogg",
+    "sfx/gore/bone_crack_4.ogg"
+  ],
+  "gore/bone_break": [
+    "sfx/gore/bone_break_1.ogg",
+    "sfx/gore/bone_break_2.ogg",
+    "sfx/gore/bone_break_3.ogg",
+    "sfx/gore/bone_break_4.ogg"
+  ],
+  "gore/tear": [
+    "sfx/gore/tear_1.ogg",
+    "sfx/gore/tear_2.ogg",
+    "sfx/gore/tear_3.ogg"
+  ],
+  "gore/slice": [
+    "sfx/gore/slice_1.ogg",
+    "sfx/gore/slice_2.ogg"
+  ],
+  "gore/stab": [
+    "sfx/gore/stab_1.ogg",
+    "sfx/gore/stab_2.ogg",
+    "sfx/gore/stab_3.ogg"
+  ],
+  "gore/swish": [
+    "sfx/gore/swish_1.ogg",
+    "sfx/gore/swish_2.ogg",
+    "sfx/gore/swish_3.ogg",
+    "sfx/gore/swish_4.ogg"
+  ],
+  "gore/gib": [
+    "sfx/gore/gib_1.ogg",
+    "sfx/gore/gib_2.ogg",
+    "sfx/gore/gib_3.ogg"
+  ],
+  "explosion/small": [
+    "sfx/explosion/small_1.ogg",
+    "sfx/explosion/small_2.ogg",
+    "sfx/explosion/small_3.ogg",
+    "sfx/explosion/small_4.ogg"
+  ],
+  "explosion/large": [
+    "sfx/explosion/large_1.ogg",
+    "sfx/explosion/large_2.ogg",
+    "sfx/explosion/large_3.ogg",
+    "sfx/explosion/large_4.ogg"
+  ],
+  "explosion/debris": [
+    "sfx/explosion/debris_1.ogg",
+    "sfx/explosion/debris_2.ogg",
+    "sfx/explosion/debris_3.ogg"
+  ],
+  "explosion/fuse": [
+    "sfx/explosion/fuse_1.ogg",
+    "sfx/explosion/fuse_2.ogg"
+  ],
+  "explosion/fuse_loop": [
+    "sfx/explosion/fuse_loop.ogg"
+  ],
+  "fire/crackle_loop": [
+    "sfx/fire/crackle_loop_1.ogg",
+    "sfx/fire/crackle_loop_2.ogg"
+  ],
+  "machine/zap": [
+    "sfx/machine/zap_1.ogg",
+    "sfx/machine/zap_2.ogg",
+    "sfx/machine/zap_3.ogg",
+    "sfx/machine/zap_4.ogg"
+  ],
+  "machine/spark": [
+    "sfx/machine/spark_1.ogg",
+    "sfx/machine/spark_2.ogg",
+    "sfx/machine/spark_3.ogg",
+    "sfx/machine/spark_4.ogg"
+  ],
+  "machine/electric_loop": [
+    "sfx/machine/electric_loop.ogg"
+  ],
+  "machine/motor_loop": [
+    "sfx/machine/motor_loop_1.ogg",
+    "sfx/machine/motor_loop_2.ogg"
+  ],
+  "machine/hum_loop": [
+    "sfx/machine/hum_loop.ogg"
+  ],
+  "machine/thruster_loop": [
+    "sfx/machine/thruster_loop_1.ogg",
+    "sfx/machine/thruster_loop_2.ogg"
+  ],
+  "machine/button": [
+    "sfx/machine/button_1.ogg",
+    "sfx/machine/button_2.ogg",
+    "sfx/machine/button_3.ogg"
+  ],
+  "machine/switch": [
+    "sfx/machine/switch_1.ogg",
+    "sfx/machine/switch_2.ogg",
+    "sfx/machine/switch_3.ogg",
+    "sfx/machine/switch_4.ogg"
+  ],
+  "machine/rope_snap": [
+    "sfx/machine/rope_snap_1.ogg",
+    "sfx/machine/rope_snap_2.ogg",
+    "sfx/machine/rope_snap_3.ogg",
+    "sfx/machine/rope_snap_4.ogg"
+  ],
+  "ui/click": [
+    "sfx/ui/click_1.ogg",
+    "sfx/ui/click_2.ogg",
+    "sfx/ui/click_3.ogg"
+  ],
+  "ui/hover": [
+    "sfx/ui/hover_1.ogg",
+    "sfx/ui/hover_2.ogg",
+    "sfx/ui/hover_3.ogg"
+  ],
+  "ui/select": [
+    "sfx/ui/select_1.ogg",
+    "sfx/ui/select_2.ogg",
+    "sfx/ui/select_3.ogg"
+  ],
+  "ui/toggle": [
+    "sfx/ui/toggle_1.ogg",
+    "sfx/ui/toggle_2.ogg",
+    "sfx/ui/toggle_3.ogg",
+    "sfx/ui/toggle_4.ogg"
+  ],
+  "ui/error": [
+    "sfx/ui/error_1.ogg",
+    "sfx/ui/error_2.ogg",
+    "sfx/ui/error_3.ogg"
+  ],
+  "ui/confirm": [
+    "sfx/ui/confirm_1.ogg",
+    "sfx/ui/confirm_2.ogg"
+  ],
+  "ui/drop": [
+    "sfx/ui/drop_1.ogg",
+    "sfx/ui/drop_2.ogg"
+  ],
+  "loops": [
+    "explosion/fuse_loop",
+    "fire/crackle_loop",
+    "machine/electric_loop",
+    "machine/motor_loop",
+    "machine/hum_loop",
+    "machine/thruster_loop"
+  ]
+}

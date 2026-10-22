@@ -96,4 +96,6 @@ export interface EntityState {
   flip: boolean;
   parts: PartState[];
   extra?: Record<string, unknown>;
+  /** References to other entities in the same snapshot (held items, lodged blades). */
+  links?: Record<string, unknown>;
 }

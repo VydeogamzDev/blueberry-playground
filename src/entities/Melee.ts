@@ -4,6 +4,7 @@ import type { PropConfig } from './Prop';
 import { rotate, type V2 } from '../engine/math';
 import type { Part } from '../world/Part';
 import type { Game } from '../world/Game';
+import type { Entity } from '../world/Entity';
 import type { ContextAction, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
 
 export interface BladeSpec {
@@ -208,6 +209,24 @@ export class Blade extends Item {
       }
     }
     return hit;
+  }
+
+  serializeLinks(ref: (e: Entity) => number): Record<string, unknown> | undefined {
+    const l = this.lodge;
+    if (!l) return undefined;
+    const ti = ref(l.target.entity);
+    if (ti < 0) return undefined;
+    // where the blade currently enters the target, in the target's frame
+    const s = l.slider.translation();
+    return { lodge: { target: [ti, l.target.entity.parts.indexOf(l.target)], at: l.target.worldToLocal(s.x, s.y), depth: l.depth0 + l.t } };
+  }
+
+  restoreLinks(links: Record<string, unknown>, get: (i: number) => Entity | undefined): void {
+    const d = links.lodge as { target: [number, number]; at: V2; depth: number } | undefined;
+    if (!d) return;
+    const target = get(d.target[0])?.parts[d.target[1]];
+    if (!target || target.destroyed) return;
+    this.stick(target, target.localToWorld(d.at.x, d.at.y), Math.max(0.005, d.depth));
   }
 
   contextActions(): ContextAction[] {

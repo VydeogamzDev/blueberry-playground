@@ -211,6 +211,18 @@ export abstract class Entity {
 
   protected restoreExtra(_extra: Record<string, unknown>): void {}
 
+  /** References to other entities (by snapshot index via `ref`, -1 if absent). */
+  serializeLinks(_ref: (e: Entity) => number): Record<string, unknown> | undefined {
+    return undefined;
+  }
+
+  restoreLinks(_links: Record<string, unknown>, _get: (i: number) => Entity | undefined): void {}
+
+  /** Entities that should move with this one when it is flipped (held items). */
+  attachedEntities(): Entity[] {
+    return [];
+  }
+
   /** Removes a single part (e.g. a gibbed limb). */
   removePart(p: Part): void {
     if (p.destroyed) return;

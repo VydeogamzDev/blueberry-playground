@@ -1300,7 +1300,27 @@ export class Human extends Entity implements Holder {
       limp: this.limp,
       severed: this.order.filter((l) => l.severed && !l.gone).map((l) => l.spec.key),
       broken: this.order.filter((l) => l.broken).map((l) => l.spec.key),
+      standing: this.state === 'stand',
     };
+  }
+
+  serializeLinks(ref: (e: Entity) => number): Record<string, unknown> | undefined {
+    const grips = this.grips.map((g) => ({ item: ref(g.item), hand: g.hand.spec.key })).filter((g) => g.item >= 0);
+    return grips.length ? { grips } : undefined;
+  }
+
+  restoreLinks(links: Record<string, unknown>, get: (i: number) => Entity | undefined): void {
+    for (const g of (links.grips as { item: number; hand: LimbKey }[] | undefined) ?? []) {
+      const it = get(g.item) as Item | undefined;
+      const hand = this.limbs.get(g.hand);
+      if (!it || !it.hold || it.holder || !hand || !this.ok(hand.spec.key) || this.handBusy(hand)) continue;
+      if (it.flipped !== this.flipped) continue;
+      this.attach(it, hand);
+    }
+  }
+
+  attachedEntities(): Entity[] {
+    return this.grips.map((g) => g.item);
   }
 
   protected restoreExtra(x: Record<string, unknown>): void {
@@ -1316,7 +1336,8 @@ export class Human extends Entity implements Holder {
       if (l) l.broken = true;
     }
     if (x.alive === false) this.die();
-    this.setState('down');
+    // people who were standing stay up (flipping or duplicating someone shouldn't floor them)
+    this.setState(x.standing && this.alive && this.consciousness > 0.5 ? 'stand' : 'down');
     this.updateMotors(true);
   }
 }

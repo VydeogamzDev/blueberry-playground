@@ -6,6 +6,7 @@ import type { Explosive } from '../entities/Explosive';
 import type { Blade } from '../entities/Melee';
 import { getItem } from '../catalog/items';
 import { makeTestKit } from './testkit';
+import { saveToString, loadFromString } from '../world/SaveLoad';
 
 interface Result {
   name: string;
@@ -23,6 +24,16 @@ export function makeSelfTest(game: Game, controls: Controls) {
   const kit = makeTestKit(game, controls);
   const human = (x: number, opts = {}) => kit.spawn('human', x, 0.9, opts) as Human;
   const hp = (h: Human) => h.parts.reduce((s, p) => s + (p.destroyed ? 0 : p.hp), 0);
+  /** Drags a fresh gun into a person's front hand. */
+  const arm = (h: Human, id = 'rifle'): Firearm | undefined => {
+    const hand = h.limbs.get('handF')!.part;
+    const g = kit.spawn(id, hand.x + 1.5 * (h.flipped ? -1 : 1), 0.3, { flip: h.flipped }) as Firearm;
+    kit.advance(0.5);
+    const gp = g.gripWorld()!;
+    kit.drag(gp.x, gp.y, hand.x, hand.y, 0.6, 0.3, true);
+    kit.advance(1.5);
+    return h.heldItems()[0] as Firearm | undefined;
+  };
 
   const tests: [string, () => string | true][] = [
     ['1. spawn a human: stands still', () => {
@@ -205,19 +216,68 @@ export function makeSelfTest(game: Game, controls: Controls) {
       kit.reset();
       const h = human(0);
       kit.advance(1);
-      const hand = h.limbs.get('handF')!.part;
-      const g = kit.spawn('rifle', 1.5, 0.3) as Firearm;
-      kit.advance(0.5);
-      const gp = g.gripWorld()!;
-      kit.drag(gp.x, gp.y, hand.x, hand.y, 0.6, 0.3, true);
-      kit.advance(2);
-      const held = h.heldItems()[0] as Firearm | undefined;
+      const held = arm(h);
       if (!held) return 'not held';
       if (h.state !== 'stand') return `fell over (${h.state})`;
       if (Math.abs(held.main.a) > 0.25) return `not aiming level (${held.main.a.toFixed(2)})`;
       h.activate();
       kit.advance(0.2);
       if (!held.shots) return 'did not fire';
+      return true;
+    }],
+    ['extra: save/load keeps held guns and lodged knives', () => {
+      kit.reset();
+      const a = human(-1);
+      const b = human(1.5);
+      kit.advance(1);
+      if (!arm(a)) return 'could not arm';
+      const t = b.limbs.get('midTorso')!.part;
+      const k = kit.spawn('knife', 0.6, t.y) as Blade;
+      kit.advance(0.01);
+      k.setVelocity(9, 0, 0);
+      kit.advance(0.4);
+      if (!k.lodge) return 'knife did not lodge';
+      const json = saveToString(game);
+      loadFromString(game, json);
+      kit.advance(0.5);
+      const people = game.entities.filter((e) => e.def.id === 'human') as Human[];
+      const holder = people.find((h) => h.heldItems().length);
+      if (!holder) return 'held gun not restored';
+      const knife = game.entities.find((e) => e.def.id === 'knife') as Blade | undefined;
+      if (!knife?.lodge) return 'lodged knife not restored';
+      return true;
+    }],
+    ['extra: flipping a person keeps their gun and stance', () => {
+      kit.reset();
+      const h = human(0);
+      kit.advance(1);
+      if (!arm(h)) return 'could not arm';
+      const n = game.flipEntity(h) as Human | null;
+      if (!n) return 'flip failed';
+      kit.advance(1.5);
+      const g = n.heldItems()[0] as Firearm | undefined;
+      if (!g) return 'dropped the gun';
+      if (g.flipped !== n.flipped) return 'gun faces the wrong way';
+      if (!n.status().endsWith('stand')) return `fell over (${n.status()})`;
+      const fwd = g.forward();
+      if (fwd.x * (n.flipped ? -1 : 1) < 0.9) return 'not aiming forward';
+      return true;
+    }],
+    ['extra: duplicating a welded pair copies the weld', () => {
+      kit.reset();
+      const a = kit.spawn('crate', -0.5, 0.45);
+      const b = kit.spawn('crate', 0.4, 0.45);
+      kit.advance(0.3);
+      controls.arm(getItem('tool-weld')!);
+      kit.down(-0.5, 0.45);
+      kit.move(0.4, 0.45);
+      kit.up(0.4, 0.45);
+      controls.arm(null);
+      const conns = () => game.connections.list.length;
+      if (conns() !== 1) return 'weld not made';
+      controls.duplicate([a, b]);
+      kit.advance(0.5);
+      if (conns() !== 2) return `connections after duplicate: ${conns()}`;
       return true;
     }],
     ['extra: thrown knife lodges and pulls out', () => {

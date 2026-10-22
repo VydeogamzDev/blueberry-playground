@@ -6,9 +6,9 @@ import { clamp, type V2 } from '../engine/math';
 import type { Game } from '../world/Game';
 import type { Entity } from '../world/Entity';
 import type { Part } from '../world/Part';
-import type { ContextAction, EntityState, ItemDef } from '../world/types';
+import type { ContextAction, ItemDef } from '../world/types';
+import { capture, instantiate, type Snapshot } from '../world/Snapshot';
 import type { ConnKind } from '../systems/Connections';
-import { getItem } from '../catalog/items';
 
 export interface UIBridge {
   openContextMenu(sx: number, sy: number, title: string, actions: ContextAction[]): void;
@@ -55,7 +55,7 @@ export class Controls {
   private box: { x0: number; y0: number; additive: boolean } | null = null;
   private pan: { sx: number; sy: number; camX: number; camY: number } | null = null;
   private connect: { part: Part; wx: number; wy: number } | null = null;
-  private clipboard: EntityState[] = [];
+  private clipboard: Snapshot | null = null;
   private spawnAngle = 0;
   private spawnFlip = false;
   private ghost: THREE.Mesh | null = null;
@@ -447,42 +447,36 @@ export class Controls {
   }
 
   /** Serialized clone of entities offset by (dx, dy). */
-  pasteStates(states: EntityState[], dx: number, dy: number): Entity[] {
-    const out: Entity[] = [];
-    for (const s of states) {
-      const def = getItem(s.def);
-      if (!def) continue;
-      const p0 = s.parts.find((p) => p.hp !== -1) ?? s.parts[0];
-      const e = this.game.spawn(def, p0.x + dx, p0.y + dy, { flip: s.flip });
-      if (!e) continue;
-      e.restore({ ...s, parts: s.parts.map((p) => ({ ...p, x: p.x + dx, y: p.y + dy })) });
-      out.push(e);
-    }
-    return out;
-  }
-
+  /** Duplicates keep held items, lodged blades and connections inside the selection. */
   duplicate(list: Entity[]): void {
     if (!list.length) return;
-    const states = list.map((e) => e.serialize());
-    const made = this.pasteStates(states, 0.6, 0.3);
+    const made = instantiate(this.game, capture(this.game, this.withAttached(list)), { dx: 0.6, dy: 0.3 });
     this.selection = new Set(made);
     this.refreshOutlines();
   }
 
   copy(list: Entity[]): void {
     if (!list.length) return;
-    this.clipboard = list.map((e) => e.serialize());
+    this.clipboard = capture(this.game, this.withAttached(list));
     this.ui.toast(`Copied ${list.length} object${list.length > 1 ? 's' : ''}`);
   }
 
+  /** The list plus anything those entities hold. */
+  private withAttached(list: Entity[]): Entity[] {
+    const out = new Set(list);
+    for (const e of list) for (const a of e.attachedEntities()) out.add(a);
+    return [...out];
+  }
+
   paste(): void {
-    if (!this.clipboard.length) return;
+    const clip = this.clipboard;
+    if (!clip) return;
     // paste centered on the mouse
     let cx = 0;
     let cy = 0;
     let n = 0;
     let minY = Infinity;
-    for (const s of this.clipboard) for (const p of s.parts) {
+    for (const s of clip.entities) for (const p of s.parts) {
       if (p.hp === -1) continue;
       cx += p.x;
       cy += p.y;
@@ -492,7 +486,7 @@ export class Controls {
     cx /= n;
     cy /= n;
     const dy = Math.max(this.wy - cy, WORLD.floor + 0.05 - minY + 0.1);
-    const made = this.pasteStates(this.clipboard, this.wx - cx, dy);
+    const made = instantiate(this.game, clip, { dx: this.wx - cx, dy });
     this.selection = new Set(made);
     this.refreshOutlines();
   }
@@ -534,7 +528,7 @@ export class Controls {
     const part = this.game.pick(this.wx, this.wy, this.pickRadius());
     if (!part) {
       const acts: ContextAction[] = [];
-      if (this.clipboard.length) acts.push({ label: 'Paste', hint: 'Ctrl+V', action: () => this.paste() });
+      if (this.clipboard) acts.push({ label: 'Paste', hint: 'Ctrl+V', action: () => this.paste() });
       acts.push({ label: 'Select all', hint: 'Ctrl+A', action: () => this.selectAll() });
       if (this.selection.size) acts.push({ label: 'Deselect', hint: 'Esc', action: () => this.clearSelection() });
       acts.push({ label: this.game.paused ? 'Resume' : 'Pause', hint: 'Space', action: () => this.togglePause() });
