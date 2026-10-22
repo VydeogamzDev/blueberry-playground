@@ -79,38 +79,8 @@ export function restCheck(entities: Entity[]): void {
  */
 export function settle(game: Game, entities: Entity[]): void {
   const world = game.physics.world;
-  let group = entities.filter((e) => e.atRest && !e.destroyed);
+  const group = calmGroup(game, entities.filter((e) => e.atRest && !e.destroyed));
   if (!group.length) return;
-  const handles = new Set<number>();
-  const ok = (b: RAPIER.RigidBody | null) => !b || b.isFixed() || b.isSleeping() || handles.has(b.handle);
-  const calm = (p: Part): boolean => {
-    let bad = false;
-    for (const c of p.colliders) {
-      world.contactPairsWith(c, (other) => {
-        if (bad || ok(other.parent())) return;
-        world.contactPair(c, other, (m) => {
-          if (m.numContacts() > 0) bad = true;
-        });
-      });
-      if (bad) return false;
-    }
-    world.impulseJoints.forEachJointHandleAttachedToRigidBody(p.body.handle, (h) => {
-      const j = world.impulseJoints.get(h);
-      if (!j || bad) return;
-      const other = j.body1().handle === p.body.handle ? j.body2() : j.body1();
-      if (!ok(other)) bad = true;
-    });
-    return !bad;
-  };
-  // drop anyone touching something that is still moving, until the group is stable
-  for (;;) {
-    handles.clear();
-    for (const e of group) for (const p of e.parts) if (!p.destroyed) handles.add(p.body.handle);
-    const keep = group.filter((e) => e.parts.every((p) => p.destroyed || p.frozen || calm(p)));
-    if (keep.length === group.length) break;
-    group = keep;
-    if (!group.length) return;
-  }
   // separate heaps sleep (and wake) separately
   const owner = new Map<number, number>();
   group.forEach((e, i) => {
@@ -150,6 +120,60 @@ export function settle(game: Game, entities: Entity[]): void {
     }
   });
   for (const slept of heaps.values()) game.slept.push(slept);
+}
+
+/**
+ * Of a group of entities at rest, those that can sleep: touching or jointed to
+ * nothing still moving, nor to anyone dropped for that, and so on. Who touches
+ * whom is looked up once.
+ */
+export function calmGroup(game: Game, group: Entity[]): Entity[] {
+  const world = game.physics.world;
+  const member = new Map<number, number>();
+  group.forEach((e, i) => {
+    for (const p of e.parts) if (!p.destroyed) member.set(p.body.handle, i);
+  });
+  const dropped = group.map(() => false);
+  /** The members whose bodies touch each one (only awake ones count). */
+  const touchedBy: number[][] = group.map(() => []);
+  const still = (b: RAPIER.RigidBody) => b.isFixed() || b.isSleeping();
+  const queue: number[] = [];
+  const meet = (i: number, b: RAPIER.RigidBody | null) => {
+    if (!b || dropped[i]) return;
+    const j = member.get(b.handle);
+    if (j === i || still(b)) return;
+    if (j === undefined) {
+      dropped[i] = true;
+      queue.push(i);
+    } else touchedBy[j].push(i);
+  };
+  group.forEach((e, i) => {
+    for (const p of e.parts) {
+      if (dropped[i]) break;
+      if (p.destroyed || p.frozen) continue;
+      for (const c of p.colliders) {
+        world.contactPairsWith(c, (other) => {
+          const b = other.parent();
+          if (dropped[i] || !b || member.get(b.handle) === i || still(b)) return;
+          world.contactPair(c, other, (m) => {
+            if (m.numContacts() > 0) meet(i, b);
+          });
+        });
+      }
+      world.impulseJoints.forEachJointHandleAttachedToRigidBody(p.body.handle, (h) => {
+        const j = world.impulseJoints.get(h);
+        if (j) meet(i, j.body1().handle === p.body.handle ? j.body2() : j.body1());
+      });
+    }
+  });
+  while (queue.length) {
+    for (const i of touchedBy[queue.pop()!]) {
+      if (dropped[i]) continue;
+      dropped[i] = true;
+      queue.push(i);
+    }
+  }
+  return group.filter((_, i) => !dropped[i]);
 }
 
 /** Asleep but with a velocity: something pushed it without waking it. */

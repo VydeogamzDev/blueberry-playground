@@ -228,6 +228,12 @@ const RUNOFF_FILTER = groups(GROUP.DEBRIS, GROUP.STATIC);
 const RUNOFF = 0x80;
 /** Share of drops that run off what they hit (the rest soak in); blood always sticks. */
 const RUNOFF_CHANCE: Record<number, number> = { [Liquid.Water]: 0.7, [Liquid.Acid]: 0.6, [Liquid.Oil]: 0.45 };
+/**
+ * Droplets in flight before new blood thins out: each one ray-casts its path
+ * every step, and a battle of 100 people keeps a thousand of them in the air
+ * (2 ms a step). Poured liquids are never thinned: their drops carry the volume.
+ */
+const DROP_BUDGET = 500;
 
 export class Particles {
   private smokeL = new Layer(3000, false, 44);
@@ -237,6 +243,8 @@ export class Particles {
   private game: Game;
   private ray = new RAPIER.Ray({ x: 0, y: 0 }, { x: 1, y: 0 });
   bloodEnabled = true;
+  /** Droplets (blood and liquids) alive after the last step. */
+  private drops = 0;
 
   constructor(game: Game) {
     this.game = game;
@@ -274,7 +282,9 @@ export class Particles {
   /** Emits a fan of blood droplets. */
   blood(x: number, y: number, dx: number, dy: number, amount: number, speed = 2.5, ignore: RAPIER.RigidBody | null = null): void {
     if (!this.bloodEnabled) return;
-    const n = Math.min(60, Math.round(amount));
+    const thin = Math.min(1, DROP_BUDGET / (this.drops + 1));
+    const n = Math.min(60, thin < 1 ? Math.floor(amount * thin + Math.random()) : Math.round(amount));
+    this.drops += n;
     for (let k = 0; k < n; k++) {
       const s = speed * (0.3 + Math.random() * 0.9);
       const spread = 0.55;
@@ -372,6 +382,9 @@ export class Particles {
   step(dt: number): void {
     this.stepLayer(this.smokeL, dt);
     this.stepLayer(this.normal, dt);
+    let drops = 0;
+    for (let i = 0; i < this.normal.count; i++) if (this.normal.kind[i] === PK.Blood) drops++;
+    this.drops = drops;
     this.stepLayer(this.fireL, dt);
     this.stepLayer(this.additive, dt);
   }
@@ -470,10 +483,21 @@ export class Particles {
 }
 
 /** Permanent pixel stains on the static environment (blood on the floor, scorch marks). */
+/** Stains as captured for undo: pixel coordinates and colors, oldest slot first. */
+export interface StainState {
+  n: number;
+  head: number;
+  xy: Int16Array;
+  rgba: Uint8Array;
+}
+
 export class Stains {
   private cap = 60000;
   private n = 0;
   private head = 0;
+  /** Bumped by every change, so that an unchanged state is captured once. */
+  private version = 0;
+  private saved: { version: number; state: StainState } | null = null;
   private pos: Float32Array;
   private rgba: Float32Array;
   private size: Float32Array;
@@ -506,6 +530,7 @@ export class Stains {
 
   /** Adds a stain pixel snapped to the sprite-pixel grid. Re-staining a pixel darkens it. */
   add(x: number, y: number, r: number, g: number, b: number, a = 1): void {
+    this.version++;
     const ix = Math.floor(x / PX);
     const iy = Math.floor(y / PX);
     const key = ix * 100000 + iy;
@@ -558,7 +583,41 @@ export class Stains {
     }
   }
 
+  /** The stains as they are now (the same object while they don't change). */
+  capture(): StainState {
+    if (this.saved?.version === this.version) return this.saved.state;
+    const n = this.n;
+    const xy = new Int16Array(n * 2);
+    const rgba = new Uint8Array(n * 4);
+    for (let i = 0; i < n; i++) {
+      xy[i * 2] = Math.floor(this.pos[i * 3] / PX);
+      xy[i * 2 + 1] = Math.floor(this.pos[i * 3 + 1] / PX);
+      for (let k = 0; k < 4; k++) rgba[i * 4 + k] = Math.round(this.rgba[i * 4 + k] * 255);
+    }
+    const state = { n, head: this.head, xy, rgba };
+    this.saved = { version: this.version, state };
+    return state;
+  }
+
+  /** Puts the stains back as captured. */
+  restore(s: StainState): void {
+    this.clear();
+    for (let i = 0; i < s.n; i++) {
+      const ix = s.xy[i * 2];
+      const iy = s.xy[i * 2 + 1];
+      this.pos[i * 3] = (ix + 0.5) * PX;
+      this.pos[i * 3 + 1] = (iy + 0.5) * PX;
+      for (let k = 0; k < 4; k++) this.rgba[i * 4 + k] = s.rgba[i * 4 + k] / 255;
+      this.occupied.set(ix * 100000 + iy, i);
+    }
+    this.n = s.n;
+    this.head = s.head;
+    if (s.n) this.markDirty(s.n - 1);
+    this.saved = { version: this.version, state: s };
+  }
+
   clear(): void {
+    this.version++;
     this.n = 0;
     this.head = 0;
     this.occupied.clear();
