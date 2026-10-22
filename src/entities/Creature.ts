@@ -599,12 +599,14 @@ export class Creature extends Entity {
     const paws = this.pawsDown();
     const { err } = this.tilt();
     const tilt = Math.abs(err);
+    // no paw on anything and touching nothing at all: falling (worked out below)
+    let airborne = false;
 
     // ---- state machine
     if (!conscious || this.held) {
       if (this.state !== 'down') this.setState('down');
     } else if (this.state === 'stand' || this.state === 'getup') {
-      const airborne = !paws && !this.touching();
+      airborne = !paws && !this.touching();
       this.airT = airborne ? this.airT + dt : 0;
       // leaning on something for a while counts as fallen too
       this.leanT = tilt > 0.5 && !airborne ? this.leanT + dt : 0;
@@ -643,6 +645,7 @@ export class Creature extends Entity {
       const wait = 1.6 + this.getupFails * 1.5 + this.pain * 4;
       if (this.gaveUp && this.retries < 2 && Math.hypot(c.x - this.gaveUp.x, c.y - this.gaveUp.y) > 0.4) this.retry();
       const inAir = this.species.airRight && !paws && this.stateT > 0.3 && !this.touching();
+      airborne = inAir;
       if ((inAir || (!this.gaveUp && this.stateT > wait && rest)) && this.legsWork() && str > 0.7 && this.pain < 0.6 && !this.held && !this.pinned()) {
         this.getupBest = tilt;
         this.getupProgressT = 0;
@@ -683,7 +686,9 @@ export class Creature extends Entity {
         // over onto its nose)
         this.right(RIGHT.kp, RIGHT.kd, RIGHT.amax, 0, false, dt);
       } else if (paws >= 2 || (paws && this.gaitAmt > 0)) this.right(STAND.kp * str, STAND.kd * str, STAND.amax, STAND.dead, true, dt);
-      else if (this.species.airRight && !paws) this.right(RIGHT.kp, RIGHT.kd, RIGHT.amax * 1.5, 0, false, dt);
+      // (only really in the air: propped on a heap with no paw finding footing, it
+      // would push every step, never sleep, and keep waking the heap it's on)
+      else if (this.species.airRight && airborne) this.right(RIGHT.kp, RIGHT.kd, RIGHT.amax * 1.5, 0, false, dt);
     }
 
     this.walk(dt, paws);

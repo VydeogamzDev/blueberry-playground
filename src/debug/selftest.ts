@@ -1041,28 +1041,60 @@ export function makeSelfTest(game: Game, controls: Controls) {
           .filter((e) => (e as Human | Creature).state !== 'stand')
           .flatMap((e) => e.parts)
           .filter((p) => !p.destroyed && !p.frozen);
+      // who it is, and what they're doing (to tell from a failure what went wrong)
+      const who = (e: Entity) => {
+        const status = (e as { status?: () => string }).status?.call(e);
+        return status ? `${e.def.id} (${status})` : e.def.id;
+      };
+      // the fastest thing seen so far, and what it was touching then
+      let peak = 0;
+      let peakWho = '';
+      const fastest = (at: number) => {
+        const world = game.physics.world;
+        for (const e of game.entities) {
+          for (const p of e.parts) {
+            const s = p.destroyed ? 0 : Math.hypot(p.vx, p.vy);
+            if (s <= peak) continue;
+            peak = s;
+            const touching = new Set<string>();
+            for (const c of p.colliders) {
+              world.contactPairsWith(c, (o) => world.contactPair(c, o, (m) => {
+                if (m.numContacts() > 0) touching.add(game.physics.partOf(o)?.entity.def.id ?? 'the floor');
+              }));
+            }
+            peakWho = `${who(e)}'s ${p.name} at ${at.toFixed(1)} s, touching ${[...touching].join(', ') || 'nothing'}`;
+          }
+        }
+      };
       kit.advance(4);
       let t = 4;
-      let peak = 0;
       let asleepFor = 0;
       let first = 0;
+      // the last ones awake before everything first fell asleep
+      let stirring = '';
       while (t < 150 && asleepFor < 20) {
         game.advance(1, (i) => {
-          if (i % 6 === 0) peak = Math.max(peak, kit.maxSpeed());
+          if (i % 6 === 0) fastest(t + i / 120);
         });
         t++;
-        if (lying().some((p) => !p.body.isSleeping())) asleepFor = 0;
-        else {
+        const awake = lying().filter((p) => !p.body.isSleeping());
+        if (awake.length) {
+          asleepFor = 0;
+          // (the ones still moving: a heap wakes as one, so the rest are awake with them)
+          const ents = [...new Set(awake.map((p) => p.entity))];
+          const moving = ents.filter((e) => !e.atRest);
+          if (!first) stirring = (moving.length ? moving : ents).map(who).join(', ');
+        } else {
           asleepFor++;
           first ||= t;
         }
       }
       if (asleepFor < 20) {
         const awake = lying().filter((p) => !p.body.isSleeping()).length;
-        return first ? `asleep at ${first} s, but still waking up again at ${t} s` : `${awake} of ${lying().length} bodies still awake after ${t} s`;
+        return first ? `asleep at ${first} s, but still waking up again at ${t} s` : `${awake} of ${lying().length} bodies still awake after ${t} s (${stirring})`;
       }
-      if (peak > 12) return `launch while settling: ${peak.toFixed(1)} m/s`;
-      if (first > 50) return `took ${first} s to fall asleep`;
+      if (peak > 12) return `launch while settling: ${peak.toFixed(1)} m/s (${peakWho})`;
+      if (first > 50) return `took ${first} s to fall asleep (last awake: ${stirring})`;
       return true;
     }],
     ['extra: people walk where they are sent, turn round, stop short of things and run from gunfire', () => {

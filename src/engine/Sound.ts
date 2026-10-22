@@ -240,6 +240,9 @@ export class Sound {
 
   /** Limits how many instances of a sound kind can start within a window. */
   private allow(kind: string, max: number, windowMs = 60): boolean {
+    // muted, nothing gets through: what does depends on the real time (see clock),
+    // and picking it would draw on Math.random, so a seeded run would not replay
+    if (this.muted && !this.tap) return false;
     const now = this.clock();
     let arr = this.last.get(kind);
     if (!arr) this.last.set(kind, (arr = []));

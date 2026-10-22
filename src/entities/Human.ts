@@ -410,8 +410,30 @@ export class Human extends Entity implements Holder {
    */
   private failGetup(): void {
     this.getupFails++;
-    if (this.getupFails >= GIVE_UP) this.gaveUp = { x: this.L('upperTorso').part.x, y: this.L('upperTorso').part.y };
+    // tangled up with other bodies, each go shoves the whole heap about (and sets
+    // whoever it frees trying in turn): fewer goes, as animals on a heap get
+    if (this.getupFails >= (this.amongBodies() ? 2 : GIVE_UP)) this.gaveUp = { x: this.L('upperTorso').part.x, y: this.L('upperTorso').part.y };
     this.setState('down');
+  }
+
+  /** Touching someone else, a person or an animal. */
+  private amongBodies(): boolean {
+    const world = this.game.physics.world;
+    for (const l of this.order) {
+      if (l.gone || !l.attached) continue;
+      for (const c of l.part.colliders) {
+        let hit = false;
+        world.contactPairsWith(c, (o) => {
+          const op = hit ? undefined : this.game.physics.partOf(o);
+          if (!op || op.entity === this || op.frozen || !op.entity.canWalk) return;
+          world.contactPair(c, o, (m) => {
+            if (m.numContacts() > 0) hit = true;
+          });
+        });
+        if (hit) return true;
+      }
+    }
+    return false;
   }
 
   /** Something happened (a hit, a wound, being picked up): try standing again. */
@@ -514,6 +536,7 @@ export class Human extends Entity implements Holder {
   private setState(s: State): void {
     if (this.state === s) return;
     const wasUp = this.state === 'stand' || this.state === 'getup';
+    const wasGettingUp = this.state === 'getup';
     this.state = s;
     this.stateT = 0;
     this.feetT = 0;
@@ -528,6 +551,10 @@ export class Human extends Entity implements Holder {
         if (l.joint && l.parent && !l.gone) this.blendFrom.set(l, wrapAngle(l.part.body.rotation() - l.parent.part.body.rotation()));
       }
     } else this.blendFrom = null;
+    // up before that blend is done (it may stand from half a second in): the rest
+    // of the way eases in too. Snapped, a half-bent leg whips out at 10-17 m/s,
+    // worst with the feet on something loose (another body's paw)
+    if (s === 'stand' && wasGettingUp) this.easeFrom(SETTLE_T);
     this.applyDamping();
     this.updateMotors(true);
     // a person who stood still has fallen asleep: wake them so the change shows
