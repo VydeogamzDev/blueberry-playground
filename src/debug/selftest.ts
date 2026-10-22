@@ -13,6 +13,7 @@ import type { Entity } from '../world/Entity';
 import { getItem } from '../catalog/items';
 import { makeTestKit } from './testkit';
 import { saveToString, loadFromString } from '../world/SaveLoad';
+import { PX } from '../engine/constants';
 
 interface Result {
   name: string;
@@ -100,6 +101,22 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (sum / n > 0.05) return `still moving (mean ${(sum / n).toFixed(3)} m/s)`;
       if (peak > 5) return `launch: ${peak.toFixed(1)} m/s`;
       if (kit.lowestPoint() < -0.05) return 'something fell through the floor';
+      // bodies in the heap don't sink visibly into each other
+      const world = game.physics.world;
+      let sink = 0;
+      for (const h of hs) for (const p of h.parts) {
+        if (p.destroyed) continue;
+        for (const c of p.colliders) {
+          world.contactPairsWith(c, (o) => {
+            const q = game.physics.partOf(o);
+            if (!q || q.entity === h) return;
+            world.contactPair(c, o, (m) => {
+              for (let k = 0; k < m.numContacts(); k++) sink = Math.max(sink, -m.contactDist(k));
+            });
+          });
+        }
+      }
+      if (sink > PX * 1.5) return `bodies overlap by ${(sink / PX).toFixed(1)} px`;
       return true;
     }],
     ['4b. eight conscious people piled: no launches', () => {
