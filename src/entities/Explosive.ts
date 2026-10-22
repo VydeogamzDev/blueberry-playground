@@ -54,7 +54,7 @@ export class Explosive extends Item {
     if (this.blast.pin) {
       const w = p.pixelToWorld(this.blast.pin[0], this.blast.pin[1]);
       this.game.particles.debris(w.x, w.y, -p.flip * 0.5, 1, 1, 0xc9a43c, 2.5);
-      this.game.sound.click(w.x, 1.4);
+      this.game.sound.click(w.x, 1.6);
     }
   }
 
@@ -62,7 +62,6 @@ export class Explosive extends Item {
     if (this.armed && this.timer <= fuse) return;
     this.armed = true;
     this.timer = fuse;
-    if (this.blast.fusePoint) this.game.sound.fuse(this.main.x);
   }
 
   preStep(dt: number): void {
@@ -76,7 +75,7 @@ export class Explosive extends Item {
       if (this.plateT <= 0) {
         this.plateT = 0.05;
         if (this.loaded()) {
-          this.game.sound.click(p.x, 0.8);
+          this.game.sound.arm(p.x);
           this.arm(0.25);
         }
       }
@@ -92,6 +91,7 @@ export class Explosive extends Item {
         });
       }
       if (Math.random() < 0.08) this.game.particles.smoke(w.x, w.y, 1, 0.06);
+      this.game.sound.hold(this, 'explosion/fuse_loop', 0.35, w.x);
     } else if (this.blast.fuse > 0.5) {
       // grenade-style ticking: small flash every half second
       this.beepT -= dt;

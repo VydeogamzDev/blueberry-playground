@@ -384,7 +384,7 @@ export class Particles {
         L.vy[i] = -L.vy[i] * (kd === PK.Shell ? 0.45 : 0.3);
         L.vx[i] *= 0.6;
         if (Math.abs(L.vy[i]) < 0.3) L.vy[i] = 0;
-        if (kd === PK.Shell && Math.abs(L.vy[i]) > 0.5) this.game.sound.click(nx, 2.2);
+        if (kd === PK.Shell && Math.abs(L.vy[i]) > 0.5) this.game.sound.casing(nx, L.size[i] > PX * 1.5);
         continue;
       }
       if (nx < WORLD.left || nx > WORLD.right) {

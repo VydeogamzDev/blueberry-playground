@@ -71,7 +71,7 @@ export class Button extends Prop {
     if (this.cool > 0) return;
     this.cool = 0.25;
     this.main.flash = 0.6;
-    this.game.sound.click(this.main.x, 1.6);
+    this.game.sound.button(this.main.x);
     this.game.connections.pulse(this);
   }
 
@@ -178,7 +178,6 @@ export class LightBulb extends Prop {
 export class Thruster extends Prop {
   on = false;
   force: number;
-  private hum = 0;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, force: number, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
@@ -204,11 +203,7 @@ export class Thruster extends Prop {
       life: 0.12 + Math.random() * 0.1, size: 0.12, size1: 0.03, color: 0xbfe7ff, color1: 0xff7a2a, alpha: 0.9, alpha1: 0.2, gravity: 0, drag: 2,
     });
     if (Math.random() < 0.15) ps.smoke(n.x - f.x * 0.3, n.y - f.y * 0.3, 1, 0.15);
-    this.hum -= dt;
-    if (this.hum <= 0) {
-      this.hum = 0.18;
-      this.game.sound.motor(p.x);
-    }
+    this.game.sound.hold(this, 'machine/thruster_loop', 0.45, p.x);
   }
 
   contextActions(): ContextAction[] {
@@ -241,7 +236,6 @@ export class Motor extends Entity {
   dir: 1 | -1 = 1;
   private cfg: MotorConfig;
   private applied = '';
-  private hum = 0;
 
   constructor(game: Game, def: ItemDef, cfg: MotorConfig, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -293,11 +287,9 @@ export class Motor extends Entity {
   preStep(dt: number): void {
     this.apply();
     if (!this.running()) return;
-    this.hum -= dt;
-    if (this.hum <= 0) {
-      this.hum = 0.3;
-      this.game.sound.motor(this.housing.x);
-    }
+    // the hum rises with the rotor's speed
+    const w = Math.min(1, Math.abs(this.rotor.av - this.housing.av) / this.cfg.speed);
+    this.game.sound.hold(this, 'machine/motor_loop', 0.12 + w * 0.2, this.housing.x, 0.6 + w * 0.6);
   }
 
   contextActions(): ContextAction[] {

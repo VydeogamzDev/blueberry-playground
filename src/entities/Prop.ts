@@ -72,7 +72,8 @@ export class Prop extends Entity {
       const w = p.pixelToWorld(ix, iy);
       g.particles.debris(w.x, w.y, (Math.random() - 0.5) * 2, 1, 1, p.mat.debrisColor, 3);
     }
-    g.sound.impact(p.mat.sound, 1, p.x);
+    if (p.mat.sound === 'glass') g.sound.play('impact/glass_break', { gain: 0.9, x: p.x });
+    else g.sound.impact(p.mat.sound, 1, p.x);
     g.remove(this);
   }
 }

@@ -1,23 +1,64 @@
 import type { ImpactSound } from '../world/Materials';
 
-type Kind = string;
+export type GunSound = 'pistol' | 'revolver' | 'smg' | 'rifle' | 'shotgun' | 'sniper' | 'minigun';
+
+interface PlayOpts {
+  /** Linear gain (before the master volume). */
+  gain?: number;
+  /** Playback-rate multiplier (pitch). */
+  rate?: number;
+  /** Random pitch spread (+-fraction). */
+  vary?: number;
+  /** World x for stereo panning / off-screen attenuation. */
+  x?: number;
+  /** Start delay in seconds. */
+  delay?: number;
+}
+
+interface LoopVoice {
+  src: AudioBufferSourceNode;
+  gain: GainNode;
+  pan: StereoPannerNode;
+  /** Seconds since the owner last asked for it. */
+  idle: number;
+}
+
+const MAX_VOICES = 40;
 
 /**
- * Procedural sound effects (WebAudio). Nothing is loaded from disk: every
- * effect is synthesized from filtered noise and oscillators.
+ * Sample-based sound effects. Recordings (CC0, see public/sfx/CREDITS.md) are
+ * listed in public/sfx/manifest.json as `category/name -> [variants]`; each play
+ * picks a variant (never the same one twice in a row) with a little pitch and
+ * level variation, pans it by screen position and pitches it down in slow motion.
  */
 export class Sound {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
-  private comp: DynamicsCompressorNode | null = null;
-  private noise: AudioBuffer | null = null;
-  private last = new Map<Kind, number[]>();
+  private manifest: Record<string, string[]> = {};
+  private buffers = new Map<string, AudioBuffer>();
+  private lastVariant = new Map<string, number>();
+  private last = new Map<string, number[]>();
+  private loops = new Map<object, Map<string, LoopVoice>>();
+  private voices = 0;
   volume = 0.7;
   muted = false;
-  /** Screen-space pan source: returns -1..1 for a world x. */
+  /** Screen-space pan source: returns -1..1 for a world x (beyond = off-screen). */
   panFor: (x: number) => number = () => 0;
-  /** Simulation speed (pitch shifts in slow motion). */
+  /** Simulation speed (sounds pitch down in slow motion). */
   rate = 1;
+
+  constructor() {
+    const base = import.meta.env.BASE_URL;
+    fetch(`${base}sfx/manifest.json`)
+      .then((r) => r.json())
+      .then((m: Record<string, unknown>) => {
+        for (const [k, v] of Object.entries(m)) if (Array.isArray(v) && k !== 'loops') this.manifest[k] = v as string[];
+        if (this.ctx) void this.loadAll();
+      })
+      .catch(() => {
+        /* no sound library: stay silent */
+      });
+  }
 
   /** Must be called from a user gesture. */
   unlock(): void {
@@ -31,17 +72,37 @@ export class Sound {
       return;
     }
     const ctx = this.ctx;
-    this.comp = ctx.createDynamicsCompressor();
-    this.comp.threshold.value = -14;
-    this.comp.ratio.value = 6;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -10;
+    comp.knee.value = 6;
+    comp.ratio.value = 4;
+    comp.attack.value = 0.003;
+    comp.release.value = 0.25;
     this.master = ctx.createGain();
-    this.master.gain.value = this.volume;
-    this.master.connect(this.comp);
-    this.comp.connect(ctx.destination);
-    const len = ctx.sampleRate * 2;
-    this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
-    const d = this.noise.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    this.master.gain.value = this.muted ? 0 : this.volume;
+    this.master.connect(comp);
+    comp.connect(ctx.destination);
+    if (Object.keys(this.manifest).length) void this.loadAll();
+  }
+
+  private async loadAll(): Promise<void> {
+    const ctx = this.ctx!;
+    const base = import.meta.env.BASE_URL;
+    const files = [...new Set(Object.values(this.manifest).flat())].filter((f) => !this.buffers.has(f));
+    // a few at a time; the short UI and impact sounds are tiny, so this is quick
+    let next = 0;
+    const worker = async () => {
+      while (next < files.length) {
+        const f = files[next++];
+        try {
+          const data = await (await fetch(base + f)).arrayBuffer();
+          this.buffers.set(f, await ctx.decodeAudioData(data));
+        } catch {
+          /* skip broken files */
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: 6 }, worker));
   }
 
   setVolume(v: number): void {
@@ -55,7 +116,7 @@ export class Sound {
   }
 
   /** Limits how many instances of a sound kind can start within a window. */
-  private allow(kind: Kind, max: number, windowMs = 60): boolean {
+  private allow(kind: string, max: number, windowMs = 60): boolean {
     const now = performance.now();
     let arr = this.last.get(kind);
     if (!arr) this.last.set(kind, (arr = []));
@@ -65,203 +126,273 @@ export class Sound {
     return true;
   }
 
-  private out(x?: number): AudioNode | null {
-    if (!this.ctx || !this.master || this.muted) return null;
-    if (x === undefined) return this.master;
-    const p = this.ctx.createStereoPanner();
-    p.pan.value = Math.max(-1, Math.min(1, this.panFor(x) * 0.8));
-    p.connect(this.master);
-    return p;
+  private pick(key: string): AudioBuffer | null {
+    const list = this.manifest[key];
+    if (!list?.length) return null;
+    let i = Math.floor(Math.random() * list.length);
+    if (list.length > 1 && i === this.lastVariant.get(key)) i = (i + 1) % list.length;
+    this.lastVariant.set(key, i);
+    return this.buffers.get(list[i]) ?? this.buffers.get(list.find((f) => this.buffers.has(f)) ?? '') ?? null;
   }
 
-  private noiseBurst(dest: AudioNode, o: {
-    dur: number; gain: number; type?: BiquadFilterType; freq: number; q?: number; freqEnd?: number; attack?: number; delay?: number;
-  }): void {
-    const ctx = this.ctx!;
+  /** Slow motion pitches everything down a little. */
+  private timeRate(): number {
+    return this.rate >= 1 ? 1 : 0.55 + 0.45 * Math.max(0, this.rate);
+  }
+
+  /** Pan and level for a world x (sounds far off-screen fade out). */
+  private spatial(x: number | undefined): { pan: number; att: number } {
+    if (x === undefined) return { pan: 0, att: 1 };
+    const p = this.panFor(x);
+    const over = Math.max(0, Math.abs(p) - 1);
+    return { pan: Math.max(-1, Math.min(1, p * 0.75)), att: 1 / (1 + over * 1.6) };
+  }
+
+  /** Plays one variant of a sound key. */
+  play(key: string, o: PlayOpts = {}): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.master || this.muted || ctx.state !== 'running') return;
+    // when busy, only loud (important) sounds get a voice
+    if (this.voices >= MAX_VOICES && (o.gain ?? 1) < 0.8) return;
+    if (this.voices >= MAX_VOICES * 1.5) return;
+    const buf = this.pick(key);
+    if (!buf) return;
+    const { pan, att } = this.spatial(o.x);
+    const gain = (o.gain ?? 1) * att * (0.9 + Math.random() * 0.2);
+    if (gain < 0.01) return;
     const t = ctx.currentTime + (o.delay ?? 0);
     const src = ctx.createBufferSource();
-    src.buffer = this.noise;
-    src.playbackRate.value = this.rate < 1 ? Math.max(0.35, this.rate) : 1;
-    const f = ctx.createBiquadFilter();
-    f.type = o.type ?? 'bandpass';
-    f.frequency.setValueAtTime(o.freq, t);
-    if (o.freqEnd) f.frequency.exponentialRampToValueAtTime(Math.max(20, o.freqEnd), t + o.dur);
-    f.Q.value = o.q ?? 1;
+    src.buffer = buf;
+    const vary = o.vary ?? 0.06;
+    src.playbackRate.value = (o.rate ?? 1) * (1 + (Math.random() * 2 - 1) * vary) * this.timeRate();
     const g = ctx.createGain();
-    const atk = o.attack ?? 0.002;
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, o.gain), t + atk);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + o.dur / Math.min(1, Math.max(0.35, this.rate)));
-    src.connect(f).connect(g).connect(dest);
-    src.start(t, Math.random() * 1.5);
-    src.stop(t + o.dur / Math.max(0.35, Math.min(1, this.rate)) + 0.05);
+    g.gain.value = gain;
+    const p = ctx.createStereoPanner();
+    p.pan.value = pan;
+    src.connect(g).connect(p).connect(this.master);
+    this.voices++;
+    src.onended = () => {
+      this.voices--;
+      src.disconnect();
+      p.disconnect();
+    };
+    src.start(t);
   }
 
-  private tone(dest: AudioNode, o: {
-    freq: number; freqEnd?: number; dur: number; gain: number; type?: OscillatorType; delay?: number; attack?: number;
-  }): void {
-    const ctx = this.ctx!;
-    const t = ctx.currentTime + (o.delay ?? 0);
-    const r = Math.max(0.35, Math.min(1, this.rate));
-    const osc = ctx.createOscillator();
-    osc.type = o.type ?? 'sine';
-    osc.frequency.setValueAtTime(o.freq * r, t);
-    if (o.freqEnd) osc.frequency.exponentialRampToValueAtTime(Math.max(10, o.freqEnd * r), t + o.dur / r);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, o.gain), t + (o.attack ?? 0.003));
-    g.gain.exponentialRampToValueAtTime(0.0001, t + o.dur / r);
-    osc.connect(g).connect(dest);
-    osc.start(t);
-    osc.stop(t + o.dur / r + 0.05);
+  /**
+   * Keeps a looping sound running for `owner` while called every step/frame;
+   * it fades out shortly after the calls stop.
+   */
+  hold(owner: object, key: string, gain: number, x?: number, rate = 1): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.master) return;
+    let m = this.loops.get(owner);
+    if (!m) this.loops.set(owner, (m = new Map()));
+    let v = m.get(key);
+    const { pan, att } = this.spatial(x);
+    if (!v) {
+      const buf = this.pick(key);
+      if (!buf) return;
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      const p = ctx.createStereoPanner();
+      src.connect(g).connect(p).connect(this.master);
+      src.start(ctx.currentTime, Math.random() * buf.duration);
+      v = { src, gain: g, pan: p, idle: 0 };
+      m.set(key, v);
+    }
+    v.idle = 0;
+    const t = ctx.currentTime;
+    v.gain.gain.setTargetAtTime(this.muted ? 0 : gain * att, t, 0.05);
+    v.pan.pan.setTargetAtTime(pan, t, 0.05);
+    v.src.playbackRate.setTargetAtTime(rate * this.timeRate(), t, 0.08);
   }
 
-  // ---- effects -------------------------------------------------------------
+  /** Fades out loops nobody is holding any more. Call once per frame. */
+  update(dt: number): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    for (const [owner, m] of this.loops) {
+      for (const [key, v] of m) {
+        v.idle += dt;
+        if (v.idle > 0.12) v.gain.gain.setTargetAtTime(0, t, 0.06);
+        if (v.idle > 0.6) {
+          v.src.stop();
+          v.src.disconnect();
+          v.pan.disconnect();
+          m.delete(key);
+        }
+      }
+      if (!m.size) this.loops.delete(owner);
+    }
+  }
+
+  stopAll(): void {
+    for (const m of this.loops.values()) for (const v of m.values()) v.idle = 1;
+  }
+
+  // ---- game sounds -----------------------------------------------------------
 
   impact(mat: ImpactSound, strength: number, x?: number): void {
     if (mat === 'none' || strength < 0.04) return;
-    if (!this.allow('impact', 7, 70) || !this.allow('impact-' + mat, 3, 50)) return;
-    const d = this.out(x);
-    if (!d) return;
+    if (!this.allow('impact', 8, 70) || !this.allow('impact-' + mat, 3, 50)) return;
     const s = Math.min(1, strength);
-    const v = 0.08 + s * 0.55;
-    const jit = 0.85 + Math.random() * 0.3;
+    const tier = s < 0.3 ? 0 : s < 0.65 ? 1 : 2;
+    const gain = 0.12 + s * 0.88;
     switch (mat) {
       case 'wood':
-        this.noiseBurst(d, { dur: 0.09 + s * 0.06, gain: v, freq: 520 * jit, q: 2.2 });
-        this.tone(d, { freq: 210 * jit, freqEnd: 150, dur: 0.07, gain: v * 0.6, type: 'triangle' });
+        this.play(['impact/wood_light', 'impact/wood_medium', 'impact/wood_heavy'][tier], { gain, x });
         break;
       case 'metal':
-        this.noiseBurst(d, { dur: 0.04, gain: v * 0.6, type: 'highpass', freq: 2500 });
-        for (const [f, g] of [[430, 0.5], [1090, 0.35], [1830, 0.22], [2710, 0.12]] as const) {
-          this.tone(d, { freq: f * jit, dur: 0.18 + s * 0.45, gain: v * g * 0.55, type: 'sine' });
-        }
+        this.play(['impact/metal_light', 'impact/metal_medium', 'impact/metal_heavy'][tier], { gain: gain * 0.85, x });
+        if (tier === 2) this.play('impact/plate_heavy', { gain: gain * 0.4, x });
         break;
       case 'flesh':
-        this.noiseBurst(d, { dur: 0.1 + s * 0.06, gain: v * 0.9, type: 'lowpass', freq: 420 * jit, q: 1.2 });
-        this.tone(d, { freq: 95 * jit, freqEnd: 55, dur: 0.09, gain: v * 0.55 });
+        this.play(['impact/soft', 'impact/punch', 'impact/body_fall'][tier], { gain: gain * 1.1, x, rate: 0.95 });
+        if (tier === 2) this.play('impact/punch_heavy', { gain: gain * 0.5, x });
         break;
       case 'stone':
-        this.noiseBurst(d, { dur: 0.08 + s * 0.05, gain: v, type: 'lowpass', freq: 1300 * jit, q: 0.8 });
-        this.tone(d, { freq: 140 * jit, freqEnd: 90, dur: 0.06, gain: v * 0.5 });
+        this.play('impact/stone', { gain, x, rate: tier === 2 ? 0.85 : 1 });
         break;
       case 'plastic':
-        this.noiseBurst(d, { dur: 0.05, gain: v * 0.7, freq: 1500 * jit, q: 3 });
-        break;
-      case 'rubber':
-        this.tone(d, { freq: 160 * jit, freqEnd: 110, dur: 0.08, gain: v * 0.6, type: 'triangle' });
+        this.play('impact/plastic', { gain: gain * 0.8, x });
         break;
       case 'glass':
-        for (const f of [2300, 3700, 5200]) this.tone(d, { freq: f * jit, dur: 0.25, gain: v * 0.12 });
-        this.noiseBurst(d, { dur: 0.08, gain: v * 0.5, type: 'highpass', freq: 3000 });
+        this.play(tier === 2 ? 'impact/glass_heavy' : 'impact/glass_light', { gain: gain * 0.8, x });
+        break;
+      case 'rubber':
+        this.play('impact/soft', { gain: gain * 0.9, x, rate: 1.35 });
         break;
     }
   }
 
-  gunshot(kind: 'pistol' | 'rifle' | 'shotgun' | 'smg' | 'sniper', x?: number): void {
+  gunshot(kind: GunSound, x?: number): void {
     if (!this.allow('gun', 6, 40)) return;
-    const d = this.out(x);
-    if (!d) return;
-    const big = kind === 'shotgun' || kind === 'sniper';
-    const crack = kind === 'pistol' ? 0.55 : kind === 'smg' ? 0.45 : 0.75;
-    this.noiseBurst(d, { dur: 0.035, gain: crack, type: 'highpass', freq: 2200 });
-    this.noiseBurst(d, { dur: big ? 0.55 : kind === 'rifle' ? 0.38 : 0.26, gain: big ? 0.9 : 0.7, freq: big ? 700 : kind === 'pistol' ? 1400 : 1100, q: 0.6, freqEnd: 300 });
-    this.noiseBurst(d, { dur: big ? 0.3 : 0.16, gain: big ? 0.8 : 0.55, type: 'lowpass', freq: 380 });
-    this.tone(d, { freq: big ? 110 : 150, freqEnd: 40, dur: big ? 0.25 : 0.12, gain: big ? 0.7 : 0.45 });
-    // tail echo
-    this.noiseBurst(d, { dur: big ? 0.9 : 0.5, gain: 0.08, type: 'lowpass', freq: 900, freqEnd: 200, delay: 0.05, attack: 0.04 });
+    switch (kind) {
+      case 'pistol': this.play('gun/pistol', { gain: 0.8, x }); break;
+      case 'revolver': this.play('gun/magnum', { gain: 0.95, x }); break;
+      case 'smg': this.play('gun/smg', { gain: 0.7, x, vary: 0.04 }); break;
+      case 'minigun': this.play('gun/rifle', { gain: 0.6, x, rate: 1.15, vary: 0.05 }); break;
+      case 'rifle': this.play('gun/rifle', { gain: 0.85, x }); break;
+      case 'shotgun':
+        this.play('gun/shotgun', { gain: 1, x });
+        this.play('gun/pump', { gain: 0.35, x, delay: 0.35 });
+        break;
+      case 'sniper': this.play('gun/sniper', { gain: 1, x, vary: 0.03 }); break;
+    }
+  }
+
+  casing(x?: number, big = false): void {
+    if (!this.allow('casing', 3, 60)) return;
+    this.play('gun/casing', { gain: big ? 0.3 : 0.22, x, rate: big ? 0.8 : 1, vary: 0.12 });
   }
 
   explosion(size: number, x?: number): void {
     if (!this.allow('boom', 4, 120)) return;
-    const d = this.out(x);
-    if (!d) return;
-    const s = Math.min(2, size);
-    this.noiseBurst(d, { dur: 0.05, gain: 0.9, type: 'highpass', freq: 1500 });
-    this.noiseBurst(d, { dur: 1.2 + s * 0.6, gain: 1.0, type: 'lowpass', freq: 1400, freqEnd: 120, q: 0.7 });
-    this.tone(d, { freq: 75, freqEnd: 24, dur: 0.9 + s * 0.3, gain: 1.0 });
-    this.noiseBurst(d, { dur: 2.2, gain: 0.18, type: 'bandpass', freq: 600, freqEnd: 150, delay: 0.15, attack: 0.1 });
+    const big = size > 1.6;
+    this.play(big ? 'explosion/large' : 'explosion/small', { gain: 1, x, vary: 0.05, rate: big ? 1 : 1.05 - Math.min(0.15, size * 0.05) });
+    this.play('explosion/debris', { gain: big ? 0.55 : 0.35, x, delay: 0.18 });
   }
 
   bulletHit(mat: ImpactSound, x?: number): void {
     if (!this.allow('bhit', 6, 50)) return;
-    const d = this.out(x);
-    if (!d) return;
-    if (mat === 'flesh') {
-      this.noiseBurst(d, { dur: 0.08, gain: 0.45, freq: 900, q: 1.5 });
-      this.noiseBurst(d, { dur: 0.12, gain: 0.35, type: 'lowpass', freq: 300 });
-    } else if (mat === 'metal') {
-      this.noiseBurst(d, { dur: 0.03, gain: 0.4, type: 'highpass', freq: 3000 });
-      this.tone(d, { freq: 1900 + Math.random() * 600, freqEnd: 900, dur: 0.22, gain: 0.12 });
-    } else {
-      this.noiseBurst(d, { dur: 0.06, gain: 0.4, freq: 1100, q: 1.2 });
+    switch (mat) {
+      case 'flesh': this.play('hit/flesh', { gain: 0.75, x }); break;
+      case 'metal': this.play('hit/metal', { gain: 0.5, x }); break;
+      case 'wood': this.play('hit/wood', { gain: 0.6, x }); break;
+      case 'glass': this.play('hit/glass', { gain: 0.6, x }); break;
+      case 'stone': this.play('hit/concrete', { gain: 0.55, x }); break;
+      default: this.play('hit/concrete', { gain: 0.35, x, rate: 1.2 });
     }
   }
 
   ricochet(x?: number): void {
     if (!this.allow('rico', 2, 100)) return;
-    const d = this.out(x);
-    if (!d) return;
-    this.tone(d, { freq: 3200 + Math.random() * 800, freqEnd: 1400, dur: 0.3, gain: 0.08, type: 'sine' });
+    this.play('hit/ricochet', { gain: 0.45, x, vary: 0.1 });
   }
 
+  /** Generic small mechanical click (switches, pins, triggers); pitch tints it. */
   click(x?: number, pitch = 1): void {
     if (!this.allow('click', 4, 40)) return;
-    const d = this.out(x);
-    if (!d) return;
-    this.tone(d, { freq: 1800 * pitch, dur: 0.025, gain: 0.18, type: 'square' });
-    this.noiseBurst(d, { dur: 0.02, gain: 0.15, type: 'highpass', freq: 4000 });
+    this.play('machine/switch', { gain: 0.35, x, rate: 0.75 + pitch * 0.25 });
   }
 
-  fuse(x?: number): void {
-    if (!this.allow('fuse', 1, 90)) return;
-    const d = this.out(x);
-    if (!d) return;
-    this.noiseBurst(d, { dur: 0.12, gain: 0.05, type: 'highpass', freq: 5000 });
+  button(x?: number): void {
+    this.play('machine/button', { gain: 0.5, x });
+  }
+
+  /** Something placed/spawned or a tool connection made. */
+  place(x?: number, mat: ImpactSound = 'wood'): void {
+    if (!this.allow('place', 3, 60)) return;
+    this.play(mat === 'metal' ? 'impact/metal_light' : 'impact/generic_light', { gain: 0.3, x, rate: 1.1 });
   }
 
   squish(strength: number, x?: number): void {
     if (!this.allow('squish', 3, 80)) return;
-    const d = this.out(x);
-    if (!d) return;
     const s = Math.min(1, strength);
-    this.noiseBurst(d, { dur: 0.18, gain: 0.3 + s * 0.4, type: 'lowpass', freq: 650, q: 3 });
-    this.noiseBurst(d, { dur: 0.1, gain: 0.25 + s * 0.3, freq: 1300, q: 2, delay: 0.02 });
+    this.play(s > 0.75 ? 'gore/splat' : 'gore/squish', { gain: 0.35 + s * 0.6, x });
   }
 
+  gib(x?: number): void {
+    if (!this.allow('gib', 2, 80)) return;
+    this.play('gore/gib', { gain: 1, x });
+    this.play('gore/splat', { gain: 0.6, x, delay: 0.04 });
+  }
+
+  /** Bone fracture. */
+  bone(x?: number): void {
+    if (!this.allow('bone', 2, 80)) return;
+    this.play(Math.random() < 0.5 ? 'gore/bone_break' : 'gore/bone_crack', { gain: 0.8, x });
+  }
+
+  /** A limb torn off. */
+  tear(x?: number): void {
+    if (!this.allow('tear', 2, 80)) return;
+    this.play('gore/tear', { gain: 0.8, x });
+  }
+
+  /** A rope or connection snapping. */
   snap(x?: number): void {
     if (!this.allow('snap', 2, 80)) return;
-    const d = this.out(x);
-    if (!d) return;
-    this.noiseBurst(d, { dur: 0.05, gain: 0.5, freq: 2400, q: 1.5 });
-    this.tone(d, { freq: 300, freqEnd: 120, dur: 0.05, gain: 0.3, type: 'triangle' });
+    this.play('machine/rope_snap', { gain: 0.6, x });
   }
 
   slash(x?: number): void {
     if (!this.allow('slash', 3, 60)) return;
-    const d = this.out(x);
-    if (!d) return;
-    this.noiseBurst(d, { dur: 0.12, gain: 0.35, freq: 2600, freqEnd: 900, q: 1.2 });
+    this.play('gore/slice', { gain: 0.7, x });
   }
 
-  motor(x?: number): void {
-    if (!this.allow('motor', 1, 120)) return;
-    const d = this.out(x);
-    if (!d) return;
-    this.tone(d, { freq: 70, dur: 0.14, gain: 0.04, type: 'sawtooth' });
+  stab(x?: number): void {
+    if (!this.allow('stab', 3, 60)) return;
+    this.play('gore/stab', { gain: 0.8, x });
+  }
+
+  /** A fast swing through the air. */
+  swish(speed: number, x?: number): void {
+    if (!this.allow('swish', 2, 150)) return;
+    this.play('gore/swish', { gain: Math.min(0.6, 0.15 + speed * 0.04), x, rate: 0.9 + Math.min(0.3, speed * 0.02) });
   }
 
   zap(x?: number): void {
     if (!this.allow('zap', 2, 80)) return;
-    const d = this.out(x);
-    if (!d) return;
-    this.noiseBurst(d, { dur: 0.15, gain: 0.25, freq: 3500, q: 4 });
-    this.tone(d, { freq: 120, dur: 0.15, gain: 0.1, type: 'square' });
+    this.play('machine/zap', { gain: 0.6, x });
   }
 
-  ui(): void {
-    const d = this.out();
-    if (!d) return;
-    this.tone(d, { freq: 900, dur: 0.03, gain: 0.05, type: 'triangle' });
+  spark(x?: number): void {
+    if (!this.allow('spark', 2, 80)) return;
+    this.play('machine/spark', { gain: 0.5, x });
+  }
+
+  /** Pin pulled / pressure plate armed. */
+  arm(x?: number): void {
+    this.play('gun/dryfire', { gain: 0.5, x, rate: 1.2 });
+  }
+
+  ui(kind: 'click' | 'hover' | 'select' | 'toggle' | 'error' | 'confirm' | 'drop' = 'click'): void {
+    if (!this.allow('ui', 3, 40)) return;
+    this.play('ui/' + kind, { gain: 0.6, vary: 0.02 });
   }
 }

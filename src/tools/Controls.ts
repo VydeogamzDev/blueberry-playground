@@ -351,7 +351,7 @@ export class Controls {
     }
     if (tool === 'pin') {
       this.game.connections.create('pin', part, { x: this.wx, y: this.wy }, null, { x: this.wx, y: this.wy });
-      this.game.sound.click(this.wx, 0.7);
+      this.game.sound.place(this.wx, 'metal');
       return;
     }
     this.connect = { part, wx: this.wx, wy: this.wy };
@@ -375,7 +375,7 @@ export class Controls {
     } else {
       this.game.connections.create(tool, c.part, { x: c.wx, y: c.wy }, target, { x: this.wx, y: this.wy });
     }
-    this.game.sound.click(this.wx, 0.8);
+    this.game.sound.place(this.wx, tool === 'rope' || tool === 'wire' ? 'wood' : 'metal');
   }
 
   // ---- spawning -------------------------------------------------------------
@@ -386,7 +386,7 @@ export class Controls {
     const hh = def.halfHeight ?? 0.3;
     const y = Math.max(this.wy, WORLD.floor + hh * Math.abs(Math.cos(this.spawnAngle)) + 0.01);
     const e = this.game.spawn(def, this.wx, y, { angle: this.spawnAngle, flip: this.spawnFlip });
-    if (e) this.game.sound.click(this.wx, 0.6);
+    if (e) this.game.sound.place(this.wx, e.parts[0]?.mat.sound ?? 'wood');
   }
 
   // ---- selection helpers --------------------------------------------------------

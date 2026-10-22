@@ -29,6 +29,14 @@ export class Fire {
   step(dt: number): void {
     if (!this.burning.size) return;
     const g = this.game;
+    // one crackle for all the fires, placed at their (heat-weighted) middle
+    let heat = 0;
+    let hx = 0;
+    for (const p of this.burning) {
+      heat += p.burning;
+      hx += p.x * p.burning;
+    }
+    if (heat > 0.05) g.sound.hold(this, 'fire/crackle_loop', Math.min(0.7, 0.15 + heat * 0.12), hx / heat);
     this.spreadTimer -= dt;
     const doSpread = this.spreadTimer <= 0;
     if (doSpread) this.spreadTimer = 0.25;

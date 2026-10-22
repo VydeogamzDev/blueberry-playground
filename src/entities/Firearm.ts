@@ -3,10 +3,11 @@ import type { PropConfig } from './Prop';
 import { PK } from '../systems/Particles';
 import { PX } from '../engine/constants';
 import type { Game } from '../world/Game';
+import type { GunSound } from '../engine/Sound';
 import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
 
 export interface GunSpec {
-  sound: 'pistol' | 'rifle' | 'shotgun' | 'smg' | 'sniper';
+  sound: GunSound;
   /** Muzzle position (art px). */
   muzzle: [number, number];
   /** Shell ejection port (art px); omit for revolvers. */
@@ -59,10 +60,8 @@ export class Firearm extends Item {
     const want = this.activeHeld || this.powered;
     if (this.gun.spinUp) {
       this.spin = Math.max(0, Math.min(1, this.spin + (want ? dt : -dt * 0.6) / this.gun.spinUp));
-      if (want && this.spin < 1) {
-        if (Math.random() < 0.15) this.game.sound.motor(this.main.x);
-        return;
-      }
+      if (this.spin > 0.02) this.game.sound.hold(this, 'machine/motor_loop', 0.15 + this.spin * 0.25, this.main.x, 0.6 + this.spin * 0.9);
+      if (want && this.spin < 1) return;
     }
     if (want && this.cooldown <= 0) this.fire();
   }

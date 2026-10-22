@@ -90,7 +90,8 @@ export class Blade extends Item {
       const dmg = (along - STAB_SPEED * 0.6) * 5.5 * massF;
       o.entity.damage(o, dmg, 'stab', pt, fwd);
       if (soft) {
-        this.game.sound.squish(Math.min(1, along / 10), pt.x);
+        this.game.sound.stab(pt.x);
+        this.game.sound.squish(Math.min(1, along / 10) * 0.6, pt.x);
         const depth = Math.min(this.blade.maxDepth * 0.5, 0.02 + along * 0.006);
         this.stick(o, pt, depth);
       } else {
@@ -168,6 +169,7 @@ export class Blade extends Item {
 
   postStep(dt: number): void {
     const l = this.lodge;
+    if (!l) this.swing(dt);
     if (l) {
       if (l.target.destroyed || !l.prism.isValid() || !l.weld.isValid()) {
         this.unstick();

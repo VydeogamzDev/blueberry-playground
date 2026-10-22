@@ -60,7 +60,7 @@ const GUNS: GunDef[] = [
   {
     id: 'revolver', name: 'Revolver', desc: 'Heavy six-shooter. Hits hard, kicks hard.', art: I.revolverArt, w: 14, h: 7,
     rects: [[1, 0, 13, 4], [0, 4, 4, 3]], mass: 1.3, hold: { grip: [1, 5] },
-    gun: { sound: 'pistol', muzzle: [14, 1], auto: false, rate: 3.5, speed: 420, energy: 750, damage: 44, spread: 0.008, recoil: 2.8, flash: 0.22 },
+    gun: { sound: 'revolver', muzzle: [14, 1], auto: false, rate: 3.5, speed: 420, energy: 750, damage: 44, spread: 0.008, recoil: 2.8, flash: 0.22 },
     tags: ['gun', 'handgun', 'magnum'],
   },
   {
@@ -93,7 +93,7 @@ const GUNS: GunDef[] = [
   {
     id: 'minigun', name: 'Minigun', desc: 'Spins up, then shreds everything in front of it.', art: I.minigunArt, w: 30, h: 7,
     rects: [[1, 0, 29, 5], [4, 5, 2, 2], [11, 5, 4, 2]], mass: 14, hold: { grip: [5, 5], grip2: [12, 5] },
-    gun: { sound: 'smg', muzzle: [30, 2], eject: [9, 4], auto: true, rate: 30, spinUp: 0.6, speed: 700, energy: 1000, damage: 24, spread: 0.06, recoil: 0.9, flash: 0.22 },
+    gun: { sound: 'minigun', muzzle: [30, 2], eject: [9, 4], auto: true, rate: 30, spinUp: 0.6, speed: 700, energy: 1000, damage: 24, spread: 0.06, recoil: 0.9, flash: 0.22 },
     tags: ['gun', 'gatling', 'automatic'],
   },
 ];
@@ -242,6 +242,7 @@ export function registerMelee(): void {
       const cfg = { art, material: m.material, shapes, density, angularDamping: 0.3, ccd: true };
       const e = m.blade ? new Blade(game, def, cfg, m.hold, m.blade, x, y, opts) : new Item(game, def, cfg, m.hold, x, y, opts);
       e.blunt = m.blunt ?? 1;
+      e.swings = true;
       return e;
     }, m.tags);
   }

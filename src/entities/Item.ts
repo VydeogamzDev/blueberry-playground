@@ -44,6 +44,9 @@ export class Item extends Prop {
   holder: (Entity & Holder) | null = null;
   /** Blunt-impact multiplier (clubs and hammers hurt more than their mass suggests). */
   blunt = 1;
+  /** Melee weapons whoosh when swung fast. */
+  swings = false;
+  private swishT = 0;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, hold: HoldSpec | null, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
@@ -65,6 +68,23 @@ export class Item extends Prop {
   /** Forward direction (toward the muzzle / tip) in world space. */
   forward(): V2 {
     return this.main.localDir(this.main.flip, 0);
+  }
+
+  postStep(dt: number): void {
+    this.swing(dt);
+  }
+
+  /** Whoosh when the far end of a melee weapon moves fast through the air. */
+  protected swing(dt: number): void {
+    if (!this.swings) return;
+    this.swishT -= dt;
+    if (this.swishT > 0) return;
+    const p = this.main;
+    const tip = Math.hypot(p.vx, p.vy) + Math.abs(p.av) * (p.w * PX) * 0.5;
+    if (tip > 7) {
+      this.game.sound.swish(tip, p.x);
+      this.swishT = 0.35;
+    }
   }
 
   dragMass(): number {

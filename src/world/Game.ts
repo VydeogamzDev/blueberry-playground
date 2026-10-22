@@ -259,6 +259,7 @@ export class Game {
     this.particles.frame();
     this.stains.frame(this.renderer.zoom * this.renderer.dpr);
     this.sound.rate = this.paused ? 1 : this.timeScale;
+    this.sound.update(realDt);
     this.renderer.render(realDt);
   }
 

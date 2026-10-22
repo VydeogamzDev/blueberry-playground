@@ -772,7 +772,7 @@ export class Human extends Entity implements Holder {
       // fractures
       if (!l.broken && dmg > l.spec.hp * 0.42 && l.joint && l.spec.key !== 'head') {
         l.broken = true;
-        this.game.sound.snap(p.x);
+        this.game.sound.bone(p.x);
         this.updateMotors(true);
       }
       // catastrophic blunt trauma
@@ -897,7 +897,7 @@ export class Human extends Entity implements Holder {
       this.game.particles.sparks(pj.x, pj.y, 0, 1, 14, 4);
       this.game.sound.zap(pj.x);
     }
-    if (why === 'tear') this.game.sound.snap(pj.x);
+    if (why === 'tear') this.game.sound.tear(pj.x);
     if (l.spec.key === 'head' || l.spec.key === 'midTorso') this.die();
     this.updateMotors(true);
   }
@@ -940,11 +940,12 @@ export class Human extends Entity implements Holder {
         const c = [0x8e1a1a, 0x6b0e0e, 0xc46b6b, 0xe3d9c4][i % 4];
         ps.debris(p.x, p.y, Math.random() - 0.5, 1, 1, c, 5);
       }
-      this.game.sound.squish(1, p.x);
+      this.game.sound.gib(p.x);
     } else {
       ps.sparks(p.x, p.y, 0, 1, 25, 7);
       ps.debris(p.x, p.y, 0, 1, 18, 0x59616b, 5);
       this.game.sound.impact('metal', 1, p.x);
+      this.game.sound.spark(p.x);
     }
     l.gone = true;
     if (l.spec.key === 'head' || l.spec.key === 'upperTorso') this.die();

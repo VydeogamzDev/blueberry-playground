@@ -199,7 +199,7 @@ export class UI implements UIBridge {
       tile.append(box, name);
       tile.onclick = () => {
         this.game.sound.unlock();
-        this.game.sound.ui();
+        this.game.sound.ui('select');
         this.controls.arm(def);
       };
       this.grid.appendChild(tile);
@@ -226,6 +226,7 @@ export class UI implements UIBridge {
       b.title = title;
       b.onclick = () => {
         this.game.sound.unlock();
+        this.game.sound.ui('click');
         fn();
       };
       bar.appendChild(b);
