@@ -111,8 +111,36 @@ export function settle(game: Game, entities: Entity[]): void {
     group = keep;
     if (!group.length) return;
   }
-  const slept: Part[] = [];
-  for (const e of group) {
+  // separate heaps sleep (and wake) separately
+  const owner = new Map<number, number>();
+  group.forEach((e, i) => {
+    for (const p of e.parts) if (!p.destroyed) owner.set(p.body.handle, i);
+  });
+  const root = group.map((_, i) => i);
+  const find = (i: number): number => (root[i] === i ? i : (root[i] = find(root[i])));
+  const join = (i: number, h: number | undefined) => {
+    if (h !== undefined) root[find(i)] = find(h);
+  };
+  group.forEach((e, i) => {
+    for (const p of e.parts) {
+      if (p.destroyed || p.frozen) continue;
+      for (const c of p.colliders) {
+        world.contactPairsWith(c, (o) => {
+          const b = o.parent();
+          if (b) join(i, owner.get(b.handle));
+        });
+      }
+      world.impulseJoints.forEachJointHandleAttachedToRigidBody(p.body.handle, (h) => {
+        const j = world.impulseJoints.get(h);
+        if (j) join(i, owner.get((j.body1().handle === p.body.handle ? j.body2() : j.body1()).handle));
+      });
+    }
+  });
+  const heaps = new Map<number, Part[]>();
+  group.forEach((e, i) => {
+    const r = find(i);
+    let slept = heaps.get(r);
+    if (!slept) heaps.set(r, (slept = []));
     for (const p of e.parts) {
       if (p.destroyed || p.frozen) continue;
       p.body.setLinvel({ x: 0, y: 0 }, false);
@@ -120,8 +148,8 @@ export function settle(game: Game, entities: Entity[]): void {
       p.body.sleep();
       slept.push(p);
     }
-  }
-  game.slept.push(slept);
+  });
+  for (const slept of heaps.values()) game.slept.push(slept);
 }
 
 /** Asleep but with a velocity: something pushed it without waking it. */
