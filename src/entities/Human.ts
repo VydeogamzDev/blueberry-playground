@@ -1,6 +1,6 @@
 import { RAPIER } from '../engine/Physics';
 import { PX } from '../engine/constants';
-import { clamp, rotate, type V2 } from '../engine/math';
+import { clamp, rotate, wrapAngle, type V2 } from '../engine/math';
 import { Entity } from '../world/Entity';
 import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
@@ -8,6 +8,7 @@ import { MAT, type PhysMaterial } from '../world/Materials';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
 import { limbArt, EYE, MOUTH, HUMAN_SKIN, type BodyKind, type LimbKey, type Skin } from '../art/human';
 import { shade } from '../art/PixelArt';
+import type { Item, Holder } from './Item';
 
 interface LimbSpec {
   key: LimbKey;
@@ -67,6 +68,19 @@ const POSE_DOWN: Pose = {
   upperLegF: 0.55, upperLegB: 0.3, lowerLegF: -0.9, lowerLegB: -0.7, handF: 0.3, handB: 0.3, footF: 0.15, footB: 0.15,
 };
 
+/** Aiming pose for an arm holding an item, and for a supporting arm. */
+const AIM = { upper: 1.42, lower: 0.06, hand: 0 };
+const SUPPORT = { upper: 1.15, lower: 0.75, hand: 0 };
+
+interface Grip {
+  item: Item;
+  hand: Limb;
+  joint: RAPIER.ImpulseJoint;
+  support: { hand: Limb; joint: RAPIER.ImpulseJoint } | null;
+  /** Seconds since the item was grabbed (aim control ramps in). */
+  t: number;
+}
+
 interface Wound {
   ix: number;
   iy: number;
@@ -113,7 +127,7 @@ export const VARIANTS: Record<string, Variant> = {
   android: { kind: 'android', skin: HUMAN_SKIN, skinKey: 'default', material: MAT.robot, toughness: 0.45, bleeds: false },
 };
 
-export class Human extends Entity {
+export class Human extends Entity implements Holder {
   readonly variant: Variant;
   readonly limbs = new Map<LimbKey, Limb>();
   private order: Limb[] = [];
@@ -140,6 +154,10 @@ export class Human extends Entity {
   private t = Math.random() * 100;
   /** Forced limp (context menu). */
   limp = false;
+  /** Items held in the hands. */
+  private grips: Grip[] = [];
+  /** Recently dropped items that still overlap the body. */
+  private dropped: { item: Item; t: number }[] = [];
 
   constructor(game: Game, def: ItemDef, variant: Variant, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -249,7 +267,10 @@ export class Human extends Entity {
     const writhe = !standing && conscious ? Math.min(0.9, this.pain * 0.9) : 0;
     // re-sending identical motor targets would keep the bodies awake (and drifting)
     const getupRamp = this.state === 'getup' ? clamp(this.stateT / 1.2, 0.12, 1) : 1;
-    const sig = `${standing}:${Math.round(str * 50)}:${Math.round(getupRamp * 20)}`;
+    const ik = standing ? this.holdIK() : null;
+    let ikSig = '';
+    if (ik) for (const k in ik) ikSig += Math.round(ik[k as LimbKey]! * 40) + ',';
+    const sig = `${standing}:${Math.round(str * 50)}:${Math.round(getupRamp * 20)}:${this.gripSig()}:${ikSig}`;
     if (!force && writhe === 0 && sig === this.motorSig) return;
     this.motorSig = sig;
     for (const l of this.order) {
@@ -257,10 +278,25 @@ export class Human extends Entity {
       if (!j || !j.isValid() || l.severed) continue;
       let target = (pose[l.spec.key] ?? 0) * f;
       const arm = l.spec.muscle < 500;
+      // arms holding something aim it forward
+      const hold = standing ? this.armRole(l) : null;
+      let boost = 1;
+      if (hold) {
+        const t = ik?.[l.spec.key];
+        if (t !== undefined) {
+          // arms reach for the item's grips (inverse kinematics)
+          target = t;
+          boost = hold.role === 'aim' ? (hold.seg === 'hand' ? 8 : 3.5) : 1.5;
+        } else {
+          const pz = hold.role === 'aim' ? AIM : SUPPORT;
+          target = (hold.seg === 'upper' ? pz.upper : hold.seg === 'lower' ? pz.lower : pz.hand) * f;
+          boost = hold.role === 'aim' ? (hold.seg === 'hand' ? 8 : 3.5) : 1.5;
+        }
+      } else if (this.grips.length && !standing && conscious && l.spec.key.startsWith('hand')) boost = 6;
       if (writhe > 0 && arm) {
         target += Math.sin(this.t * (2.2 + l.phase * 0.3) + l.phase) * writhe * 0.8 * f;
       }
-      const K = l.spec.muscle * (l.broken ? 0.05 : 1) * (l.attached ? 1 : 0);
+      const K = l.spec.muscle * boost * (l.broken ? 0.05 : 1) * (l.attached ? 1 : 0);
       if (!conscious || K <= 0) {
         // limp: a little joint friction keeps ragdolls from looking like jelly
         j.configureMotorPosition(target, 0, this.alive ? (arm ? 0.25 : 1.5) : arm ? 0.12 : 0.6);
@@ -338,6 +374,8 @@ export class Human extends Entity {
       this.motorTimer = 0.05;
       this.updateMotors(false);
     }
+
+    if (this.grips.length && this.state === 'stand' && conscious) this.aim(str, dt);
 
     // ---- balance
     if ((this.state === 'stand' || this.state === 'getup') && conscious && col.grounded) {
@@ -434,6 +472,7 @@ export class Human extends Entity {
   }
 
   postStep(dt: number): void {
+    this.updateGrips(dt);
     // ---- joint stress: limbs tear off when stretched too far
     for (const l of this.order) {
       if (!l.joint || l.severed || !l.joint.isValid() || !l.parent) continue;
@@ -497,6 +536,7 @@ export class Human extends Entity {
   die(): void {
     if (!this.alive) return;
     this.alive = false;
+    this.dropAll();
     this.consciousness = 0;
     this.setState('down');
     this.updateMotors(true);
@@ -556,7 +596,8 @@ export class Human extends Entity {
     // ...plus energy delivered by the other object, which the rest of the body
     // backs up (a crate dropped on a head crushes it against the body)
     const backing = l.attached ? Math.max(mEff, this.totalMass() * 0.8) : mEff;
-    const Eother = 0.5 * Math.min(info.otherMass, backing) * info.otherSpeed * info.otherSpeed;
+    const blunt = (info.other?.entity as { blunt?: number } | undefined)?.blunt ?? 1;
+    const Eother = 0.5 * Math.min(info.otherMass, backing) * info.otherSpeed * info.otherSpeed * blunt;
     const E = Eself + Eother;
     const frag = l.spec.fragility / this.variant.toughness;
     const E0 = (24 * mEff) / frag;
@@ -596,6 +637,11 @@ export class Human extends Entity {
       this.shock = Math.min(1, this.shock + 0.15);
     }
     this.injure(l, dmg, 'bullet', hit.point, hit.dir);
+    // heavy hits to the body or legs make people collapse
+    const core = l.spec.key.endsWith('Torso');
+    if (this.state !== 'down' && (dmg > 40 || (core && dmg > 24 && Math.random() < 0.5) || (l.spec.key.includes('Leg') && dmg > 20))) {
+      this.setState('down');
+    }
   }
 
   damage(part: Part, amount: number, kind: DamageKind, point?: V2, dir?: V2): void {
@@ -871,12 +917,295 @@ export class Human extends Entity {
 
   contextActions(): ContextAction[] {
     const acts: ContextAction[] = [];
+    if (this.grips.length) {
+      acts.push({ label: 'Use held item', hint: 'F', action: () => this.activate() });
+      acts.push({ label: this.grips.length > 1 ? 'Drop items' : `Drop ${this.grips[0].item.label.toLowerCase()}`, action: () => this.dropAll() });
+    }
     if (this.alive) {
       acts.push({ label: 'Kill', action: () => this.die() });
       acts.push({ label: 'Limp', checked: this.limp, action: () => { this.limp = !this.limp; this.setState('down'); this.updateMotors(true); } });
     }
     acts.push({ label: this.alive ? 'Heal' : 'Revive', action: () => this.heal() });
     return acts;
+  }
+
+  // ---------------------------------------------------------------- holding
+
+  private gripSig(): string {
+    return this.grips.map((g) => g.hand.spec.key + (g.support ? '+' : '')).join(',');
+  }
+
+  /** Is this arm segment involved in holding something? */
+  private armRole(l: Limb): { role: 'aim' | 'support'; seg: 'upper' | 'lower' | 'hand'; grip: Grip } | null {
+    if (!this.grips.length) return null;
+    const k = l.spec.key;
+    const side = k.endsWith('F') ? 'F' : k.endsWith('B') ? 'B' : '';
+    if (!side || !(k.startsWith('upperArm') || k.startsWith('lowerArm') || k.startsWith('hand'))) return null;
+    const seg = k.startsWith('upperArm') ? 'upper' : k.startsWith('lowerArm') ? 'lower' : 'hand';
+    for (const g of this.grips) {
+      if (g.hand.spec.key.endsWith(side)) return { role: 'aim', seg, grip: g };
+      if (g.support && g.support.hand.spec.key.endsWith(side)) return { role: 'support', seg, grip: g };
+    }
+    return null;
+  }
+
+  private handBusy(l: Limb): boolean {
+    return this.grips.some((g) => g.hand === l || g.support?.hand === l);
+  }
+
+  /** Called when an item is dropped near this person: grab it if a hand is close. */
+  tryHold(item: Item): boolean {
+    if (!this.alive || this.consciousness < 0.3 || item.holder || !item.hold || this.destroyed) return false;
+    const gw = item.gripWorld();
+    if (!gw) return false;
+    let best: Limb | null = null;
+    let bd = Infinity;
+    for (const k of ['handF', 'handB'] as LimbKey[]) {
+      const l = this.L(k);
+      if (!this.ok(k) || this.handBusy(l) || l.part.frozen) continue;
+      // the hand must touch the item (long guns can't always get their grip right
+      // onto the hand because the body is in the way)
+      const touch = distToSprite(item.main, l.part.x, l.part.y);
+      const d = Math.hypot(l.part.x - gw.x, l.part.y - gw.y);
+      if ((d < 0.3 || touch < 0.15) && d < bd) {
+        bd = d;
+        best = l;
+      }
+    }
+    if (!best) return false;
+    let it = item;
+    if (it.flipped !== this.flipped) {
+      // items always face the way the person faces
+      const flipped = this.game.flipEntity(it) as Item | null;
+      if (!flipped) return false;
+      it = flipped;
+    }
+    this.attach(it, best);
+    return true;
+  }
+
+  private attach(item: Item, hand: Limb): void {
+    const world = this.game.physics.world;
+    const f = this.f;
+    const hp = hand.part;
+    const ip = item.main;
+    // the item lines up with the hand, pointing where the fingers point
+    const itemAngle = hp.body.rotation() - (f * Math.PI) / 2;
+    const ha = { x: 0, y: -1 * PX };
+    const hw = hp.localToWorld(ha.x, ha.y);
+    const gl = item.gripLocal()!;
+    const rg = rotate(gl.x, gl.y, itemAngle);
+    ip.teleport(hw.x - rg.x, hw.y - rg.y, itemAngle);
+    ip.body.setLinvel(hp.body.linvel(), true);
+    ip.body.setAngvel(hp.body.angvel(), true);
+    const joint = world.createImpulseJoint(RAPIER.JointData.fixed(ha, 0, gl, (f * Math.PI) / 2), hp.body, ip.body, true);
+    joint.setContactsEnabled(false);
+    // the item never collides with its holder
+    for (const l of this.order) {
+      if (l.gone) continue;
+      (ip.noCollide ??= new Set()).add(l.part);
+      (l.part.noCollide ??= new Set()).add(ip);
+    }
+    let support: Grip['support'] = null;
+    const g2 = item.gripLocal(true);
+    if (g2) {
+      const other = this.L(hand.spec.key === 'handF' ? 'handB' : 'handF');
+      if (this.ok(other.spec.key) && !this.handBusy(other)) {
+        const sj = world.createImpulseJoint(RAPIER.JointData.spring(0, 260, 3, ha, g2), other.part.body, ip.body, true);
+        sj.setContactsEnabled(false);
+        support = { hand: other, joint: sj };
+      }
+    }
+    item.holder = this;
+    this.dropped = this.dropped.filter((d) => d.item !== item);
+    this.grips.push({ item, hand, joint, support, t: 0 });
+    // A hand is ~1000x lighter (rotationally) than a rifle, which leaves the joint's
+    // angular lock badly conditioned; give the hand some of the item's inertia.
+    hp.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, ip.body.principalInertia() * 0.5, true);
+    this.activatable = true;
+    this.game.sound.impact('metal', 0.25, hp.x);
+    this.updateMotors(true);
+  }
+
+  dropItem(item: Item): void {
+    const i = this.grips.findIndex((g) => g.item === item);
+    if (i < 0) return;
+    const g = this.grips[i];
+    this.grips.splice(i, 1);
+    const world = this.game.physics.world;
+    if (g.joint.isValid()) world.removeImpulseJoint(g.joint, true);
+    if (g.support && g.support.joint.isValid()) world.removeImpulseJoint(g.support.joint, true);
+    if (!g.hand.part.destroyed) g.hand.part.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, 0, true);
+    if (item.holder === this) item.holder = null;
+    if (!item.destroyed) {
+      this.dropped.push({ item, t: 0.3 });
+      item.setActiveHeld(false);
+    } else this.forgetItem(item);
+    this.activatable = this.grips.length > 0;
+    this.updateMotors(true);
+  }
+
+  dropAll(): void {
+    for (const g of [...this.grips]) this.dropItem(g.item);
+  }
+
+  /** Restores contacts between a dropped item and this body. */
+  private forgetItem(item: Item): void {
+    const ip = item.main;
+    for (const l of this.order) {
+      ip.noCollide?.delete(l.part);
+      l.part.noCollide?.delete(ip);
+    }
+  }
+
+  private updateGrips(dt: number): void {
+    for (const g of [...this.grips]) {
+      const it = g.item;
+      if (it.destroyed || !g.joint.isValid() || g.hand.gone || g.hand.part.destroyed || this.consciousness < 0.15) {
+        this.dropItem(it);
+        continue;
+      }
+      // a hard yank rips the item out of the hand
+      const a = g.hand.part.localToWorld(0, -PX);
+      const b = it.gripWorld()!;
+      if (Math.hypot(a.x - b.x, a.y - b.y) > 0.1) {
+        this.dropItem(it);
+        continue;
+      }
+      if (g.support && (!g.support.joint.isValid() || g.support.hand.gone || !g.support.hand.attached)) {
+        if (g.support.joint.isValid()) this.game.physics.world.removeImpulseJoint(g.support.joint, true);
+        g.support = null;
+        this.updateMotors(true);
+      }
+    }
+    for (let i = this.dropped.length - 1; i >= 0; i--) {
+      const d = this.dropped[i];
+      d.t -= dt;
+      if (d.item.destroyed) {
+        this.dropped.splice(i, 1);
+        continue;
+      }
+      if (d.t > 0) continue;
+      const overlapping = this.order.some((l) => !l.gone && this.game.physics.overlaps(l.part, d.item.main));
+      if (overlapping) d.t = 0.1;
+      else {
+        this.forgetItem(d.item);
+        this.dropped.splice(i, 1);
+      }
+    }
+  }
+
+  /**
+   * Keeps held items pointing straight ahead: a PD torque on the item, reacted on
+   * the torso (the arm muscles shape the pose, this holds the aim).
+   */
+  private aim(str: number, dt: number): void {
+    const torso = this.L('upperTorso').part;
+    for (const g of this.grips) {
+      const ip = g.item.main;
+      if (ip.frozen) continue;
+      g.t += dt;
+      const m = ip.mass;
+      const err = wrapAngle(this.f * (g.item.hold?.angle ?? 0) - ip.body.rotation());
+      // a gentle trim on top of the arm pose (the arm muscles do the lifting)
+      const ramp = clamp(g.t / 0.8, 0, 1) * str;
+      const kp = (30 + 20 * m) * ramp;
+      const kd = (2.5 + 1.2 * m) * ramp;
+      const cap = (6 + 5 * m) * ramp;
+      const tau = clamp(kp * err - kd * (ip.body.angvel() - torso.body.angvel() * 0.5), -cap, cap);
+      ip.body.applyTorqueImpulse(tau * dt, true);
+      if (!torso.frozen) torso.body.applyTorqueImpulse(-tau * dt, true);
+    }
+  }
+
+  /**
+   * Joint targets (relative, radians) for arms holding items: the aiming hand is
+   * placed in front of the shoulder (tucked in for two-handed items) so the item
+   * points straight ahead, and a supporting hand reaches for the second grip.
+   */
+  private holdIK(): Partial<Record<LimbKey, number>> | null {
+    if (!this.grips.length) return null;
+    const out: Partial<Record<LimbKey, number>> = {};
+    const f = this.f;
+    for (const g of this.grips) {
+      const side = g.hand.spec.key.endsWith('F') ? 'F' : 'B';
+      if (!this.shoulder(side)) continue;
+      const g1 = g.item.gripLocal();
+      const g2 = g.support ? g.item.gripLocal(true) : null;
+      const span = g1 && g2 ? Math.abs(g2.x - g1.x) : 0;
+      const reach = g2 ? clamp(0.6 - span, 0.24, 0.6) : 0.64;
+      const drop = g2 ? -0.1 : -0.03;
+      const aim = this.armIK(side, f * reach, drop, g.item.hold?.angle ?? 0);
+      if (aim) {
+        out[('upperArm' + side) as LimbKey] = aim.upper;
+        out[('lowerArm' + side) as LimbKey] = aim.lower;
+        out[('hand' + side) as LimbKey] = aim.hand;
+      }
+      if (g.support) {
+        const s2 = g.support.hand.spec.key.endsWith('F') ? 'F' : 'B';
+        // where the second grip will be once the aiming arm is in place
+        const sup = this.armIK(s2, f * (reach + span), drop + (g2 && g1 ? g2.y - g1.y : 0), null);
+        if (sup) {
+          out[('upperArm' + s2) as LimbKey] = sup.upper;
+          out[('lowerArm' + s2) as LimbKey] = sup.lower;
+          out[('hand' + s2) as LimbKey] = sup.hand;
+        }
+      }
+    }
+    return out;
+  }
+
+  private shoulder(side: 'F' | 'B'): V2 | null {
+    const upper = this.L(('upperArm' + side) as LimbKey);
+    if (upper.gone || !upper.attached) return null;
+    return this.L('upperTorso').part.localToWorld(upper.a1.x, upper.a1.y);
+  }
+
+  /**
+   * Two-link IK (shoulder -> elbow -> palm) toward a point given relative to the
+   * shoulder in the torso's frame. Working in the torso frame keeps the targets
+   * constant: correcting for body lean through the shoulder would push the torso
+   * further over (the aim controller handles the remaining tilt).
+   * With `itemAngle`, the wrist turns so a held item points at that angle.
+   */
+  private armIK(side: 'F' | 'B', dx: number, dy: number, itemAngle: number | null): { upper: number; lower: number; hand: number } | null {
+    const upper = this.L(('upperArm' + side) as LimbKey);
+    if (upper.gone || !upper.attached) return null;
+    const f = this.f;
+    const L1 = 10 * PX;
+    const L2 = 12 * PX;
+    const d = clamp(Math.hypot(dx, dy), Math.abs(L1 - L2) + 0.01, L1 + L2 - 0.002);
+    const alpha = Math.acos(clamp((L1 * L1 + d * d - L2 * L2) / (2 * L1 * d), -1, 1));
+    const gamma = Math.acos(clamp((L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2), -1, 1));
+    // elbows bend forward: counter-clockwise for a right-facing body
+    const theta1 = Math.atan2(dy, dx) - f * alpha + Math.PI / 2;
+    let up = wrapAngle(theta1);
+    const spec = upper.spec;
+    up = f === 1 ? clamp(up, spec.lo!, spec.hi!) : clamp(up, -spec.hi!, -spec.lo!);
+    const lower = f * (Math.PI - gamma);
+    const theta2 = up + lower;
+    const hand = itemAngle !== null ? clamp(wrapAngle(f * (Math.PI / 2 + itemAngle) - theta2), -1, 1) : 0;
+    return { upper: up, lower, hand };
+  }
+
+  /** Items in hand (for tests and UI). */
+  heldItems(): Item[] {
+    return this.grips.map((g) => g.item);
+  }
+
+  activate(): void {
+    for (const g of this.grips) g.item.activate();
+  }
+
+  setActiveHeld(on: boolean): void {
+    super.setActiveHeld(on);
+    for (const g of this.grips) g.item.setActiveHeld(on);
+  }
+
+  protected onDestroy(): void {
+    this.dropAll();
+    for (const d of this.dropped) if (!d.item.destroyed) this.forgetItem(d.item);
+    this.dropped.length = 0;
   }
 
   /** Short status line (shown in tooltips/tests). */
@@ -911,4 +1240,14 @@ export class Human extends Entity {
     this.setState('down');
     this.updateMotors(true);
   }
+}
+
+/** Distance from a world point to a part's sprite rectangle (0 inside). */
+function distToSprite(p: Part, wx: number, wy: number): number {
+  const l = p.worldToLocal(wx, wy);
+  const hw = (p.w * PX) / 2;
+  const hh = (p.h * PX) / 2;
+  const dx = Math.max(0, Math.abs(l.x) - hw);
+  const dy = Math.max(0, Math.abs(l.y) - hh);
+  return Math.hypot(dx, dy);
 }

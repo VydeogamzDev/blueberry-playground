@@ -253,7 +253,7 @@ export class Controls {
       // Stiffness scales with the dragged entity's mass so everything follows the
       // cursor with the same feel. The spring is solved implicitly by Rapier, which
       // keeps articulated chains (ragdoll limbs) stable under strong pulls.
-      const M = Math.max(part.mass, part.entity.totalMass());
+      const M = Math.max(part.mass, part.entity.dragMass());
       const k = M * DRAG.stiffness;
       // keep damping low: Rapier's soft springs lose stiffness as damping grows
       const c = k * DRAG.damping;
@@ -501,16 +501,9 @@ export class Controls {
   flip(list: Entity[]): void {
     const made: Entity[] = [];
     for (const e of list) {
-      const s = e.serialize();
-      const c = e.center();
-      const m: EntityState = {
-        ...s,
-        flip: !s.flip,
-        parts: s.parts.map((p) => ({ ...p, x: 2 * c.x - p.x, a: -p.a, vx: -p.vx, av: -p.av })),
-      };
       const conns = this.game.connections.connectionsOf(e).length;
-      this.game.remove(e);
-      made.push(...this.pasteStates([m], 0, 0));
+      const n = this.game.flipEntity(e);
+      if (n) made.push(n);
       if (conns) this.ui.toast('Connections were removed by flipping');
     }
     this.selection = new Set(made);

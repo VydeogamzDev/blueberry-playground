@@ -131,6 +131,11 @@ export abstract class Entity {
     return m > 0 ? { x: mx / m, y: my / m } : { x: 0, y: 0 };
   }
 
+  /** Mass used to scale the drag spring (things this entity is stuck to count too). */
+  dragMass(): number {
+    return this.totalMass();
+  }
+
   totalMass(): number {
     let m = 0;
     for (const p of this.parts) if (!p.destroyed && !p.frozen) m += p.mass;

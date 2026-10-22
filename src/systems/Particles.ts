@@ -348,6 +348,13 @@ export class Particles {
         continue;
       }
       L.x[i] = nx;
+      // flames and smoke spread along the floor instead of sinking into it
+      if (ny < floor && (kd === PK.Fire || kd === PK.Smoke || kd === PK.Dust || kd === PK.Flash)) {
+        L.y[i] = floor;
+        L.vy[i] = Math.abs(L.vy[i]) * 0.25;
+        L.vx[i] *= 1.02;
+        continue;
+      }
       L.y[i] = ny;
     }
   }

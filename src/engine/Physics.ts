@@ -54,6 +54,20 @@ export class Physics {
     this.stepCount++;
   }
 
+  /** Do two parts' colliders currently interpenetrate? */
+  overlaps(a: Part, b: Part, depth = 0.004): boolean {
+    let hit = false;
+    for (const c1 of a.colliders) {
+      for (const c2 of b.colliders) {
+        this.world.contactPair(c1, c2, (m) => {
+          for (let i = 0; i < m.numContacts(); i++) if (m.contactDist(i) < -depth) hit = true;
+        });
+        if (hit) return true;
+      }
+    }
+    return false;
+  }
+
   partOf(collider: RAPIER.Collider | number): Part | undefined {
     return this.partByCollider.get(typeof collider === 'number' ? collider : collider.handle);
   }

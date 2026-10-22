@@ -149,11 +149,12 @@ export function swordArt(): PixelArt {
 }
 
 export function axeArt(): PixelArt {
-  const a = new PixelArt(30, 10);
-  a.rect(0, 4, 26, 2, P('#7a5636'));
-  a.rect(22, 0, 6, 10, STEEL);
-  a.rect(27, 1, 3, 8, EDGE);
-  a.set(22, 0, -1).set(22, 9, -1);
+  const a = new PixelArt(31, 11);
+  a.rect(0, 2, 27, 2, P('#7a5636'));
+  a.rect(0, 2, 4, 2, P('#5a3e26'));
+  a.rect(21, 0, 6, 5, STEEL_D);
+  a.poly([[20, 4], [28, 4], [30.5, 11], [17.5, 11]], STEEL);
+  a.hline(18, 30, 10, EDGE);
   return a.bevel(1.1, 0.85, 1).outline(0.55);
 }
 

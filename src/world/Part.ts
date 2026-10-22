@@ -295,9 +295,15 @@ export class Part {
 
   /** Sprite pixel center -> world point. */
   pixelToWorld(ix: number, iy: number): V2 {
+    const l = this.pixelToLocal(ix, iy);
+    return this.localToWorld(l.x, l.y);
+  }
+
+  /** Sprite pixel center -> body-local meters (accounts for flipping). */
+  pixelToLocal(ix: number, iy: number): V2 {
     const lx = (ix + 0.5 - this.w / 2 + this.spriteOffset.x) * this.flip;
     const ly = this.h / 2 - (iy + 0.5) + this.spriteOffset.y;
-    return this.localToWorld(lx * PX, ly * PX);
+    return { x: lx * PX, y: ly * PX };
   }
 
   // ---- painting (wounds, blood, scorch) ----------------------------------
@@ -353,6 +359,15 @@ export class Part {
       if (best >= 0) any = this.paintPixel(best % 10000, Math.floor(best / 10000), color, alpha);
     }
     return any;
+  }
+
+  /** Replaces the sprite with another of the same size (e.g. a lamp turning on). */
+  setArt(art: PixelArt): void {
+    const ctx = this.ensureCanvas();
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.drawImage(art.toCanvas(1), 0, 0);
+    this.art = art;
+    this.texDirty = true;
   }
 
   /** Is the given art pixel solid? */

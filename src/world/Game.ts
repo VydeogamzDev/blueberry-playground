@@ -12,7 +12,7 @@ import { Connections } from '../systems/Connections';
 import { Fire } from '../systems/Fire';
 import type { Entity } from './Entity';
 import type { Part } from './Part';
-import type { ItemDef, SpawnOptions } from './types';
+import type { EntityState, ItemDef, SpawnOptions } from './types';
 
 export interface GameHooks {
   onEntitiesChanged?: () => void;
@@ -89,6 +89,22 @@ export class Game {
   }
 
   // ---- entities -------------------------------------------------------------
+
+  /** Replaces an entity with its mirror image (about its center). */
+  flipEntity(e: Entity): Entity | null {
+    const st = e.serialize();
+    const c = e.center();
+    const m: EntityState = {
+      ...st,
+      flip: !st.flip,
+      parts: st.parts.map((p) => ({ ...p, x: 2 * c.x - p.x, a: -p.a, vx: -p.vx, av: -p.av })),
+    };
+    this.remove(e);
+    const p0 = m.parts.find((p) => p.hp !== -1) ?? m.parts[0];
+    const n = this.spawn(e.def, p0.x, p0.y, { flip: m.flip });
+    n?.restore(m);
+    return n;
+  }
 
   spawn(def: ItemDef, x: number, y: number, opts: SpawnOptions = {}): Entity | null {
     if (!def.create) return null;

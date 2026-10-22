@@ -1,4 +1,5 @@
 import { register, registerProps } from './items';
+import { registerWeapons, registerMelee, registerExplosives, registerMachinery, registerTools } from './weapons';
 import { Human, VARIANTS, HUMAN_HALF_HEIGHT } from '../entities/Human';
 import { figurePreview } from '../art/human';
 import type { ItemDef } from '../world/types';
@@ -34,4 +35,9 @@ export function registerAll(): void {
   done = true;
   registerCharacters();
   registerProps();
+  registerWeapons();
+  registerMelee();
+  registerExplosives();
+  registerMachinery();
+  registerTools();
 }

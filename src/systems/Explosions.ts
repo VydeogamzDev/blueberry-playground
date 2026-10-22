@@ -155,12 +155,12 @@ export class Explosions {
         size: 0.15 + Math.random() * R * 0.25, size1: 0.05, color: 0xffe08a, color1: 0xb8300c, alpha: 1, alpha1: 0.2, gravity: -0.2, drag: 4,
       });
     }
-    for (let i = 0; i < Math.round(12 + R * 6); i++) {
+    for (let i = 0; i < Math.round(10 + R * 3); i++) {
       const a = Math.random() * Math.PI * 2;
-      const s = Math.random() * R * 1.4;
-      p.emit(PK.Smoke, x + Math.cos(a) * R * 0.2, y + Math.sin(a) * R * 0.2, {
-        vx: Math.cos(a) * s, vy: Math.sin(a) * s + 0.8, life: 2 + Math.random() * 2.5,
-        size: R * 0.35, size1: R * (0.8 + Math.random() * 0.6), color: 0x3a3634, color1: 0x5a5856, alpha: 0.7, alpha1: 0, gravity: -0.08, drag: 2,
+      const s = Math.random() * R * 1.1;
+      p.emit(PK.Smoke, x + Math.cos(a) * R * 0.15, y + Math.sin(a) * R * 0.15, {
+        vx: Math.cos(a) * s, vy: Math.sin(a) * s * 0.7 + 0.9, life: 1.4 + Math.random() * 1.8,
+        size: 0.3 + R * 0.06, size1: (0.5 + R * 0.16) * (1 + Math.random() * 0.5), color: 0x2e2b29, color1: 0x5a5856, alpha: 0.6, alpha1: 0, gravity: -0.1, drag: 2.5,
       });
     }
     p.sparks(x, y, 0, 1, Math.round(20 + R * 8), R * 6);
