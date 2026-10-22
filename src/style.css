@@ -468,3 +468,155 @@ canvas.cat-icon,
   content: '› ';
   color: #e2bd57;
 }
+
+.panel-sub {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+}
+
+/* ---------------- touch ---------------- */
+/* the sandbox takes every gesture: no browser scrolling, zooming or callouts */
+#view {
+  touch-action: none;
+}
+
+body {
+  overscroll-behavior: none;
+  -webkit-touch-callout: none;
+}
+
+.items {
+  touch-action: pan-y;
+}
+
+.touchbar {
+  position: absolute;
+  left: 50%;
+  bottom: 30px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  max-width: calc(100vw - 16px);
+}
+
+.touchbar.hidden {
+  display: none;
+}
+
+.touch-btn {
+  min-width: 46px;
+  height: 42px;
+  padding: 0 10px;
+  border: 1px solid #3a3f45;
+  background: #24272b;
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+  touch-action: none;
+}
+
+.touch-btn.down {
+  background: #3a3423;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.touch-btn.danger {
+  color: #e48a7f;
+}
+
+.touch .ctx-item {
+  padding: 10px 14px;
+  font-size: 13px;
+}
+
+.touch .tb-btn {
+  width: 36px;
+  height: 34px;
+}
+
+.touch .cat-btn {
+  width: 40px;
+  height: 40px;
+}
+
+.touch .hint {
+  bottom: 84px;
+}
+
+/* ---------------- small screens ---------------- */
+@media (max-width: 700px) {
+  .toolbar {
+    left: 54px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    right: 6px;
+    top: 6px;
+    margin-left: auto;
+    width: max-content;
+    max-width: calc(100vw - 60px);
+  }
+
+  .cat-panel {
+    width: min(236px, calc(100vw - 52px));
+  }
+
+  .panel {
+    min-width: 0;
+    width: calc(100vw - 24px);
+  }
+
+  .status {
+    display: none;
+  }
+
+  .hint {
+    white-space: normal;
+    width: calc(100vw - 70px);
+    text-align: center;
+    left: calc(50% + 23px);
+  }
+
+  .touch-btn {
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+}
+
+/* on touch screens the touch controls come first in the help */
+.touch .help-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.touch .help-panel .panel-title {
+  order: -2;
+}
+
+.touch .help-touch {
+  order: -1;
+  margin-bottom: 8px;
+}
+
+.touch .help-touch .panel-sub {
+  margin-top: 0;
+}
+
+.touch .help-panel .panel-close {
+  align-self: flex-start;
+}
+
+@media (max-width: 700px) {
+  /* the open catalog needs the top of the screen */
+  .catalog:not(.collapsed) ~ .toolbar {
+    display: none;
+  }
+}

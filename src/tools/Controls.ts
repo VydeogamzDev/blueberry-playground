@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { RAPIER } from '../engine/Physics';
-import { PX, WORLD } from '../engine/constants';
+import { MAX_ZOOM, MIN_ZOOM, PX, WORLD } from '../engine/constants';
 import { makePixelMaterial, makePixelTexture, UNIT_QUAD, type PixelMaterial } from '../engine/Renderer';
 import { clamp, type V2 } from '../engine/math';
 import type { Game } from '../world/Game';
@@ -18,6 +18,8 @@ export interface UIBridge {
   onArmedChanged(def: ItemDef | null): void;
   toggleCatalog(): void;
   toggleHelp(): void;
+  /** Switches the touch layout on (a finger touched the sandbox) or off (a mouse was used). */
+  setTouchMode(on: boolean): void;
   refreshToolbar(): void;
   save(): void;
   load(): void;
@@ -43,6 +45,10 @@ export const DRAG = { stiffness: 170, damping: 0.01, maxSpeed: 25 };
 
 const SELECT_COLOR = 0xf2d16b;
 const HOVER_COLOR = 0x9aa3ad;
+/** A finger held this long without moving opens the context menu. */
+const LONG_PRESS_MS = 500;
+/** Screen pixels a finger may wander and still be a long press. */
+const PRESS_SLOP = 10;
 
 /** Mouse + keyboard interaction with the sandbox (PP-style). */
 export class Controls {
@@ -69,6 +75,19 @@ export class Controls {
   private outlined = new Set<Part>();
   private activated = new Set<Entity>();
 
+  // touch: fingers that went down on the sandbox, by pointer id
+  private touches = new Map<number, { x: number; y: number }>();
+  /** The finger that acts like the mouse; a second one pinches. */
+  private primary = -1;
+  private pinch: { d0: number; zoom0: number; wx: number; wy: number } | null = null;
+  /** After a pinch or a long press, the finger left down does nothing until lifted. */
+  private touchIdle = false;
+  private press: { sx: number; sy: number; timer: number } | null = null;
+  /** Where a finger went down on empty space, until it moves or turns into a long press. */
+  private tapAt: { sx: number; sy: number } | null = null;
+  /** The last pointer used was a finger (touch layout, no hover). */
+  touchMode = false;
+
   constructor(game: Game, canvas: HTMLCanvasElement) {
     this.game = game;
     this.boxEl = document.createElement('div');
@@ -78,6 +97,7 @@ export class Controls {
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
     window.addEventListener('pointermove', (e) => this.onMove(e));
     window.addEventListener('pointerup', (e) => this.onUp(e));
+    window.addEventListener('pointercancel', (e) => this.onUp(e));
     canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('keydown', (e) => this.onKey(e, true));
@@ -150,9 +170,20 @@ export class Controls {
 
   private onDown(e: PointerEvent): void {
     this.game.sound.unlock();
+    const touch = e.pointerType === 'touch';
+    if (touch !== this.touchMode) {
+      this.touchMode = touch;
+      this.ui.setTouchMode(touch);
+    }
+    if (touch && this.touchDown(e)) return;
     this.updateMouse(e);
     if (this.ui.isMenuOpen()) {
       this.ui.closeContextMenu();
+      if (touch) {
+        // the tap that closes a menu does nothing else, however long it's held
+        this.cancelPress();
+        this.touchIdle = true;
+      }
       if (e.button !== 2) return;
     }
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -187,8 +218,15 @@ export class Controls {
       this.startGrab(part, this.wx, this.wy);
       return;
     }
-    if (this.armed) {
+    if (this.armed && !touch) {
       this.spawnArmed();
+      return;
+    }
+    if (touch) {
+      // a finger on empty space moves the view; a tap (lifted before it moves or
+      // becomes a long press) spawns the armed item or deselects
+      this.pan = { sx: this.sx, sy: this.sy, camX: this.game.renderer.camX, camY: this.game.renderer.camY };
+      this.tapAt = { sx: this.sx, sy: this.sy };
       return;
     }
     if (!e.shiftKey) this.selection.clear();
@@ -196,7 +234,85 @@ export class Controls {
     this.box = { x0: this.wx, y0: this.wy, additive: e.shiftKey };
   }
 
+  /**
+   * Touch bookkeeping. The first finger acts like the mouse (and a long press is
+   * a right click); a second one stops that and the two pinch-zoom and pan.
+   * Returns true when this finger is handled here rather than as a click.
+   */
+  private touchDown(e: PointerEvent): boolean {
+    this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.touches.size === 1) {
+      this.primary = e.pointerId;
+      this.touchIdle = false;
+      this.startPress(e.clientX, e.clientY);
+      return false;
+    }
+    this.cancelPress();
+    this.cancelGesture();
+    this.touchIdle = true;
+    const [a, b] = [...this.touches.values()];
+    const r = this.game.renderer;
+    const w = r.screenToWorld((a.x + b.x) / 2, (a.y + b.y) / 2);
+    this.pinch = { d0: Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), zoom0: r.zoom, wx: w.x, wy: w.y };
+    return true;
+  }
+
+  /** Two fingers: the spread sets the zoom and the world point first between them stays between them. */
+  private updatePinch(): void {
+    const p = this.pinch!;
+    const [a, b] = [...this.touches.values()];
+    const r = this.game.renderer;
+    r.zoom = clamp((p.zoom0 * Math.hypot(a.x - b.x, a.y - b.y)) / p.d0, MIN_ZOOM, MAX_ZOOM);
+    r.targetZoom = r.zoom;
+    const w = r.screenToWorld((a.x + b.x) / 2, (a.y + b.y) / 2);
+    r.camX += p.wx - w.x;
+    r.camY += p.wy - w.y;
+    r.clampCamera();
+  }
+
+  private startPress(sx: number, sy: number): void {
+    this.cancelPress();
+    const timer = window.setTimeout(() => {
+      this.press = null;
+      this.cancelGesture();
+      this.touchIdle = true;
+      this.openMenuAtCursor();
+    }, LONG_PRESS_MS);
+    this.press = { sx, sy, timer };
+  }
+
+  private cancelPress(): void {
+    if (!this.press) return;
+    clearTimeout(this.press.timer);
+    this.press = null;
+  }
+
+  /** Drops whatever a press started: a drag, a pan, a box, a connection. */
+  private cancelGesture(): void {
+    this.endGrab();
+    this.pan = null;
+    this.tapAt = null;
+    this.box = null;
+    this.boxEl.style.display = 'none';
+    this.connect = null;
+    this.game.connections.preview = null;
+  }
+
   private onMove(e: PointerEvent): void {
+    if (e.pointerType === 'touch') {
+      // fingers on the UI (holding a touch-bar button) don't move the cursor
+      const t = this.touches.get(e.pointerId);
+      if (!t) return;
+      t.x = e.clientX;
+      t.y = e.clientY;
+      if (this.pinch) {
+        this.updatePinch();
+        return;
+      }
+      if (e.pointerId !== this.primary || this.touchIdle) return;
+      if (this.press && Math.hypot(e.clientX - this.press.sx, e.clientY - this.press.sy) > PRESS_SLOP) this.cancelPress();
+      if (this.tapAt && Math.hypot(e.clientX - this.tapAt.sx, e.clientY - this.tapAt.sy) > PRESS_SLOP) this.tapAt = null;
+    }
     this.updateMouse(e);
     if (this.pan) {
       const r = this.game.renderer;
@@ -219,6 +335,33 @@ export class Controls {
   }
 
   private onUp(e: PointerEvent): void {
+    const touch = e.pointerType === 'touch';
+    if (touch) {
+      if (!this.touches.delete(e.pointerId)) return;
+      this.cancelPress();
+      if (this.touches.size < 2) this.pinch = null;
+      const wasPrimary = e.pointerId === this.primary;
+      if (!this.touches.size) this.primary = -1;
+      if (!wasPrimary || this.touchIdle) {
+        if (!this.touches.size) this.touchIdle = false;
+        this.tapAt = null;
+        return;
+      }
+      this.pan = null;
+      if (this.tapAt && e.type === 'pointerup') {
+        this.tapAt = null;
+        this.updateMouse(e);
+        if (this.armed) this.spawnArmed();
+        else this.clearSelection();
+        return;
+      }
+      this.tapAt = null;
+    }
+    // a cancelled pointer (the browser took the gesture over) ends everything like a release
+    if (e.type === 'pointercancel') {
+      this.cancelGesture();
+      return;
+    }
     this.updateMouse(e);
     if (e.button === 1) this.pan = null;
     if (e.button !== 0) return;
@@ -460,9 +603,41 @@ export class Controls {
     }
   }
 
-  private releaseActivation(): void {
+  releaseActivation(): void {
     for (const e of this.activated) e.setActiveHeld(false);
     this.activated.clear();
+  }
+
+  // ---- the touch bar: the keyboard commands for fingers ---------------------------
+
+  /** What the touch bar acts on: the object being dragged, else the selection. */
+  touchTargets(): Entity[] {
+    if (this.grab && !this.grab.part.entity.destroyed) return [this.grab.part.entity];
+    return [...this.selection].filter((e) => !e.destroyed);
+  }
+
+  /**
+   * Holding a rotate button (dir 1 is Q, -1 is E): turns the dragged object while
+   * held, or turns the selection 15 degrees per press.
+   */
+  holdRotate(dir: 1 | -1, on: boolean): void {
+    const key = dir === 1 ? 'KeyQ' : 'KeyE';
+    if (!on) {
+      this.keys.delete(key);
+      return;
+    }
+    this.keys.add(key);
+    if (!this.grab) this.rotateSelection(this.touchTargets(), (dir * Math.PI) / 12);
+  }
+
+  /** The context menu for the selection, at a screen point (the touch bar's More). */
+  openMenuForSelection(sx: number, sy: number): void {
+    const e = this.touchTargets()[0];
+    const part = e?.parts.find((p) => !p.destroyed);
+    if (!part) return;
+    this.sx = sx;
+    this.sy = sy;
+    this.openMenuFor(part);
   }
 
   /** Serialized clone of entities offset by (dx, dy). */
@@ -548,6 +723,11 @@ export class Controls {
       this.ui.openContextMenu(this.sx, this.sy, 'Sandbox', acts);
       return;
     }
+    this.openMenuFor(part);
+  }
+
+  /** The context menu for an object (and the rest of the selection, if it's in it). */
+  private openMenuFor(part: Part): void {
     const e = part.entity;
     if (!this.selection.has(e)) {
       this.selection.clear();
@@ -699,9 +879,10 @@ export class Controls {
     this.wx = w.x;
     this.wy = w.y;
 
-    // hover
+    // hover (a finger only hovers what it's on)
     const busy = this.pan || this.box;
-    const h = busy ? this.hover : this.grab ? this.grab.part : this.game.pick(this.wx, this.wy, this.pickRadius());
+    const lifted = this.touchMode && !this.touches.size;
+    const h = busy ? this.hover : this.grab ? this.grab.part : lifted ? null : this.game.pick(this.wx, this.wy, this.pickRadius());
     if (h !== this.hover) {
       this.hover = h;
       this.refreshOutlines();
@@ -712,18 +893,23 @@ export class Controls {
       this.ghost.position.set(this.wx, Math.max(this.wy, WORLD.floor + hh * Math.abs(Math.cos(this.spawnAngle)) + 0.01), 40);
       this.ghost.rotation.z = this.spawnAngle;
       this.ghost.scale.x = Math.abs(this.ghost.scale.x) * (this.spawnFlip ? -1 : 1);
-      this.ghost.visible = !this.hover;
+      this.ghost.visible = !this.hover && !lifted;
     }
   }
 
   /** Cursor hint for the status bar. */
   get hint(): string {
+    const click = this.touchMode ? 'Tap' : 'Click';
     if (this.connect) return 'Release over the target object (or empty space to anchor to the background)';
     const t = this.toolKind;
-    if (t === 'remove') return 'Click an object to remove its connections';
-    if (t === 'pin') return 'Click an object to pin it to the background';
+    if (t === 'remove') return `${click} an object to remove its connections`;
+    if (t === 'pin') return `${click} an object to pin it to the background`;
     if (t) return `Drag from one object to another to create a ${this.armed!.name.toLowerCase()}`;
-    if (this.armed) return `Click empty space to spawn ${this.armed.name} · Q/E rotate · R flip · Esc cancel`;
+    if (this.armed) {
+      return this.touchMode
+        ? `Tap empty space to spawn ${this.armed.name} · long press to stop`
+        : `Click empty space to spawn ${this.armed.name} · Q/E rotate · R flip · Esc cancel`;
+    }
     return '';
   }
 }

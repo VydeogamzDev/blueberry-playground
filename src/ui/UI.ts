@@ -19,6 +19,8 @@ const ICONS: Record<string, string> = {
 };
 
 const SPEEDS = [0.05, 0.1, 0.25, 0.5, 1];
+/** Screens narrower than this (CSS px) get the compact layout. */
+const NARROW = 700;
 
 const HELP: [string, string][] = [
   ['Left drag', 'Grab and drag an object (physical)'],
@@ -46,6 +48,15 @@ const HELP: [string, string][] = [
   ['Home', 'Recenter camera'],
   ['Esc', 'Cancel / deselect'],
   ['H / F1', 'This help'],
+];
+
+const TOUCH_HELP: [string, string][] = [
+  ['Drag an object', 'Grab and drag it'],
+  ['Tap empty space', 'Spawn the selected catalog item, or deselect'],
+  ['Drag empty space', 'Pan camera'],
+  ['Two fingers', 'Pinch to zoom, drag to pan'],
+  ['Long press', 'Context menu (on empty space while spawning: stop spawning)'],
+  ['Bottom bar', 'Use, freeze, rotate (hold while dragging), flip, delete the selected object'],
 ];
 
 const TIPS: string[] = [
@@ -84,6 +95,8 @@ export class UI implements UIBridge {
   private btnSlow!: HTMLButtonElement;
   private speedSel!: HTMLSelectElement;
   private catalogOpen = true;
+  private touchBar!: HTMLDivElement;
+  private btnFreeze!: HTMLButtonElement;
   showStats = true;
 
   constructor(game: Game, controls: Controls, root: HTMLElement) {
@@ -95,6 +108,7 @@ export class UI implements UIBridge {
     this.buildToolbar();
     this.buildHelp();
     this.buildSettings();
+    this.buildTouchBar();
     this.status = el('div', 'status');
     this.hintEl = el('div', 'hint');
     this.toastEl = el('div', 'toast');
@@ -106,6 +120,12 @@ export class UI implements UIBridge {
       });
     }
     game.frameHandlers.push(() => this.frame());
+    // a phone starts with the catalog folded away and the touch layout on
+    if (window.innerWidth < NARROW) this.toggleCatalog();
+    if (window.matchMedia?.('(pointer: coarse)').matches) {
+      controls.touchMode = true;
+      this.setTouchMode(true);
+    }
     // the camera centers on the part of the screen the catalog leaves free
     this.updateInset(false);
     window.addEventListener('resize', () => this.updateInset(false));
@@ -204,6 +224,8 @@ export class UI implements UIBridge {
         this.game.sound.unlock();
         this.game.sound.ui('select');
         this.controls.arm(def);
+        // on a small screen the catalog covers the sandbox: fold it to place the item
+        if (this.controls.armed && this.catalogOpen && (this.controls.touchMode || window.innerWidth < NARROW)) this.toggleCatalog();
       };
       this.grid.appendChild(tile);
       this.itemEls.set(def.id, tile);
@@ -288,6 +310,51 @@ export class UI implements UIBridge {
     this.refreshToolbar();
   }
 
+  // ---- touch bar -----------------------------------------------------------------
+
+  /** Buttons for the keyboard commands, shown on touch screens while something is selected. */
+  private buildTouchBar(): void {
+    const c = this.controls;
+    this.touchBar = el('div', 'touchbar hidden');
+    const btn = (label: string, title: string, down: (b: HTMLButtonElement) => void, up?: () => void) => {
+      const b = el('button', 'touch-btn', label);
+      b.title = title;
+      b.onpointerdown = (e) => {
+        e.preventDefault();
+        this.game.sound.unlock();
+        b.setPointerCapture?.(e.pointerId);
+        b.classList.add('down');
+        down(b);
+      };
+      const release = () => {
+        if (!b.classList.contains('down')) return;
+        b.classList.remove('down');
+        up?.();
+      };
+      b.onpointerup = release;
+      b.onpointercancel = release;
+      b.onlostpointercapture = release;
+      this.touchBar.appendChild(b);
+      return b;
+    };
+    // held: automatic weapons keep firing, like holding F
+    btn('Use', 'Activate (hold for automatic weapons)', () => c.activate(c.touchTargets(), true), () => c.releaseActivation());
+    this.btnFreeze = btn('Freeze', 'Freeze / unfreeze', () => c.toggleFreeze(c.touchTargets()));
+    btn('⟲', 'Rotate left (hold while dragging)', () => c.holdRotate(1, true), () => c.holdRotate(1, false));
+    btn('⟳', 'Rotate right (hold while dragging)', () => c.holdRotate(-1, true), () => c.holdRotate(-1, false));
+    btn('Flip', 'Flip', () => c.flip(c.touchTargets()));
+    btn('Delete', 'Delete', () => c.deleteEntities(c.touchTargets())).classList.add('danger');
+    btn('⋯', 'More actions', (b) => {
+      const r = b.getBoundingClientRect();
+      c.openMenuForSelection(r.left, r.top - 8);
+    });
+    this.root.appendChild(this.touchBar);
+  }
+
+  setTouchMode(on: boolean): void {
+    document.body.classList.toggle('touch', on);
+  }
+
   refreshToolbar(): void {
     this.btnPause.innerHTML = this.game.paused ? ICONS.play : ICONS.pause;
     this.btnPause.classList.toggle('on', this.game.paused);
@@ -317,7 +384,7 @@ export class UI implements UIBridge {
 
   private buildHelp(): void {
     this.help = el('div', 'overlay hidden');
-    const box = el('div', 'panel');
+    const box = el('div', 'panel help-panel');
     box.appendChild(el('div', 'panel-title', 'Controls'));
     const table = el('div', 'keys');
     for (const [k, d] of HELP) {
@@ -325,6 +392,16 @@ export class UI implements UIBridge {
       table.appendChild(el('div', 'desc', d));
     }
     box.appendChild(table);
+    // (listed first when the touch layout is on)
+    const touch = el('div', 'help-touch');
+    touch.appendChild(el('div', 'panel-sub', 'Touch screens'));
+    const keys = el('div', 'keys');
+    for (const [k, d] of TOUCH_HELP) {
+      keys.appendChild(el('div', 'key', k));
+      keys.appendChild(el('div', 'desc', d));
+    }
+    touch.appendChild(keys);
+    box.appendChild(touch);
     const tips = el('div', 'tips');
     for (const t of TIPS) tips.appendChild(el('div', 'tip', t));
     box.appendChild(tips);
@@ -514,6 +591,12 @@ export class UI implements UIBridge {
         (g.paused ? ' · PAUSED' : '') + (g.timeScale !== 1 ? ` · ${g.timeScale}×` : '') +
         (!g.paused && g.simRate < g.timeScale * 0.9 ? ` · heavy scene: running at ${Math.round((g.simRate / g.timeScale) * 100)}% speed` : '');
     } else this.status.textContent = '';
+    const targets = this.controls.touchMode ? this.controls.touchTargets() : [];
+    this.touchBar.classList.toggle('hidden', !targets.length);
+    if (targets.length) {
+      const label = targets.every((e) => e.frozen) ? 'Unfreeze' : 'Freeze';
+      if (this.btnFreeze.textContent !== label) this.btnFreeze.textContent = label;
+    }
     const h = this.controls.hover;
     let hint = this.controls.hint;
     if (!hint && h) hint = h.entity.label + (h.entity.parts.length > 1 ? ` — ${h.name}` : '') + (h.frozen ? ' (frozen)' : '');
