@@ -264,6 +264,32 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (fwd.x * (n.flipped ? -1 : 1) < 0.9) return 'not aiming forward';
       return true;
     }],
+    ['extra: flipping keeps ropes, pins and welds', () => {
+      kit.reset();
+      const C = game.connections;
+      // a crate on a rope from the background, with a brick welded to its side
+      const a = kit.spawn('crate', 0, 2.5)!;
+      const b = kit.spawn('brick', 0.62, 2.5)!;
+      // a plank pinned to the background off its center
+      const p = kit.spawn('plank', -4, 2.2)!;
+      kit.advance(0.02);
+      C.create('rope', a.parts[0], { x: a.parts[0].x, y: a.parts[0].y + 0.4 }, null, { x: 0, y: 4.5 });
+      C.create('weld', a.parts[0], { x: 0.5, y: a.parts[0].y }, b.parts[0], { x: 0.5, y: a.parts[0].y });
+      C.create('pin', p.parts[0], { x: -4.6, y: 2.2 }, null, { x: -4.6, y: 2.2 });
+      kit.advance(1);
+      const fa = game.flipEntity(a);
+      const fp = game.flipEntity(p);
+      if (!fa || !fp) return 'flip failed';
+      kit.advance(1.5);
+      const ka = C.connectionsOf(fa).map((c) => c.kind).sort().join(',');
+      if (ka !== 'rope,weld') return `crate connections after flip: ${ka || 'none'}`;
+      if (C.connectionsOf(b).length !== 1) return 'brick lost its weld';
+      if (C.connectionsOf(fp).map((c) => c.kind).join() !== 'pin') return 'plank lost its pin';
+      if (fa.parts[0].y < 1.5) return `crate fell (y ${fa.parts[0].y.toFixed(2)})`;
+      if (fp.parts[0].y < 1.2) return `plank fell (y ${fp.parts[0].y.toFixed(2)})`;
+      if (kit.maxSpeed() > 3) return `flip yanked things (${kit.maxSpeed().toFixed(1)} m/s)`;
+      return true;
+    }],
     ['extra: duplicating a welded pair copies the weld', () => {
       kit.reset();
       const a = kit.spawn('crate', -0.5, 0.45);

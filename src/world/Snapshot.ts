@@ -57,6 +57,11 @@ export interface PlaceOpts {
 
 /** Spawns a snapshot back into the world (optionally offset). */
 export function instantiate(game: Game, snap: Snapshot, o: PlaceOpts = {}): Entity[] {
+  return instantiateIndexed(game, snap, o).filter((e): e is Entity => !!e && !e.destroyed);
+}
+
+/** Like instantiate, but the result lines up with snap.entities (null where spawning failed). */
+export function instantiateIndexed(game: Game, snap: Snapshot, o: PlaceOpts = {}): (Entity | null)[] {
   const dx = o.dx ?? 0;
   const dy = o.dy ?? 0;
   const move = (p: PartState): PartState => ({ ...p, x: p.x + dx, y: p.y + dy });
@@ -87,10 +92,16 @@ export function instantiate(game: Game, snap: Snapshot, o: PlaceOpts = {}): Enti
     const wb = pb ? pb.localToWorld(c.lb.x, c.lb.y) : { x: c.lb.x + dx, y: c.lb.y + dy };
     game.connections.create(c.kind, pa, wa, pb, wb, c.rest);
   }
-  return made.filter((e): e is Entity => !!e && !e.destroyed);
+  return made.map((e) => (e && !e.destroyed ? e : null));
 }
 
-/** Mirrors a snapshot left-right around x = cx (connections are dropped). */
+/** Connection kinds that pin a point in place (their background anchor moves with the mirror). */
+const RIGID = new Set<ConnKind>(['weld', 'hinge', 'pin']);
+
+/** A local anchor on a mirrored part: the part's frame is mirrored about its own y axis. */
+export const mirrorLocal = (l: V2): V2 => ({ x: -l.x, y: l.y });
+
+/** Mirrors a snapshot left-right around x = cx. */
 export function mirror(snap: Snapshot, cx: number): Snapshot {
   return {
     entities: snap.entities.map((s) => ({
@@ -100,6 +111,12 @@ export function mirror(snap: Snapshot, cx: number): Snapshot {
       flip: !s.flip,
       parts: s.parts.map((p) => ({ ...p, x: 2 * cx - p.x, a: -p.a, vx: -p.vx, av: -p.av })),
     })),
-    connections: [],
+    connections: snap.connections.map((c) => ({
+      ...c,
+      la: mirrorLocal(c.la),
+      // ropes and springs keep hanging from the same spot; pins and welds to the
+      // background follow the object
+      lb: c.b ? mirrorLocal(c.lb) : RIGID.has(c.kind) ? { x: 2 * cx - c.lb.x, y: c.lb.y } : { ...c.lb },
+    })),
   };
 }

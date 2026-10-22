@@ -1,4 +1,4 @@
-import { capture, instantiate, mirror } from './Snapshot';
+import { capture, instantiateIndexed, mirror, mirrorLocal } from './Snapshot';
 import { RAPIER, Physics } from '../engine/Physics';
 import { Renderer } from '../engine/Renderer';
 import { Sound } from '../engine/Sound';
@@ -94,10 +94,34 @@ export class Game {
   /** Re-creates an entity (and anything it holds) mirrored around its center. */
   flipEntity(e: Entity): Entity | null {
     const group = [e, ...e.attachedEntities()];
+    const index = new Map(group.map((g, i) => [g, i]));
     const c = e.center();
     const snap = mirror(capture(this, group), c.x);
+    // connections to things outside the group are re-made on the mirrored parts
+    const outside = this.connections.list.flatMap((k) => {
+      const ia = index.get(k.a.entity);
+      const ib = k.b ? index.get(k.b.entity) : undefined;
+      if (!k.b || (ia === undefined) === (ib === undefined)) return [];
+      const mine = ia !== undefined ? k.a : k.b;
+      const other = ia !== undefined ? k.b : k.a;
+      return [{
+        kind: k.kind, rest: k.rest, mineIsA: ia !== undefined, other,
+        gi: (ia ?? ib)!, pi: mine.entity.parts.indexOf(mine),
+        lm: ia !== undefined ? k.la : k.lb, lo: ia !== undefined ? k.lb : k.la,
+      }];
+    });
     for (const g of group) this.remove(g);
-    return instantiate(this, snap)[0] ?? null;
+    const made = instantiateIndexed(this, snap);
+    for (const k of outside) {
+      const mine = made[k.gi]?.parts[k.pi];
+      if (!mine || mine.destroyed || k.other.destroyed) continue;
+      const lm = mirrorLocal(k.lm);
+      const wm = mine.localToWorld(lm.x, lm.y);
+      const wo = k.other.localToWorld(k.lo.x, k.lo.y);
+      if (k.mineIsA) this.connections.create(k.kind, mine, wm, k.other, wo, k.rest);
+      else this.connections.create(k.kind, k.other, wo, mine, wm, k.rest);
+    }
+    return made[0] ?? null;
   }
 
   spawn(def: ItemDef, x: number, y: number, opts: SpawnOptions = {}): Entity | null {
