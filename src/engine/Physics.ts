@@ -26,7 +26,8 @@ export class Physics {
     const ip = this.world.integrationParameters;
     ip.dt = FIXED_DT;
     ip.numSolverIterations = 6;
-    ip.numInternalPgsIterations = 1;
+    // two internal (TGS) iterations let heaps of ragdolls settle instead of buzzing
+    ip.numInternalPgsIterations = 2;
     ip.maxCcdSubsteps = 2;
     this.events = new RAPIER.EventQueue(true);
 

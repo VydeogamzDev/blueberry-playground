@@ -2,23 +2,21 @@ import * as THREE from 'three';
 import { RAPIER, type Physics } from '../engine/Physics';
 import { GROUPS_STATIC, PX, WORLD } from '../engine/constants';
 import { makePixelTexture, UNIT_QUAD } from '../engine/Renderer';
-import { PixelArt, hex, shade } from '../art/PixelArt';
+import { PixelArt } from '../art/PixelArt';
+import { ramp, type Ramp } from '../art/palette';
 import { RNG } from '../engine/math';
 
-function concreteTile(seed: number, base: number): PixelArt {
-  const a = new PixelArt(32, 32);
-  a.rect(0, 0, 32, 32, base);
-  a.noise(0.05, seed);
-  const rng = new RNG(seed + 7);
-  // speckles
-  for (let i = 0; i < 26; i++) a.set(rng.int(0, 31), rng.int(0, 31), shade(base, rng.range(0.78, 0.9)));
-  // panel seams
-  a.hline(0, 31, 31, shade(base, 0.7));
-  a.vline(31, 0, 31, shade(base, 0.74));
-  a.hline(0, 31, 0, shade(base, 1.08));
-  // a few cracks
-  const cx = rng.int(4, 26);
-  a.line(cx, 4, cx + rng.int(-3, 3), 10, shade(base, 0.8));
+/** A poured-concrete slab tile (64x32 art px) drawn from one ramp. */
+function slabTile(seed: number, r: Ramp): PixelArt {
+  const a = new PixelArt(64, 32);
+  a.rect(0, 0, 64, 32, r[2]);
+  const rng = new RNG(seed);
+  // sparse aggregate speckles
+  for (let i = 0; i < 14; i++) a.set(rng.int(1, 62), rng.int(2, 29), rng.next() < 0.6 ? r[1] : r[3]);
+  // seams: a soft dark line with a lit edge after it
+  a.hline(0, 63, 31, r[1]);
+  a.hline(0, 63, 0, r[3]);
+  a.vline(63, 1, 30, r[1]);
   return a;
 }
 
@@ -33,6 +31,9 @@ function tiledMesh(art: PixelArt, w: number, h: number, z: number): THREE.Mesh {
   mesh.position.z = z;
   return mesh;
 }
+
+const FLOOR = ramp('#3e4044', 0.6);
+const WALL = ramp('#323438', 0.6);
 
 /** The static sandbox: floor, walls and ceiling. */
 export class Environment {
@@ -65,18 +66,18 @@ export class Environment {
     add((W.left + W.right) / 2, W.ceiling + t / 2, width / 2 + t, t / 2);
 
     // visuals
-    const floorArt = concreteTile(11, hex('#4a4c50'));
-    const wallArt = concreteTile(23, hex('#3a3c40'));
+    const floorArt = slabTile(11, FLOOR);
+    const wallArt = slabTile(23, WALL);
     const floor = tiledMesh(floorArt, width + t * 2, ft, -20);
     floor.position.set((W.left + W.right) / 2, W.floor - ft / 2, -20);
     this.group.add(floor);
 
     // bright top edge of the floor (2 sprite px) + dark lip below it
-    const edge = new THREE.Mesh(UNIT_QUAD, new THREE.MeshBasicMaterial({ color: 0x6d7075 }));
+    const edge = new THREE.Mesh(UNIT_QUAD, new THREE.MeshBasicMaterial({ color: FLOOR[4] }));
     edge.scale.set(width, PX * 2, 1);
     edge.position.set((W.left + W.right) / 2, W.floor - PX, -19);
     this.group.add(edge);
-    const lip = new THREE.Mesh(UNIT_QUAD, new THREE.MeshBasicMaterial({ color: 0x2c2e31 }));
+    const lip = new THREE.Mesh(UNIT_QUAD, new THREE.MeshBasicMaterial({ color: FLOOR[0] }));
     lip.scale.set(width, PX * 3, 1);
     lip.position.set((W.left + W.right) / 2, W.floor - PX * 3.5, -19);
     this.group.add(lip);
@@ -91,7 +92,7 @@ export class Environment {
 
     // wall trims
     for (const x of [W.left - PX, W.right + PX]) {
-      const trim = new THREE.Mesh(UNIT_QUAD, new THREE.MeshBasicMaterial({ color: 0x55585d }));
+      const trim = new THREE.Mesh(UNIT_QUAD, new THREE.MeshBasicMaterial({ color: WALL[3] }));
       trim.scale.set(PX * 2, height, 1);
       trim.position.set(x, W.floor + height / 2, -19);
       this.group.add(trim);

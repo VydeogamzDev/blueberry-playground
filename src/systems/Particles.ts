@@ -8,11 +8,15 @@ attribute float psize;
 attribute vec4 pcolor;
 attribute float pshape;
 uniform float uScale;
+uniform float uPx;
 varying vec4 vColor;
 varying float vShape;
+varying float vCells;
 void main() {
   vColor = pcolor;
   vShape = pshape;
+  // round particles are drawn on the sprite-pixel grid: one cell per art pixel
+  vCells = clamp(floor(psize / uPx + 0.5), 2.0, 48.0);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   gl_PointSize = max(1.0, psize * uScale);
 }`;
@@ -20,14 +24,21 @@ void main() {
 const FRAG = /* glsl */ `
 varying vec4 vColor;
 varying float vShape;
+varying float vCells;
 void main() {
+  vec4 col = vColor;
   if (vShape > 0.5) {
-    // chunky pixel circle
-    vec2 c = (floor(gl_PointCoord * 7.0) + 0.5) / 7.0 - 0.5;
-    if (dot(c, c) > 0.25) discard;
+    // pixel-grid disc
+    vec2 c = (floor(gl_PointCoord * vCells) + 0.5) / vCells - 0.5;
+    float r = length(c) * 2.0;
+    if (r > 1.0) discard;
+    if (vShape > 1.5) {
+      // glow: stepped radial falloff (three bands, like hand-drawn light)
+      col.a *= r < 0.45 ? 1.0 : r < 0.75 ? 0.55 : 0.22;
+    }
   }
-  if (vColor.a <= 0.01) discard;
-  gl_FragColor = vColor;
+  if (col.a <= 0.01) discard;
+  gl_FragColor = col;
 }`;
 
 export const enum PK {
@@ -41,6 +52,9 @@ export const enum PK {
   Dust = 7,
   Ember = 8,
 }
+
+/** Fire color steps, hottest first (flat pixel-art bands instead of blending). */
+const FIRE_RAMP = [0xfff4c4, 0xffd45c, 0xffa034, 0xe8601e, 0xb03414, 0x5e2216];
 
 /** A fixed-capacity, CPU-simulated batch of square point particles. */
 class Layer {
@@ -59,6 +73,8 @@ class Layer {
   readonly col1: Float32Array; // end color
   readonly grav: Float32Array;
   readonly drag: Float32Array;
+  /** Per-particle random 0..1 (offsets color steps). */
+  readonly seed: Float32Array;
   readonly ignore: (RAPIER.RigidBody | null)[];
   readonly geo = new THREE.BufferGeometry();
   readonly pos: Float32Array;
@@ -83,6 +99,7 @@ class Layer {
     this.col1 = new Float32Array(cap * 4);
     this.grav = new Float32Array(cap);
     this.drag = new Float32Array(cap);
+    this.seed = new Float32Array(cap);
     this.ignore = new Array(cap).fill(null);
     this.pos = new Float32Array(cap * 3);
     this.rgba = new Float32Array(cap * 4);
@@ -95,7 +112,7 @@ class Layer {
     this.mat = new THREE.ShaderMaterial({
       vertexShader: VERT,
       fragmentShader: FRAG,
-      uniforms: { uScale: { value: 64 } },
+      uniforms: { uScale: { value: 64 }, uPx: { value: PX } },
       transparent: true,
       depthWrite: false,
       blending: additive ? THREE.AdditiveBlending : THREE.NormalBlending,
@@ -128,6 +145,7 @@ class Layer {
     this.kind[i] = this.kind[last];
     this.grav[i] = this.grav[last];
     this.drag[i] = this.drag[last];
+    this.seed[i] = this.seed[last];
     this.ignore[i] = this.ignore[last];
     this.ignore[last] = null;
     for (let k = 0; k < 4; k++) {
@@ -142,10 +160,22 @@ class Layer {
       this.pos[i * 3] = this.x[i];
       this.pos[i * 3 + 1] = this.y[i];
       this.pos[i * 3 + 2] = 0;
-      for (let k = 0; k < 4; k++) this.rgba[i * 4 + k] = this.col[i * 4 + k] + (this.col1[i * 4 + k] - this.col[i * 4 + k]) * t;
-      this.psize[i] = this.size[i] + (this.size1[i] - this.size[i]) * t;
       const kd = this.kind[i];
-      this.shape[i] = kd === PK.Smoke || kd === PK.Fire || kd === PK.Flash || kd === PK.Dust ? 1 : 0;
+      for (let k = 0; k < 4; k++) this.rgba[i * 4 + k] = this.col[i * 4 + k] + (this.col1[i * 4 + k] - this.col[i * 4 + k]) * t;
+      if (kd === PK.Fire) {
+        // flat color steps: hotter particles (greener start color) start further up the ramp
+        const heat = this.col[i * 4 + 1];
+        const start = (1 - heat) * 2.2 + this.seed[i] * 0.8;
+        const c = FIRE_RAMP[Math.min(FIRE_RAMP.length - 1, Math.floor(start + t * FIRE_RAMP.length))];
+        this.rgba[i * 4] = ((c >> 16) & 255) / 255;
+        this.rgba[i * 4 + 1] = ((c >> 8) & 255) / 255;
+        this.rgba[i * 4 + 2] = (c & 255) / 255;
+      } else if (kd === PK.Smoke) {
+        // smoke thins out in visible steps
+        this.rgba[i * 4 + 3] = Math.ceil(this.rgba[i * 4 + 3] * 5) / 5;
+      }
+      this.psize[i] = this.size[i] + (this.size1[i] - this.size[i]) * t;
+      this.shape[i] = kd === PK.Flash ? 2 : kd === PK.Smoke || kd === PK.Fire || kd === PK.Dust ? 1 : 0;
     }
     this.geo.setDrawRange(0, this.count);
     for (const name of ['position', 'pcolor', 'psize', 'pshape']) {
@@ -183,24 +213,28 @@ function unpack(c: number, out: Float32Array, o: number, a: number): void {
 const BLOOD_FILTER = groups(GROUP.DEBRIS, GROUP.STATIC | GROUP.DYNAMIC);
 
 export class Particles {
+  private smokeL = new Layer(3000, false, 44);
   private normal = new Layer(9000, false, 45);
-  private additive = new Layer(5000, true, 46);
+  private fireL = new Layer(4000, false, 45.5);
+  private additive = new Layer(4000, true, 46);
   private game: Game;
   private ray = new RAPIER.Ray({ x: 0, y: 0 }, { x: 1, y: 0 });
   bloodEnabled = true;
 
   constructor(game: Game) {
     this.game = game;
-    game.renderer.scene.add(this.normal.points, this.additive.points);
+    game.renderer.scene.add(this.smokeL.points, this.normal.points, this.fireL.points, this.additive.points);
+    this.smokeL.points.renderOrder = 9;
+    this.fireL.points.renderOrder = 11;
   }
 
   get count(): number {
-    return this.normal.count + this.additive.count;
+    return this.smokeL.count + this.normal.count + this.fireL.count + this.additive.count;
   }
 
   emit(kind: PK, x: number, y: number, o: EmitOpts = {}): void {
-    const add = kind === PK.Spark || kind === PK.Fire || kind === PK.Flash || kind === PK.Ember;
-    const L = add ? this.additive : this.normal;
+    const L = kind === PK.Spark || kind === PK.Flash || kind === PK.Ember ? this.additive
+      : kind === PK.Fire ? this.fireL : kind === PK.Smoke ? this.smokeL : this.normal;
     const i = L.add();
     L.x[i] = x;
     L.y[i] = y;
@@ -213,6 +247,7 @@ export class Particles {
     L.grav[i] = o.gravity ?? 1;
     L.drag[i] = o.drag ?? 0;
     L.ignore[i] = o.ignore ?? null;
+    L.seed[i] = Math.random();
     const c = o.color ?? 0xffffff;
     unpack(c, L.col, i * 4, o.alpha ?? 1);
     unpack(o.color1 ?? c, L.col1, i * 4, o.alpha1 ?? o.alpha ?? 1);
@@ -276,11 +311,18 @@ export class Particles {
   }
 
   fire(x: number, y: number, intensity: number): void {
-    const s = 0.12 + intensity * 0.18;
-    this.emit(PK.Fire, x + (Math.random() - 0.5) * s, y, {
-      vx: (Math.random() - 0.5) * 0.6, vy: 0.8 + Math.random() * 1.2, life: 0.25 + Math.random() * 0.35,
-      size: s, size1: s * 0.2, color: 0xffd25a, color1: 0xc8320f, alpha: 0.95, alpha1: 0.3, gravity: -0.25, drag: 1,
+    // small flame tongues that rise, shrink and cool through the fire ramp
+    const s = PX * (2.5 + intensity * 3 + Math.random() * 2);
+    this.emit(PK.Fire, x + (Math.random() - 0.5) * PX * 2, y, {
+      vx: (Math.random() - 0.5) * 0.5, vy: 1 + Math.random() * 1.4, life: 0.22 + Math.random() * 0.3,
+      size: s, size1: s * 0.25, color: 0xffd25a, color1: 0xc8320f, alpha: 1, alpha1: 0.6, gravity: -0.3, drag: 1.4,
     });
+    if (Math.random() < 0.04) {
+      this.emit(PK.Ember, x, y, {
+        vx: (Math.random() - 0.5) * 1.2, vy: 1.5 + Math.random() * 2, life: 0.6 + Math.random() * 0.8,
+        color: 0xffb040, color1: 0x801800, alpha: 1, alpha1: 0.2, gravity: -0.05, drag: 0.8, size: PX,
+      });
+    }
   }
 
   flash(x: number, y: number, size: number, color = 0xfff0c0, life = 0.06): void {
@@ -288,7 +330,9 @@ export class Particles {
   }
 
   step(dt: number): void {
+    this.stepLayer(this.smokeL, dt);
     this.stepLayer(this.normal, dt);
+    this.stepLayer(this.fireL, dt);
     this.stepLayer(this.additive, dt);
   }
 
@@ -361,15 +405,14 @@ export class Particles {
 
   frame(): void {
     const s = this.game.renderer.zoom * this.game.renderer.dpr;
-    this.normal.mat.uniforms.uScale.value = s;
-    this.additive.mat.uniforms.uScale.value = s;
-    this.normal.upload();
-    this.additive.upload();
+    for (const L of [this.smokeL, this.normal, this.fireL, this.additive]) {
+      L.mat.uniforms.uScale.value = s;
+      L.upload();
+    }
   }
 
   clear(): void {
-    this.normal.count = 0;
-    this.additive.count = 0;
+    for (const L of [this.smokeL, this.normal, this.fireL, this.additive]) L.count = 0;
   }
 }
 
@@ -398,7 +441,7 @@ export class Stains {
     this.geo.setAttribute('psize', new THREE.BufferAttribute(this.size, 1));
     this.geo.setAttribute('pshape', new THREE.BufferAttribute(this.shape, 1));
     this.mat = new THREE.ShaderMaterial({
-      vertexShader: VERT, fragmentShader: FRAG, uniforms: { uScale: { value: 64 } }, transparent: true, depthWrite: false,
+      vertexShader: VERT, fragmentShader: FRAG, uniforms: { uScale: { value: 64 }, uPx: { value: PX } }, transparent: true, depthWrite: false,
     });
     const pts = new THREE.Points(this.geo, this.mat);
     pts.frustumCulled = false;

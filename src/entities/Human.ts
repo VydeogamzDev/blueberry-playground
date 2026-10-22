@@ -6,8 +6,7 @@ import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
 import { MAT, type PhysMaterial } from '../world/Materials';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
-import { limbArt, EYE, MOUTH, HUMAN_SKIN, type BodyKind, type LimbKey, type Skin } from '../art/human';
-import { shade } from '../art/PixelArt';
+import { limbArt, faceColors, EYE, MOUTH, HUMAN_SKIN, type BodyKind, type LimbKey, type Skin } from '../art/human';
 import type { Item, Holder } from './Item';
 
 interface LimbSpec {
@@ -68,6 +67,12 @@ const POSE_DOWN: Pose = {
   upperLegF: 0.55, upperLegB: 0.3, lowerLegF: -0.9, lowerLegB: -0.7, handF: 0.3, handB: 0.3, footF: 0.15, footB: 0.15,
 };
 
+/** Dry friction torque (N*m) in a limp body's joints, keyed by the child limb. */
+const JOINT_FRICTION: Record<string, number> = {
+  head: 2, midTorso: 7, lowerTorso: 7, upperLeg: 5, lowerLeg: 3, foot: 0.3,
+  upperArm: 1.6, lowerArm: 0.9, hand: 0.1,
+};
+
 /** Aiming pose for an arm holding an item, and for a supporting arm. */
 const AIM = { upper: 1.42, lower: 0.06, hand: 0 };
 const SUPPORT = { upper: 1.15, lower: 0.75, hand: 0 };
@@ -108,6 +113,8 @@ interface Limb {
   wounds: Wound[];
   stress: number;
   phase: number;
+  /** Extra rotational inertia (small links get some so piles don't make them buzz). */
+  extraI: number;
 }
 
 type State = 'stand' | 'down' | 'getup';
@@ -190,8 +197,16 @@ export class Human extends Entity implements Holder {
       });
       const limb: Limb = {
         spec: s, part, joint: null, parent: null, children: [], a1: { x: 0, y: 0 }, a2: { x: 0, y: 0 },
-        severed: false, gone: false, broken: false, attached: true, wounds: [], stress: 0, phase: Math.random() * 10,
+        severed: false, gone: false, broken: false, attached: true, wounds: [], stress: 0, phase: Math.random() * 10, extraI: 0,
       };
+      // Hands, feet and forearms are tiny and get squeezed between heavy bodies in
+      // piles, where their minute inertia makes the contact solve buzz. Tripling it
+      // is invisible in normal motion but lets them settle.
+      const small = /^(hand|foot|lowerArm)/.test(s.key);
+      if (small) {
+        limb.extraI = part.body.principalInertia() * 2;
+        part.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, limb.extraI, true);
+      }
       if (s.parent) {
         const parent = this.limbs.get(s.parent)!;
         limb.parent = parent;
@@ -314,13 +329,18 @@ export class Human extends Entity implements Holder {
       }
       const K = l.spec.muscle * boost * (l.broken ? 0.05 : 1) * (l.attached ? 1 : 0);
       if (!conscious || K <= 0) {
-        // limp: a little joint friction keeps ragdolls from looking like jelly
-        j.configureMotorPosition(target, 0, this.alive ? (arm ? 0.25 : 1.5) : arm ? 0.12 : 0.6);
+        // limp: dry joint friction. Limbs still flop under their own weight, but
+        // small sustained loads (a pile of bodies) no longer make them creep forever.
+        const fr = (JOINT_FRICTION[l.spec.key.replace(/[FB]$/, '')] ?? 1) * (this.alive ? 1 : 0.7) * (l.broken ? 0.2 : 1);
+        j.configureMotorVelocity(0, fr * 30);
+        j.setMotorMaxForce(fr);
       } else if (standing) {
+        j.setMotorMaxForce(1e6);
         // NB: Rapier's soft motors lose most of their stiffness when damping is high,
         // so damping stays small and body angular damping provides the rest
         j.configureMotorPosition(target, K * str * getupRamp, K * str * getupRamp * 0.003 + 0.3);
       } else {
+        j.setMotorMaxForce(1e6);
         // lying down: weak muscle tone (and writhing when in pain)
         const tone = arm ? 0.18 + writhe * 0.5 : 0.035;
         j.configureMotorPosition(target, K * tone * str, K * tone * 0.004 + 0.3);
@@ -599,21 +619,21 @@ export class Human extends Entity implements Holder {
     const head = this.L('head');
     if (head.gone) return;
     const p = head.part;
+    const fc = faceColors(this.variant.kind, this.variant.skin);
     if (this.variant.kind === 'android') {
-      const c = !this.alive ? 0x2a2f35 : this.consciousness < 0.3 ? 0x1f6b74 : 0x64d8e6;
+      const c = !this.alive ? fc.eyeDead : this.consciousness < 0.3 ? fc.eyeDim! : fc.eye;
       p.paintPixel(EYE.x - 1, EYE.y, c);
       p.paintPixel(EYE.x, EYE.y, c);
       return;
     }
-    const skin = this.variant.skin.skin;
     if (!this.alive) {
-      p.paintPixel(EYE.x, EYE.y, 0x4d3d33);
-      p.paintPixel(MOUTH.x, MOUTH.y, 0x3a1f1a);
+      p.paintPixel(EYE.x, EYE.y, fc.eyeDead);
+      p.paintPixel(MOUTH.x, MOUTH.y, fc.mouthDead);
     } else if (this.consciousness < 0.3) {
-      p.paintPixel(EYE.x, EYE.y, shade(skin, 0.7));
+      p.paintPixel(EYE.x, EYE.y, fc.eyeClosed!);
     } else {
-      p.paintPixel(EYE.x, EYE.y, 0x22180f);
-      p.paintPixel(MOUTH.x, MOUTH.y, shade(skin, 0.62));
+      p.paintPixel(EYE.x, EYE.y, fc.eye);
+      p.paintPixel(MOUTH.x, MOUTH.y, fc.mouth);
     }
   }
 
@@ -1080,7 +1100,7 @@ export class Human extends Entity implements Holder {
     this.grips.push({ item, hand, joint, support, t: 0 });
     // A hand is ~1000x lighter (rotationally) than a rifle, which leaves the joint's
     // angular lock badly conditioned; give the hand some of the item's inertia.
-    hp.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, ip.body.principalInertia() * 0.5, true);
+    hp.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, hand.extraI + ip.body.principalInertia() * 0.5, true);
     this.activatable = true;
     this.game.sound.impact('metal', 0.25, hp.x);
     this.updateMotors(true);
@@ -1094,7 +1114,7 @@ export class Human extends Entity implements Holder {
     const world = this.game.physics.world;
     if (g.joint.isValid()) world.removeImpulseJoint(g.joint, true);
     if (g.support && g.support.joint.isValid()) world.removeImpulseJoint(g.support.joint, true);
-    if (!g.hand.part.destroyed) g.hand.part.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, 0, true);
+    if (!g.hand.part.destroyed) g.hand.part.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, g.hand.extraI, true);
     if (item.holder === this) item.holder = null;
     if (!item.destroyed) {
       this.dropped.push({ item, t: 0.3 });

@@ -48,7 +48,7 @@ export class Fire {
       p.charred = Math.min(1, p.charred + dt * 0.06 * p.burning);
       p.entity.damage(p, dt * 6 * p.burning, 'fire');
       // flames
-      const rate = 6 + p.burning * 26 * Math.sqrt((p.w * p.h) / 120);
+      const rate = 10 + p.burning * 55 * Math.sqrt((p.w * p.h) / 120);
       let n = rate * dt;
       while (n > 0) {
         if (Math.random() < n) {

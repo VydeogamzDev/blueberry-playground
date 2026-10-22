@@ -144,15 +144,24 @@ export class Explosions {
   private visuals(x: number, y: number, o: ExplosionOpts): void {
     const p = this.game.particles;
     const R = o.radius;
-    p.flash(x, y, R * 1.6, 0xfff4d0, 0.09);
-    p.flash(x, y, R * 1.0, 0xffffff, 0.05);
+    p.flash(x, y, R * 1.1, 0xffe9b0, 0.1);
+    p.flash(x, y, R * 0.55, 0xffffff, 0.06);
+    // fireball core: a few big puffs that swell and darken
+    for (let i = 0; i < 6; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = Math.random() * R * 0.12;
+      p.emit(PK.Fire, x + Math.cos(a) * d, y + Math.sin(a) * d + R * 0.05, {
+        vx: Math.cos(a) * R * 0.5, vy: Math.sin(a) * R * 0.5 + R * 0.4, life: 0.3 + Math.random() * 0.25,
+        size: R * 0.16, size1: R * 0.3, color: 0xfff0b0, color1: 0x9a2a0c, alpha: 1, alpha1: 0, gravity: -0.3, drag: 5,
+      });
+    }
     const nFire = Math.round(30 + R * 14);
     for (let i = 0; i < nFire; i++) {
       const a = Math.random() * Math.PI * 2;
       const s = (0.5 + Math.random()) * R * 3.2;
       p.emit(PK.Fire, x, y, {
         vx: Math.cos(a) * s, vy: Math.sin(a) * s + 1, life: 0.25 + Math.random() * 0.45,
-        size: 0.15 + Math.random() * R * 0.25, size1: 0.05, color: 0xffe08a, color1: 0xb8300c, alpha: 1, alpha1: 0.2, gravity: -0.2, drag: 4,
+        size: 0.12 + Math.random() * R * 0.17, size1: 0.05, color: 0xffe08a, color1: 0xb8300c, alpha: 1, alpha1: 0.2, gravity: -0.2, drag: 4,
       });
     }
     for (let i = 0; i < Math.round(10 + R * 3); i++) {

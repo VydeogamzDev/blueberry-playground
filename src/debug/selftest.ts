@@ -61,7 +61,7 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (b.alive) return `steel box did not kill (${b.status()})`;
       return true;
     }],
-    ['4a. eight limp ragdolls piled: settle', () => {
+    ['4a. eight limp ragdolls piled: come to rest', () => {
       kit.reset();
       const hs: Human[] = [];
       for (let i = 0; i < 8; i++) hs.push(kit.spawn('human', (i % 2) * 0.3, 1 + i * 0.9, { angle: i * 0.7 }) as Human);
@@ -69,8 +69,9 @@ export function makeSelfTest(game: Game, controls: Controls) {
       let peak = 0;
       let sum = 0;
       let n = 0;
-      game.advance(8, (i) => {
-        if (i < 480 || i % 6) return;
+      // a heap of eight bodies slumps for a while; judge it once it has had time to
+      game.advance(12, (i) => {
+        if (i < 960 || i % 6) return;
         for (const h of hs) for (const p of h.parts) {
           if (p.destroyed) continue;
           const v = Math.hypot(p.vx, p.vy);
@@ -79,9 +80,8 @@ export function makeSelfTest(game: Game, controls: Controls) {
           n++;
         }
       });
-      // a heap of eight bodies may still slump a little, but must not buzz or pop
-      if (sum / n > 0.1) return `still moving (mean ${(sum / n).toFixed(3)} m/s)`;
-      if (peak > 8) return `launch: ${peak.toFixed(1)} m/s`;
+      if (sum / n > 0.05) return `still moving (mean ${(sum / n).toFixed(3)} m/s)`;
+      if (peak > 5) return `launch: ${peak.toFixed(1)} m/s`;
       if (kit.lowestPoint() < -0.05) return 'something fell through the floor';
       return true;
     }],
