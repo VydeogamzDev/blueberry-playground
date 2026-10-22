@@ -25,8 +25,11 @@ const candidates = [
 ].filter(Boolean);
 
 /**
- * @param {{ width?: number, height?: number, phone?: boolean }} opts
+ * @param {{ width?: number, height?: number, phone?: boolean, still?: boolean }} opts
  *   phone: emulate a 390x844 touch phone
+ *   still: the game's real-time loop never runs, not even while the page loads
+ *     (how many steps it takes then depends on the machine, and the physics
+ *     world keeps that history), so a seeded run replays exactly
  */
 export async function openGame(opts = {}) {
   const browser = candidates.find((p) => existsSync(p));
@@ -104,6 +107,7 @@ export async function openGame(opts = {}) {
       await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
       await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
     }
+    if (opts.still) await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.requestAnimationFrame = () => 0;' });
     await send('Page.navigate', { url });
     // wait for the game to boot (physics WASM, sprites, sounds' manifest)
     let ready = false;

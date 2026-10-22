@@ -24,7 +24,7 @@ const seed = process.env.SEED ? Number(process.env.SEED) >>> 0 : null;
 let exitCode = 1;
 let page;
 try {
-  page = await openGame();
+  page = await openGame({ still: seed !== null });
   const { evaluate, errors } = page;
 
   if (seed !== null) {
