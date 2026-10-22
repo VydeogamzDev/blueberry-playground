@@ -14,7 +14,7 @@ import { Puddles } from '../systems/Puddles';
 import type { Entity } from './Entity';
 import type { Part } from './Part';
 import type { ItemDef, SpawnOptions } from './types';
-import { settle, restCheck, wakeSettled, REST_CHECK } from '../systems/Settle';
+import { settle, restCheck, wakeSettled, resleepSettled, REST_CHECK } from '../systems/Settle';
 
 export interface GameHooks {
   onEntitiesChanged?: () => void;
@@ -340,6 +340,7 @@ export class Game {
     this.connections.preStep(dt);
     wakeSettled(this);
     this.physics.step();
+    resleepSettled(this);
     this.impacts.process();
     this.projectiles.step(dt);
     for (const e of this.entities) if (!e.destroyed) e.postStep(dt);

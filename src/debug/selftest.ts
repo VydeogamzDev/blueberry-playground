@@ -943,6 +943,41 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (peak > 12) return `launch when woken: ${peak.toFixed(1)} m/s`;
       return true;
     }],
+    ['extra: people, animals and crates dropped in a heap settle and stay asleep', () => {
+      // the conscious ones try to get up a few times, then give up until something
+      // changes; those that make it up and walk off don't count
+      kit.reset();
+      for (let i = 0; i < 8; i++) kit.spawn('human', -1.5 + (i % 4) * 0.8, 1 + Math.floor(i / 4) * 2.2, { angle: i * 0.9 });
+      for (let i = 0; i < 10; i++) kit.spawn(i % 2 ? 'cat' : 'dog', -2 + (i % 5) * 0.9, 5.5 + Math.floor(i / 5) * 1.2);
+      for (let i = 0; i < 6; i++) kit.spawn('crate', -1.8 + i * 0.7, 8.5);
+      const lying = () =>
+        game.entities
+          .filter((e) => (e as Human | Creature).state !== 'stand')
+          .flatMap((e) => e.parts)
+          .filter((p) => !p.destroyed && !p.frozen);
+      kit.advance(4);
+      let t = 4;
+      let peak = 0;
+      let asleepFor = 0;
+      let first = 0;
+      while (t < 150 && asleepFor < 20) {
+        game.advance(1, (i) => {
+          if (i % 6 === 0) peak = Math.max(peak, kit.maxSpeed());
+        });
+        t++;
+        if (lying().some((p) => !p.body.isSleeping())) asleepFor = 0;
+        else {
+          asleepFor++;
+          first ||= t;
+        }
+      }
+      if (asleepFor < 20) {
+        const awake = lying().filter((p) => !p.body.isSleeping()).length;
+        return first ? `asleep at ${first} s, but still waking up again at ${t} s` : `${awake} of ${lying().length} bodies still awake after ${t} s`;
+      }
+      if (peak > 12) return `launch while settling: ${peak.toFixed(1)} m/s`;
+      return true;
+    }],
   ];
 
   /** Runs every test, or only those whose name contains `filter`. */

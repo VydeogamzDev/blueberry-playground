@@ -57,6 +57,9 @@ const SPECS: LimbSpec[] = [
 /** Live-tunable balance parameters (exposed for debugging). */
 export const BALANCE = { kp: 42, kd: 4, dead: 0.05, amax: 7.5, torqueOnly: true, standDamping: 20, limpDamping: 0.7 };
 
+/** Failed attempts to stand before lying still until something changes. */
+const GIVE_UP = 4;
+
 /** Figure center height (px) used as the spawn reference point. */
 const MID_Y = 27.25;
 export const HUMAN_HALF_HEIGHT = MID_Y * PX;
@@ -154,6 +157,8 @@ export class Human extends Entity implements Holder {
   private airT = 0;
   private held = false;
   private getupFails = 0;
+  /** Where the torso lay when it gave up trying to stand (see rouse()). */
+  private gaveUp: V2 | null = null;
   private getupBest = 0;
   private getupProgressT = 0;
   private motorTimer = 0;
@@ -260,6 +265,32 @@ export class Human extends Entity implements Holder {
     return this.state !== 'getup' && this.stateT > 3 && this.pain < 0.05;
   }
 
+  /**
+   * A failed attempt to stand. After a few (wedged in a pile of bodies, legs
+   * trapped) it lies still instead of shoving the whole pile around forever,
+   * until something changes: see rouse().
+   */
+  private failGetup(): void {
+    this.getupFails++;
+    if (this.getupFails >= GIVE_UP) this.gaveUp = { x: this.L('upperTorso').part.x, y: this.L('upperTorso').part.y };
+    this.setState('down');
+  }
+
+  /** Something happened (a hit, a wound, being picked up): try standing again. */
+  private rouse(): void {
+    this.gaveUp = null;
+    this.getupFails = 0;
+  }
+
+  /**
+   * The pile it gave up in has shifted: one more try. Only one, or every
+   * attempt would shift the pile enough to start everyone else trying again.
+   */
+  private retry(): void {
+    this.gaveUp = null;
+    this.getupFails = GIVE_UP - 1;
+  }
+
   /** Overall muscle strength 0..1. */
   private strength(): number {
     if (!this.alive || this.limp) return 0;
@@ -293,6 +324,7 @@ export class Human extends Entity implements Holder {
         }
         break;
       case 'adrenaline':
+        this.rouse();
         this.drugs.adrenaline = Math.min(90, this.drugs.adrenaline + dose * 45);
         this.drugs.knockout = Math.max(0, this.drugs.knockout - dose * 90);
         break;
@@ -508,31 +540,31 @@ export class Human extends Entity implements Holder {
     } else if (this.state === 'stand' || this.state === 'getup') {
       this.airT = col.grounded ? 0 : this.airT + dt;
       const tilt = Math.abs(col.theta);
+      // only standing for a while counts as having got up (not toppling off a pile again)
+      if (this.state === 'stand' && this.stateT > 3) this.getupFails = 0;
       if (!this.legsWork()) this.setState('down');
-      else if (this.state === 'stand' && (tilt > 0.62 || this.airT > 0.35)) this.setState('down');
-      else if (this.state === 'getup' && this.flailing()) {
+      else if (this.state === 'stand' && (tilt > 0.62 || this.airT > 0.35)) {
+        if (this.stateT < 3) this.failGetup();
+        else this.setState('down');
+      } else if (this.state === 'getup' && this.flailing()) {
         // something is stopping the body from rising (pinned, tangled): give up
-        this.getupFails++;
-        this.setState('down');
+        this.failGetup();
       } else if (this.state === 'getup') {
         // keep trying while making progress
         if (tilt < this.getupBest - 0.05) {
           this.getupBest = tilt;
           this.getupProgressT = this.stateT;
         }
-        if (tilt < 0.2 && col.grounded && this.stateT > 0.5) {
-          this.setState('stand');
-          this.getupFails = 0;
-        } else if (this.stateT - this.getupProgressT > 2.5 || this.stateT > 7) {
-          this.getupFails++;
-          this.setState('down');
+        if (tilt < 0.2 && col.grounded && this.stateT > 0.5) this.setState('stand'); else if (this.stateT - this.getupProgressT > 2.5 || this.stateT > 7) {
+          this.failGetup();
         }
       }
     } else if (this.state === 'down') {
       const up = this.L('upperTorso').part;
       const rest = Math.hypot(up.vx, up.vy) < 0.6;
       const wait = 2.2 + this.getupFails * 1.5 + this.pain * 4;
-      if (this.stateT > wait && rest && col.grounded && this.legsWork() && str > 0.7 && this.pain < 0.6 && this.grounded(true) && !this.pinned()) {
+      if (this.gaveUp && Math.hypot(up.x - this.gaveUp.x, up.y - this.gaveUp.y) > 0.4) this.retry();
+      if (!this.gaveUp && this.stateT > wait && rest && col.grounded && this.legsWork() && str > 0.7 && this.pain < 0.6 && this.grounded(true) && !this.pinned()) {
         this.getupBest = Math.abs(col.theta);
         this.getupProgressT = 0;
         this.setState('getup');
@@ -621,16 +653,18 @@ export class Human extends Entity implements Holder {
       const tau = -I * alpha;
       // a body at rest inside the deadband is left alone so it can fall asleep
       if (Math.abs(tau) < 1.5) return;
-      // a sleeping body is only woken for a real push: small corrections must not be
-      // applied to it either, or the velocity piles up unsolved and is released
-      // all at once when something wakes it
-      const wake = Math.abs(tau) > 20;
+      // Asleep, it isn't moving, so there is nothing to correct until something
+      // wakes it. (Leaning on something it never gets inside the deadband, and
+      // waking it to push would wake the whole pile it stands on.) Nor may a
+      // torque be applied to a sleeping body without waking it: the velocity piles
+      // up unsolved and is released all at once when something wakes it.
+      if (this.L('upperTorso').part.body.isSleeping()) return;
       // distribute over the torso, where the "core" muscles act
       const share: [LimbKey, number][] = [['upperTorso', 0.4], ['midTorso', 0.3], ['lowerTorso', 0.3]];
       for (const [k, w] of share) {
         const l = this.L(k);
-        if (l.gone || !l.attached || l.part.frozen || (!wake && l.part.body.isSleeping())) continue;
-        l.part.body.applyTorqueImpulse(tau * w * dt, wake);
+        if (l.gone || !l.attached || l.part.frozen) continue;
+        l.part.body.applyTorqueImpulse(tau * w * dt, true);
       }
       return;
     }
@@ -768,6 +802,7 @@ export class Human extends Entity implements Holder {
   onGrab(p: Part, held: boolean): void {
     this.held = held;
     this.grabbedPart = held ? p : null;
+    this.rouse();
     if (held) this.setState('down');
     else {
       this.stateT = 0;
@@ -886,6 +921,8 @@ export class Human extends Entity implements Holder {
   private injure(l: Limb, dmg: number, kind: DamageKind, point?: V2, dir?: V2): void {
     const p = l.part;
     p.hp -= dmg;
+    // a real hit (not the knocks of flopping back down) makes it try again
+    if (dmg > 6) this.rouse();
     this.pain = Math.min(1.5, this.pain + dmg / 90);
     this.shock = Math.min(1, this.shock + dmg / 600);
     if (l.spec.key === 'head') this.consciousness = Math.max(0, this.consciousness - dmg / l.spec.hp);
@@ -1103,6 +1140,7 @@ export class Human extends Entity implements Holder {
   // ---------------------------------------------------------------- UI / state
 
   heal(): void {
+    this.rouse();
     this.drugs.adrenaline = this.drugs.knockout = this.drugs.poison = 0;
     this.alive = true;
     this.consciousness = 1;

@@ -33,6 +33,8 @@ export abstract class Entity {
   /** Part poses at the last rest check, and how many checks in a row found them still. */
   restRef: number[] = [];
   restChecks = 0;
+  /** Checks in a row that found it at most slowly creeping. */
+  slowChecks = 0;
 
   constructor(game: Game, def: ItemDef, flipped = false) {
     this.id = Entity.nextId++;

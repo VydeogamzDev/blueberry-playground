@@ -173,6 +173,8 @@ export class Creature extends Entity {
   private leanT = 0;
   private held = false;
   private getupFails = 0;
+  /** Where the chest lay when it gave up trying to stand. */
+  private gaveUp: V2 | null = null;
   private getupBest = 0;
   private getupProgressT = 0;
   private motorTimer = 0;
@@ -436,28 +438,28 @@ export class Creature extends Entity {
       this.leanT = tilt > 0.5 && !airborne ? this.leanT + dt : 0;
       // cats twist round in the air and land on their feet
       const fallen = (this.species.airRight ? this.airT > 2.5 || (!airborne && tilt > 1.0) : tilt > 0.95 || this.airT > 0.45) || this.leanT > 1.5;
+      // only standing for a while counts as having got up (not toppling off a pile again)
+      if (this.state === 'stand' && this.stateT > 3) this.getupFails = 0;
       if (!this.legsWork()) this.setState('down');
-      else if (this.state === 'stand' && fallen) this.setState('down');
+      else if (this.state === 'stand' && fallen) {
+        if (this.stateT < 3) this.failGetup();
+        else this.setState('down');
+      }
       else if (this.state === 'getup') {
         if (tilt < this.getupBest - 0.05) {
           this.getupBest = tilt;
           this.getupProgressT = this.stateT;
         }
-        if (tilt < 0.25 && paws >= 2 && this.stateT > 0.5) {
-          this.setState('stand');
-          this.getupFails = 0;
-        } else if (this.stateT - this.getupProgressT > 2.5 || this.stateT > 6) {
-          this.getupFails++;
-          this.setState('down');
-        }
+        if (tilt < 0.25 && paws >= 2 && this.stateT > 0.5) this.setState('stand');
+        else if (this.stateT - this.getupProgressT > 2.5 || this.stateT > 6) this.failGetup();
       }
     } else {
       const c = this.L('chest').part;
       const rest = Math.hypot(c.vx, c.vy) < 0.6;
-      // wedged in a crowd it stops struggling for a while after a few tries
-      const wait = 1.6 + this.getupFails * 1.5 + (this.getupFails >= 3 ? 12 : 0) + this.pain * 4;
+      const wait = 1.6 + this.getupFails * 1.5 + this.pain * 4;
+      if (this.gaveUp && Math.hypot(c.x - this.gaveUp.x, c.y - this.gaveUp.y) > 0.4) this.retry();
       const inAir = this.species.airRight && !paws && this.stateT > 0.3 && !this.touching();
-      if ((inAir || (this.stateT > wait && rest)) && this.legsWork() && str > 0.7 && this.pain < 0.6 && !this.held && !this.pinned()) {
+      if ((inAir || (!this.gaveUp && this.stateT > wait && rest)) && this.legsWork() && str > 0.7 && this.pain < 0.6 && !this.held && !this.pinned()) {
         this.getupBest = tilt;
         this.getupProgressT = 0;
         this.setState(inAir ? 'stand' : 'getup');
@@ -518,13 +520,13 @@ export class Creature extends Entity {
     }
     if (torqueOnly) {
       const tau = I * alpha;
-      // small corrections leave a still body alone so it can fall asleep
-      if (Math.abs(tau) < 1) return;
-      const wake = Math.abs(tau) > 12;
+      // small corrections leave a still body alone so it can fall asleep, and
+      // asleep there is nothing to correct until something wakes it (see Human.balance)
+      if (Math.abs(tau) < 1 || this.L('chest').part.body.isSleeping()) return;
       for (const k of ['chest', 'hips']) {
         const l = this.L(k);
-        if (l.gone || !l.attached || l.part.frozen || (!wake && l.part.body.isSleeping())) continue;
-        l.part.body.applyTorqueImpulse(tau * 0.5 * dt, wake);
+        if (l.gone || !l.attached || l.part.frozen) continue;
+        l.part.body.applyTorqueImpulse(tau * 0.5 * dt, true);
       }
       return;
     }
@@ -580,6 +582,25 @@ export class Creature extends Entity {
       this.voiceT = 2;
       this.game.sound.play(this.species.sounds.idle, { gain: 0.35, x });
     }
+  }
+
+  /** A failed attempt to stand; wedged in a crowd it lies still after a few, until something changes. */
+  private failGetup(): void {
+    this.getupFails++;
+    if (this.getupFails >= 4) this.gaveUp = { x: this.L('chest').part.x, y: this.L('chest').part.y };
+    this.setState('down');
+  }
+
+  /** Something happened (a hit, a wound, being picked up): try standing again. */
+  private rouse(): void {
+    this.gaveUp = null;
+    this.getupFails = 0;
+  }
+
+  /** The pile it gave up in has shifted: one more try (see Human.retry). */
+  private retry(): void {
+    this.gaveUp = null;
+    this.getupFails = 3;
   }
 
   private yelp(dmg: number): void {
@@ -689,6 +710,7 @@ export class Creature extends Entity {
         }
         break;
       case 'adrenaline':
+        this.rouse();
         this.drugs.adrenaline = Math.min(90, this.drugs.adrenaline + dose * 45);
         this.drugs.knockout = Math.max(0, this.drugs.knockout - dose * 90);
         break;
@@ -730,6 +752,7 @@ export class Creature extends Entity {
 
   onGrab(_p: Part, held: boolean): void {
     this.held = held;
+    this.rouse();
     if (held) {
       this.setState('down');
       if (this.alive && this.consciousness > 0.3 && this.voiceT <= 0 && this.species.kind === 'cat') {
@@ -827,6 +850,8 @@ export class Creature extends Entity {
   private injure(l: Limb, dmg: number, kind: DamageKind, point?: V2, dir?: V2): void {
     const p = l.part;
     p.hp -= dmg;
+    // a real hit (not the knocks of flopping back down) makes it try again
+    if (dmg > 6) this.rouse();
     this.pain = Math.min(1.5, this.pain + dmg / 70);
     this.shock = Math.min(1, this.shock + dmg / 500);
     if (l.spec.key === 'head') this.consciousness = Math.max(0, this.consciousness - dmg / l.spec.hp);
@@ -992,6 +1017,7 @@ export class Creature extends Entity {
   // ---------------------------------------------------------------- UI / state
 
   heal(): void {
+    this.rouse();
     this.drugs.adrenaline = this.drugs.knockout = this.drugs.poison = 0;
     this.alive = true;
     this.consciousness = 1;
