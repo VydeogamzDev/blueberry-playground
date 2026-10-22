@@ -82,6 +82,10 @@ export abstract class Entity {
   get upright(): boolean {
     return false;
   }
+  /** Jumps, if it's something that can (a person or an animal on its feet). Returns whether it did. */
+  jump(): boolean {
+    return false;
+  }
   postStep(_dt: number): void {}
   frame(_dt: number): void {}
   activate(): void {}

@@ -83,6 +83,8 @@ export class Part {
   flash = 0;
   /** Contacts disabled against everything except the static world. */
   noCollideAll = false;
+  /** Touches only the floor and walls, never other things (an animal's tail: it would snag on everything). */
+  onlyStatic = false;
 
   // interpolation state (meters / radians)
   x = 0;
@@ -412,7 +414,12 @@ export class Part {
 
   setNoCollideAll(on: boolean): void {
     this.noCollideAll = on;
-    for (const c of this.colliders) c.setCollisionGroups(on ? GROUPS_NOCOLLIDE : GROUPS_DYNAMIC);
+    for (const c of this.colliders) c.setCollisionGroups(on || this.onlyStatic ? GROUPS_NOCOLLIDE : GROUPS_DYNAMIC);
+  }
+
+  setOnlyStatic(): void {
+    this.onlyStatic = true;
+    for (const c of this.colliders) c.setCollisionGroups(GROUPS_NOCOLLIDE);
   }
 
   refreshTint(): void {

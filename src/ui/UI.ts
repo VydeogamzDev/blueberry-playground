@@ -33,6 +33,7 @@ const HELP: [string, string][] = [
   ['Q / E', 'Rotate held object · rotate selection 15° (Shift: 90°) · rotate spawn'],
   ['F', 'Activate (hold for automatic weapons)'],
   ['Z', 'Freeze / unfreeze'],
+  ['J', 'Jump (people and animals on their feet)'],
   ['N', 'Toggle no-collide'],
   ['R', 'Flip object · flip spawn while placing'],
   ['Delete / X', 'Delete selection or hovered object'],

@@ -32,7 +32,11 @@ export class Physics {
     // three halve the step-to-step wobble of limbs squeezed in a pile compared
     // with two (to about 0.1 mm, under 1 mm in the worst 1%) for ~5% more time
     ip.numInternalPgsIterations = 3;
-    ip.maxCcdSubsteps = 2;
+    // one CCD substep (Rapier's default): with two, a fast object anywhere in the
+    // world splits the whole step, and over the short first substep an ordinary
+    // contact elsewhere (an animal's paw touching down at 2.5 m/s) is corrected
+    // as if it were deep: the paw was kicked up at 20 m/s, flipping the animal
+    ip.maxCcdSubsteps = 1;
     this.events = new RAPIER.EventQueue(true);
 
     const map = this.partByCollider;

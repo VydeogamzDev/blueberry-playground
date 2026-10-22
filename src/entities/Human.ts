@@ -101,8 +101,35 @@ const POSE_TUCK: Pose = {
 const POSE_CLIMB: Pose = { ...POSE_TUCK, upperArmF: 1.9, upperArmB: 1.6, lowerArmF: 0.35, lowerArmB: 0.5 };
 /** Letting themselves down off a ledge: knees a little bent for the landing, arms out. */
 const POSE_DROP: Pose = { ...POSE_STAND, upperLegF: 0.55, upperLegB: 0.25, lowerLegF: -0.8, lowerLegB: -0.6, footF: 0.2, footB: 0.2, upperArmF: 0.7, upperArmB: 0.45, lowerArmF: 0.5, lowerArmB: 0.4 };
-const CLIMB_POSES = { tuck: POSE_TUCK, reach: POSE_CLIMB, drop: POSE_DROP, stand: POSE_STAND };
-type ClimbPose = keyof typeof CLIMB_POSES;
+/** Crouching to jump: knees bent, leaning into it, arms swung back. */
+const POSE_CROUCH: Pose = {
+  ...POSE_STAND, midTorso: 0.2, lowerTorso: 0.25, upperLegF: 0.95, upperLegB: 0.8, lowerLegF: -1.55, lowerLegB: -1.45, footF: 0.6, footB: 0.6,
+  upperArmF: -0.5, upperArmB: -0.6, lowerArmF: 0.3, lowerArmB: 0.3,
+};
+/** Poses for climbing and jumping (see updateMotors). */
+const MOVE_POSES = { tuck: POSE_TUCK, reach: POSE_CLIMB, drop: POSE_DROP, stand: POSE_STAND, crouch: POSE_CROUCH };
+type MovePose = keyof typeof MOVE_POSES;
+
+/** A jump: how fast the body springs up (m/s; about 0.6 m high), after crouching for it (s). */
+const JUMP = { vy: 3.4, crouch: 0.22 };
+/** Coming up out of a landing's bent knees into the standing pose (s): snapped straight, the legs would spring them off the floor again. */
+const SETTLE_T = 0.5;
+/** Going from one pose to the next, climbing or jumping (s): snapped, the feet whip round at 30-40 m/s. */
+const POSE_EASE = 0.15;
+
+interface Jump {
+  /** Seconds since springing up (negative: still crouching for it). */
+  t: number;
+  /** Speed along the floor to carry on with (m/s, + right). */
+  vx: number;
+  /** Has left the ground, and seconds since landing (negative: not yet). */
+  off: boolean;
+  landed: number;
+  /** Past the top of it (legs reaching down for the floor from then on). */
+  peaked: boolean;
+  /** The pose the legs are in now (see jumpPose). */
+  pose: MovePose;
+}
 
 /**
  * A climb: the trunk is carried along a path from (x0, y0) to (x1, y1) over
@@ -229,6 +256,10 @@ export class Human extends Entity implements Holder {
   limp = false;
   /** Joint angles at the start of a get-up (blended toward the standing pose). */
   private blendFrom: Map<Limb, number> | null = null;
+  /** Joint angles eased out of into the next pose, over settleDur s (see SETTLE_T, POSE_EASE). */
+  private settleFrom: Map<Limb, number> | null = null;
+  private settleT = 0;
+  private settleDur = SETTLE_T;
   /** Items held in the hands. */
   private grips: Grip[] = [];
   /** Recently dropped items that still overlap the body. */
@@ -267,6 +298,7 @@ export class Human extends Entity implements Holder {
   private landT = 9;
   /** Waiting for the cool-down to climb again (see think()). */
   private climbWait = false;
+  private jumping: Jump | null = null;
 
   constructor(game: Game, def: ItemDef, variant: Variant, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -474,6 +506,8 @@ export class Human extends Entity implements Holder {
     this.stateT = 0;
     this.feetT = 0;
     this.climbing = null;
+    this.jumping = null;
+    this.settleFrom = null;
     // getting up blends every joint from where it is now to the standing pose,
     // instead of snapping the limbs into place
     if (s === 'getup') {
@@ -519,9 +553,10 @@ export class Human extends Entity implements Holder {
     const conscious = str > 0.15;
     const f = this.f;
     const standing = this.state !== 'down' && conscious;
-    // climbing: tucked up until the feet are over where they're going, then reaching down for it
-    const climbPose = standing && this.climbing ? this.climbPose() : '';
-    const pose = climbPose ? CLIMB_POSES[climbPose] : standing ? POSE_STAND : POSE_DOWN;
+    // climbing (tucked up until the feet are over where they're going, then reaching
+    // down for it) and jumping
+    const movePose = standing ? (this.climbing ? this.climbPose() : this.jumping ? this.jumpPose() : '') : '';
+    const pose = movePose ? MOVE_POSES[movePose] : standing ? POSE_STAND : POSE_DOWN;
     const writhe = !standing && conscious ? Math.min(0.9, this.pain * 0.9) : 0;
     // someone lying still stops tensing up: weak muscles pushing against a pile of
     // bodies never find a balance and keep the limbs creeping forever
@@ -533,8 +568,9 @@ export class Human extends Entity implements Holder {
     if (ik) for (const k in ik) ikSig += Math.round(ik[k as LimbKey]! * 40) + ',';
     // limp or relaxed joints only have friction: how strong they are doesn't matter
     const tone = standing || (conscious && !relaxed) ? Math.round(str * 50) : -1;
-    const stepping = standing && this.gaitAmt > 0 && !this.climbing;
-    const sig = `${standing}:${conscious}:${tone}:${Math.round(getupRamp * 20)}:${this.gripSig()}:${ikSig}:${relaxed}:${stepping}:${climbPose}`;
+    const stepping = standing && this.gaitAmt > 0 && !this.climbing && !this.jumping;
+    const settle = standing && this.settleFrom ? smoothstep(0, 1, this.settleT / this.settleDur) : 1;
+    const sig = `${standing}:${conscious}:${tone}:${Math.round(getupRamp * 20)}:${this.gripSig()}:${ikSig}:${relaxed}:${stepping}:${movePose}:${Math.round(settle * 20)}`;
     if (!force && !stepping && (writhe === 0 || relaxed) && sig === this.motorSig) return;
     this.motorSig = sig;
     for (const l of this.order) {
@@ -543,6 +579,10 @@ export class Human extends Entity implements Holder {
       let target = (pose[l.spec.key] ?? 0) * f;
       const from = this.blendFrom?.get(l);
       if (from !== undefined) target = from + (target - from) * smoothstep(0, 1, this.stateT / 1.1);
+      else if (settle < 1) {
+        const s = this.settleFrom?.get(l);
+        if (s !== undefined) target = s + (target - s) * settle;
+      }
       const arm = l.spec.muscle < 500;
       // arms holding something aim it forward
       const hold = standing ? this.armRole(l) : null;
@@ -728,9 +768,9 @@ export class Human extends Entity implements Holder {
       if (this.state === 'stand' && this.stateT > 3) this.getupFails = this.retries = this.crawls = 0;
       this.landT += dt;
       if (!this.legsWork()) this.setState('down');
-      else if (this.climbing) {
-        // carried along by the climb with the feet off the ground: only a real
-        // tumble (knocked over on the way) ends it
+      else if (this.climbing || this.jumping) {
+        // carried along by the climb, or in the air: only a real tumble (knocked
+        // over on the way) ends it
         this.airT = 0;
         if (Math.abs(wrapAngle(this.L('upperTorso').part.a)) > 1.1) this.setState('down');
       } else if (this.state === 'stand' && (tilt > (this.landT < 0.5 ? 0.9 : 0.62) || this.airT > (this.landT < 0.6 ? 0.6 : 0.35))) {
@@ -793,7 +833,9 @@ export class Human extends Entity implements Holder {
 
     // ---- what to do on its feet
     this.climbCool -= dt;
+    if (this.settleFrom && (this.settleT += dt) > this.settleDur) this.settleFrom = null;
     if (conscious && this.state === 'stand' && !this.held && this.climbing) this.climb(dt);
+    else if (conscious && this.state === 'stand' && !this.held && this.jumping) this.jumpStep(dt, col.grounded);
     else if (conscious && this.state === 'stand' && !this.held) this.think(dt);
     else {
       this.speed = 0;
@@ -802,8 +844,8 @@ export class Human extends Entity implements Holder {
 
     // ---- muscles
     this.motorTimer -= dt;
-    // stepping legs follow their gait every step
-    if (this.motorTimer <= 0 || this.gaitAmt > 0) {
+    // stepping legs follow their gait every step, and easing into a pose goes smoothly
+    if (this.motorTimer <= 0 || this.gaitAmt > 0 || this.settleFrom) {
       this.motorTimer = 0.05;
       this.updateMotors(false);
     }
@@ -811,7 +853,8 @@ export class Human extends Entity implements Holder {
     if (this.grips.length && this.state === 'stand' && conscious) this.aim(str, dt);
 
     // ---- balance
-    if ((this.state === 'stand' || this.state === 'getup') && conscious && col.grounded && !this.climbing) {
+    const flying = this.jumping && this.jumping.t >= 0 && this.jumping.landed < 0;
+    if ((this.state === 'stand' || this.state === 'getup') && conscious && col.grounded && !this.climbing && !flying) {
       if (this.state === 'getup') {
         const ramp = clamp(this.stateT / 1.2, 0, 1);
         this.balance(col, 16 * str, 9 * str, 4 + 14 * ramp, dt);
@@ -1153,6 +1196,7 @@ export class Human extends Entity implements Holder {
   private startClimb(): void {
     this.speed = 0;
     this.climbCool = 0.6;
+    this.easeFrom(POSE_EASE);
     this.updateMotors(true);
     for (const l of this.order) if (!l.gone && !l.part.frozen) l.part.body.wakeUp();
   }
@@ -1181,7 +1225,7 @@ export class Human extends Entity implements Holder {
    * where they're going, the arms reaching out once the body has risen (swung
    * out at once they'd shove the box away); going down, knees soft for the landing.
    */
-  private climbPose(): ClimbPose {
+  private climbPose(): MovePose {
     const k = this.climbing!;
     const s = k.t / k.dur;
     if (k.kind === 'down') return s < 0.4 ? 'tuck' : s < 0.75 ? 'drop' : 'stand';
@@ -1232,8 +1276,103 @@ export class Human extends Entity implements Holder {
       const ay = clamp((vy + w * (p.x - mx) - v.y) * 14, -30, 30) - GRAVITY;
       p.body.applyImpulse({ x: p.mass * ax * dt, y: p.mass * ay * dt }, true);
     }
-    if (this.climbPose() !== was) this.updateMotors(true);
+    if (this.climbPose() !== was) {
+      this.easeFrom(POSE_EASE);
+      this.updateMotors(true);
+    }
     if (k.t >= k.dur) this.endClimb();
+  }
+
+  /** Jumps, if on their feet with the floor under them (carrying on the way they're walking). Returns whether they did. */
+  jump(): boolean {
+    if (!this.alive || this.state !== 'stand' || this.held || this.climbing || this.jumping) return false;
+    if (!this.legsWork() || this.strength() < 0.5 || !this.grounded()) return false;
+    this.jumping = { t: -JUMP.crouch, vx: this.trunkVx() * this.f, off: false, landed: -1, peaked: false, pose: 'crouch' };
+    this.speed = 0;
+    this.easeFrom(POSE_EASE);
+    this.updateMotors(true);
+    for (const l of this.order) if (!l.gone && !l.part.frozen) l.part.body.wakeUp();
+    return true;
+  }
+
+  /** Crouching for it, springing up, knees up in the air, soft knees to land on. */
+  private jumpPose(): MovePose {
+    const j = this.jumping!;
+    if (j.t < 0) return 'crouch';
+    if (j.landed >= 0) return 'drop';
+    // (held bent until the feet are off the floor: straightening or drawing them up
+    // against it, the legs would kick the body up far higher)
+    if (!j.off) return 'crouch';
+    return j.peaked ? 'drop' : 'tuck';
+  }
+
+  private jumpStep(dt: number, grounded: boolean): void {
+    const j = this.jumping!;
+    this.speed = 0;
+    const before = j.t;
+    j.t += dt;
+    if (before < 0 && j.t >= 0) {
+      for (const l of this.order) {
+        if (l.gone || !l.attached || l.part.frozen) continue;
+        const v = l.part.body.linvel();
+        l.part.body.applyImpulse({ x: l.part.mass * (j.vx - v.x), y: l.part.mass * (JUMP.vy - v.y) }, true);
+      }
+    }
+    if (j.t > 0.08 && !grounded) j.off = true;
+    if (j.off && this.L('midTorso').part.vy < 0.5) j.peaked = true;
+    if (j.landed >= 0) j.landed += dt;
+    else if (j.off && grounded) j.landed = 0;
+    if (j.t >= 0 && j.landed < 0) this.airRight(dt);
+    // (the pose follows the flight, which changes in the physics step: compared
+    // with the one the legs were last put in, not with before this step's checks)
+    const pose = this.jumpPose();
+    if (pose !== j.pose) {
+      j.pose = pose;
+      this.easeFrom(POSE_EASE);
+      this.updateMotors(true);
+    }
+    // down and steady (or they never got off the ground: something on top of them)
+    if (j.landed > 0.25 || j.t > 2.5 || (j.t > 0.4 && !j.off)) this.endJump();
+  }
+
+  private endJump(): void {
+    this.jumping = null;
+    this.landT = 0;
+    this.easeFrom(SETTLE_T);
+    this.updateMotors(true);
+  }
+
+  /** Eases the joints from where they are now into their next targets over `dur` s, instead of snapping them there. */
+  private easeFrom(dur: number): void {
+    this.settleFrom = new Map();
+    this.settleT = 0;
+    this.settleDur = dur;
+    for (const l of this.order) {
+      if (l.joint && l.parent && !l.gone) this.settleFrom.set(l, wrapAngle(l.part.body.rotation() - l.parent.part.body.rotation()));
+    }
+  }
+
+  /** In the air: the whole body turned back upright about its center of mass. */
+  private airRight(dt: number): void {
+    const live = this.order.filter((l) => !l.gone && l.attached && !l.part.frozen);
+    let m = 0;
+    let mx = 0;
+    let my = 0;
+    for (const l of live) {
+      m += l.part.mass;
+      mx += l.part.x * l.part.mass;
+      my += l.part.y * l.part.mass;
+    }
+    if (!m) return;
+    mx /= m;
+    my /= m;
+    const up = this.L('upperTorso').part.body;
+    const alpha = clamp(-wrapAngle(up.rotation()) * 60 - up.angvel() * 12, -40, 40);
+    for (const l of live) {
+      const p = l.part;
+      p.body.applyImpulse({ x: -p.mass * alpha * (p.y - my) * dt, y: p.mass * alpha * (p.x - mx) * dt }, true);
+      p.body.applyTorqueImpulse(p.body.principalInertia() * alpha * dt, true);
+    }
   }
 
   private endClimb(): void {
@@ -1295,7 +1434,7 @@ export class Human extends Entity implements Holder {
     // each leg carries the body one sweep per half stride
     const sweep = 2 * HIP_Y * Math.sin(GAIT.swing + (GAIT.runSwing - GAIT.swing) * run);
     this.stride = (this.stride + 2 * Math.PI * Math.max(0.8, this.pace / (2 * sweep)) * dt) % (2 * Math.PI);
-    if (!grounded || this.state !== 'stand' || this.climbing) return;
+    if (!grounded || this.state !== 'stand' || this.climbing || this.jumping) return;
     // speed up toward the wanted speed (or slow to a stop), gently while the legs
     // are still getting into their stride: a body shoved ahead of its feet falls on its face
     const up = (GAIT.accel + (GAIT.runAccel - GAIT.accel) * run) * (0.3 + 0.7 * this.gaitAmt);
@@ -1952,6 +2091,7 @@ export class Human extends Entity implements Holder {
 
   contextActions(): ContextAction[] {
     const acts: ContextAction[] = [];
+    if (this.alive) acts.push({ label: 'Jump', hint: 'J', disabled: this.state !== 'stand', action: () => this.jump() });
     if (this.grips.length) {
       acts.push({ label: 'Use held item', hint: 'F', action: () => this.activate() });
       acts.push({ label: this.grips.length > 1 ? 'Drop items' : `Drop ${this.grips[0].item.label.toLowerCase()}`, action: () => this.dropAll() });
@@ -2271,7 +2411,7 @@ export class Human extends Entity implements Holder {
   /** Short status line (shown in tooltips/tests). */
   status(): string {
     const drugs = (Object.keys(this.drugs) as (keyof typeof this.drugs)[]).filter((k) => this.drugs[k] > 0).map((k) => ` · ${k}`).join('');
-    return `${this.alive ? (this.consciousness > 0.3 ? 'conscious' : 'unconscious') : 'dead'} · blood ${this.blood.toFixed(0)}%${drugs} · ${this.state}${this.climbing ? ' · climbing' : ''}`;
+    return `${this.alive ? (this.consciousness > 0.3 ? 'conscious' : 'unconscious') : 'dead'} · blood ${this.blood.toFixed(0)}%${drugs} · ${this.state}${this.climbing ? ' · climbing' : this.jumping ? ' · jumping' : ''}`;
   }
 
   /** Which way they're climbing right now (null: they aren't). */

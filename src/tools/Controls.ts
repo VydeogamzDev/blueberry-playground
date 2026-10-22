@@ -805,6 +805,9 @@ export class Controls {
       case 'KeyZ':
         this.toggleFreeze(this.grab ? [this.grab.part.entity] : this.targets());
         break;
+      case 'KeyJ':
+        for (const x of this.targets()) x.jump();
+        break;
       case 'KeyN': {
         const list = this.targets();
         const nc = list.every((x) => x.noCollide);

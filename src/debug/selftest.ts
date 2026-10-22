@@ -523,7 +523,10 @@ export function makeSelfTest(game: Game, controls: Controls) {
       kit.advance(0.6);
       const t = h.limbs.get('midTorso')!.part;
       const hp0 = t.hp;
+      // aimed level at the torso (and still: not tipping over from the drop)
       g.main.teleport(-3, t.y, 0);
+      g.main.body.setLinvel({ x: 0, y: 0 }, true);
+      g.main.body.setAngvel(0, true);
       kit.advance(0.02);
       g.fire();
       kit.advance(0.05);
@@ -1238,7 +1241,11 @@ export function makeSelfTest(game: Game, controls: Controls) {
             if (Math.abs(things[i].parts[0].x - x0[i]) > 0.3) return `shoved ${where} ${(things[i].parts[0].x - x0[i]).toFixed(2)} m`;
           } else {
             if (seen[i].size) return `climbed ${where}`;
-            if (x > at - 0.3) return `walked into ${where} (x ${x.toFixed(2)})`;
+            // (someone standing there sways and steps about: as close as they are now;
+            // torsos 0.25 m wide touch 0.25 m apart. They usually stop 0.4 m short)
+            const moved = things[i].parts[0].x - x0[i];
+            const ahead = what === 'person' ? at + moved : at;
+            if (x > ahead - 0.26) return `walked into ${where} (x ${x.toFixed(2)}, they moved ${moved.toFixed(2)})`;
             if (Math.abs(things[i].parts[0].x - x0[i]) > 0.15) return `shoved ${where} along`;
           }
         }
@@ -1263,19 +1270,57 @@ export function makeSelfTest(game: Game, controls: Controls) {
         animals.forEach((a, i) => a.goTo(lanes[i] + 5.5));
         const falls = animals.map(() => 0);
         const was = animals.map((a) => a.state);
+        // where each stops (left standing about it wanders off again in a while)
+        const stopped = animals.map(() => NaN);
         game.advance(9, () => animals.forEach((a, i) => {
           if (was[i] === 'stand' && a.state !== 'stand') falls[i]++;
           was[i] = a.state;
+          const c = chest(a);
+          if (Number.isNaN(stopped[i]) && (a as unknown as { goal: string }).goal !== 'walk' && Math.abs(c.vx) < 0.05) stopped[i] = c.x;
         }));
         for (let i = 0; i < kinds.length; i++) {
           const a = animals[i];
-          const x = chest(a).x - lanes[i];
+          const x = (Number.isNaN(stopped[i]) ? chest(a).x : stopped[i]) - lanes[i];
           if (falls[i]) return `${kinds[i]} fell getting over a body ${at} m off (${a.status()})`;
           if (x < 4.5) return `${kinds[i]} sent past a body ${at} m off got to ${x.toFixed(2)}`;
           const moved = bodies[i].limbs.get('midTorso')!.part.x - b0[i];
           if (Math.abs(moved) > 0.4) return `${kinds[i]} shoved a body ${moved.toFixed(2)} m getting over it`;
         }
       }
+      return true;
+    }],
+    ['extra: people and animals jump when told, and land on their feet', () => {
+      type Case = { kind: string; walk: boolean };
+      const cases: Case[] = [
+        { kind: 'human', walk: false }, { kind: 'human', walk: true }, { kind: 'dog', walk: false }, { kind: 'dog', walk: true },
+        { kind: 'cat', walk: false }, { kind: 'fox', walk: false },
+      ];
+      kit.reset();
+      const lanes = cases.map((_, i) => -60 + i * 20);
+      const ents = cases.map((c, i) => kit.spawn(c.kind, lanes[i], c.kind === 'human' ? 0.9 : 0.6) as Human | Creature);
+      kit.advance(1.5);
+      ents.forEach((e, i) => cases[i].walk && e.goTo(lanes[i] + 8));
+      kit.advance(1);
+      const trunk = (e: Human | Creature) => (e.def.id === 'human' ? (e as Human).limbs.get('midTorso') : (e as Creature).limbs.get('chest'))!.part;
+      const y0 = ents.map((e) => trunk(e).y);
+      for (let i = 0; i < ents.length; i++) if (!ents[i].jump()) return `${cases[i].kind} would not jump (${ents[i].status()})`;
+      const rise = ents.map(() => 0);
+      const falls = ents.map(() => 0);
+      game.advance(3, () => ents.forEach((e, i) => {
+        rise[i] = Math.max(rise[i], trunk(e).y - y0[i]);
+        if (e.state !== 'stand') falls[i]++;
+      }));
+      for (let i = 0; i < ents.length; i++) {
+        const what = `${cases[i].kind}${cases[i].walk ? ' walking' : ''}`;
+        if (rise[i] < 0.25) return `${what} jumped only ${rise[i].toFixed(2)} m`;
+        if (rise[i] > 0.9) return `${what} jumped ${rise[i].toFixed(2)} m`;
+        if (falls[i]) return `${what} fell jumping (${ents[i].status()})`;
+      }
+      // nobody jumps lying down
+      const lying = ents[0] as Human;
+      lying.limp = true;
+      kit.advance(1);
+      if (lying.jump()) return 'someone lying limp jumped';
       return true;
     }],
     ['extra: someone standing on or beside a lying body leaves it where it is', () => {

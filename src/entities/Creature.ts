@@ -341,6 +341,9 @@ export class Creature extends Entity {
       if (s.key.startsWith('lower') || s.key === 'tail' || species.kind === 'cat') {
         part.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, part.body.principalInertia() * 2, true);
       }
+      // a tail rests on the floor but passes over everything else: it would drag
+      // on whatever the animal climbs over (a body, a crate) and hold it back
+      if (s.key === 'tail') part.setOnlyStatic();
       const limb: Limb = {
         spec: s, part, joint: null, parent: null, children: [], a1: { x: 0, y: 0 }, a2: { x: 0, y: 0 },
         severed: false, gone: false, broken: false, attached: true, wounds: [], stress: 0,
@@ -454,7 +457,11 @@ export class Creature extends Entity {
       target *= f;
       const from = this.blendFrom?.get(l);
       if (from !== undefined) target = from + (target - from) * smoothstep(0, 1, this.stateT / 0.9);
-      const K = l.spec.muscle * (l.broken ? 0.05 : 1) * (l.attached ? 1 : 0);
+      // just come down from a leap: legs that give with the landing, firming up
+      // again gradually (landing on stiff legs it bounces and pitches over more
+      // often; snapped back to full strength they spring it off again)
+      const soft = this.landT < 0.4 && /^(upper|lower)/.test(key) ? 0.35 + 0.65 * smoothstep(0.05, 0.4, this.landT) : 1;
+      const K = l.spec.muscle * soft * (l.broken ? 0.05 : 1) * (l.attached ? 1 : 0);
       if (folding && K > 0) {
         // going limp where it stands: the legs give way
         j.setMotorMaxForce(1e6);
@@ -476,13 +483,13 @@ export class Creature extends Entity {
   }
 
   /** How many paws are on something solid (firm: the ground or something fixed, not a heap of bodies). */
-  private pawsDown(firm = false): number {
+  private pawsDown(firm = false, end = 'lower'): number {
     const world = this.game.physics.world;
     const ray = new RAPIER.Ray({ x: 0, y: 0 }, { x: 0, y: -1 });
     let n = 0;
     for (const l of this.order) {
       // a paw only counts the right way up (not a leg lying on its side)
-      if (!l.spec.key.startsWith('lower') || l.gone || !l.attached || Math.abs(wrapAngle(l.part.body.rotation())) > 1.2) continue;
+      if (!l.spec.key.startsWith(end) || l.gone || !l.attached || Math.abs(wrapAngle(l.part.body.rotation())) > 1.2) continue;
       ray.origin = { x: l.part.x, y: l.part.y };
       const hit = world.castRay(ray, (l.spec.cy + 2) * PX, true, undefined, undefined, undefined, undefined, (c) => {
         const p = this.game.physics.partOf(c);
@@ -491,6 +498,17 @@ export class Creature extends Entity {
       if (hit) n++;
     }
     return n;
+  }
+
+  /**
+   * Come down nose-first off a ledge with its hind legs still hooked up on it (a
+   * shoe, the lip of a crate): front paws down, hind paws in the air. Righting
+   * would only drive its hind legs into the ledge, and walking on drags them over
+   * it and tips it onto its nose.
+   */
+  private perched(): boolean {
+    if (this.tilt().err * this.f > -0.35) return false;
+    return this.pawsDown(false, 'lowerFront') > 0 && this.pawsDown(false, 'lowerBack') === 0;
   }
 
   /** Body tilt from level (rad) and how fast it is turning. */
@@ -628,7 +646,7 @@ export class Creature extends Entity {
         const over = 1 + Math.abs(err);
         this.right(RIGHT.kp * str * r, RIGHT.kd * str, RIGHT.amax * r * over, 0, false, dt);
         this.lift(str * r * (Math.abs(err) > 1.4 ? 1.3 : 1), dt);
-      } else if (this.jumpT > 0 || (this.landT < 0.4 && Math.abs(err) > 0.25)) {
+      } else if (this.jumpT > 0 || (this.landT < 1 && Math.abs(err) > 0.2)) {
         // in a leap, and coming down from one (front paws first, it would pitch
         // over onto its nose)
         this.right(RIGHT.kp, RIGHT.kd, RIGHT.amax, 0, false, dt);
@@ -805,6 +823,10 @@ export class Creature extends Entity {
       speed = 0;
       this.rest();
     }
+    // hung up on the ledge it hopped off: a hop the rest of the way
+    if (this.landT > 0.3 && this.landT < 1 && this.jumpT <= 0 && this.perched()) this.hopDown(0);
+    // pitched over coming down from a leap: steady itself before walking on
+    if (this.landT < 1 && Math.abs(this.tilt().err) > 0.35) speed = 0;
     this.speed = Math.abs(speed);
   }
 
@@ -1107,6 +1129,22 @@ export class Creature extends Entity {
       if (l.gone || !l.attached || l.part.frozen) continue;
       const v = l.part.body.linvel();
       l.part.body.applyImpulse({ x: l.part.mass * (vx - v.x), y: l.part.mass * (vy - v.y) }, true);
+    }
+    this.jumpT = 1e-3;
+    this.jumpCool = 0.8;
+    this.updateMotors(true);
+    return true;
+  }
+
+  /** A spring up on the spot (carrying on, if it was walking). Returns whether it did. */
+  jump(): boolean {
+    const J = this.species.jump;
+    if (!J || this.state !== 'stand' || this.held || this.jumpT > 0 || this.pawsDown() < 2 || this.tethered()) return false;
+    const vy = Math.sqrt(2 * -GRAVITY * Math.min(J, 0.5));
+    for (const l of this.order) {
+      if (l.gone || !l.attached || l.part.frozen) continue;
+      const v = l.part.body.linvel();
+      l.part.body.applyImpulse({ x: 0, y: l.part.mass * (vy - v.y) }, true);
     }
     this.jumpT = 1e-3;
     this.jumpCool = 0.8;
@@ -1760,6 +1798,7 @@ export class Creature extends Entity {
   contextActions(): ContextAction[] {
     const acts: ContextAction[] = [];
     if (this.alive) {
+      if (this.species.jump) acts.push({ label: 'Jump', hint: 'J', disabled: this.state !== 'stand', action: () => this.jump() });
       acts.push({ label: 'Kill', action: () => this.die() });
       acts.push({ label: 'Limp', checked: this.limp, action: () => { this.limp = !this.limp; this.setState('down'); this.updateMotors(true); } });
     }
