@@ -81,6 +81,19 @@ export class Fire {
     }
   }
 
+  /** Firelight: the biggest fires light their surroundings, flickering. */
+  frame(): void {
+    if (!this.burning.size) return;
+    const list = [...this.burning].filter((p) => !p.destroyed);
+    const size = (p: Part) => p.burning * Math.sqrt((p.w * p.h) / 120);
+    list.sort((a, b) => size(b) - size(a));
+    for (const p of list.slice(0, 6)) {
+      const s = size(p);
+      const flicker = 0.85 + Math.random() * 0.3;
+      this.game.renderer.addLight(p.x, p.y + 0.15, 1.4 + Math.min(2.6, s * 2.2), Math.min(0.55, 0.2 + s * 0.3) * flicker, 0xff9a40);
+    }
+  }
+
   clear(): void {
     for (const p of this.burning) p.burning = 0;
     this.burning.clear();

@@ -355,6 +355,16 @@ export class UI implements UIBridge {
     row('Volume', vol);
     row('Mute', check(false, (v) => this.game.sound.setMuted(v)));
     row('Background grid', check(true, (v) => (this.game.renderer.showGrid = v)));
+    const light = el('select', 'tb-select');
+    for (const [name, v] of [['Day', 1], ['Dusk', 0.55], ['Night', 0.2]] as const) {
+      const o = el('option');
+      o.value = String(v);
+      o.textContent = name;
+      light.appendChild(o);
+    }
+    light.value = '1';
+    light.onchange = () => (this.game.renderer.ambient = parseFloat(light.value));
+    row('World light', light);
     row('Blood', check(true, (v) => (this.game.particles.bloodEnabled = v)));
     row('Show wires', check(true, (v) => (this.game.connections.showWires = v)));
     row('Show stats', check(true, (v) => (this.showStats = v)));

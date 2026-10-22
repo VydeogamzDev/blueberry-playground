@@ -145,6 +145,7 @@ export class Explosions {
     const p = this.game.particles;
     const R = o.radius;
     p.flash(x, y, R * 1.1, 0xffe9b0, 0.1);
+    this.game.renderer.addLight(x, y, R * 3.2, 1, 0xffd890, 0.45);
     p.flash(x, y, R * 0.55, 0xffffff, 0.06);
     // fireball core: a few big puffs that swell and darken
     for (let i = 0; i < 6; i++) {

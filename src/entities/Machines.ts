@@ -106,7 +106,8 @@ function glowTexture(): THREE.Texture {
   for (let y = 0; y < N; y++) {
     for (let x = 0; x < N; x++) {
       const r = Math.hypot(x + 0.5 - N / 2, y + 0.5 - N / 2) / (N / 2);
-      const a = r < 0.3 ? 0.42 : r < 0.6 ? 0.22 : r < 1 ? 0.09 : 0;
+      // a soft bloom; the light map does the actual lighting
+      const a = r < 0.3 ? 0.24 : r < 0.6 ? 0.1 : r < 1 ? 0.035 : 0;
       const o = (y * N + x) * 4;
       img.data[o] = 255;
       img.data[o + 1] = 232;
@@ -139,6 +140,7 @@ export class LightBulb extends Prop {
     this.glow = new THREE.Mesh(UNIT_QUAD, mat);
     this.glow.scale.set(3.2, 3.2, 1);
     this.glow.position.z = 44.5;
+    this.glow.renderOrder = 12;
     this.glow.visible = false;
     game.renderer.scene.add(this.glow);
   }
@@ -168,6 +170,7 @@ export class LightBulb extends Prop {
     const w = p.pixelToWorld(3.5, 3.5);
     this.glow.position.x = w.x;
     this.glow.position.y = w.y;
+    this.game.renderer.addLight(w.x, w.y, 4.2, 0.6, 0xffe6a8);
   }
 
   onBullet(): void {
@@ -216,6 +219,12 @@ export class Thruster extends Prop {
     });
     if (Math.random() < 0.15) ps.smoke(n.x - f.x * 0.3, n.y - f.y * 0.3, 1, 0.15);
     this.game.sound.hold(this, 'machine/thruster_loop', 0.45, p.x);
+  }
+
+  frame(): void {
+    if (!(this.on || this.powered) || this.main.frozen) return;
+    const n = this.main.pixelToWorld(0, 5);
+    this.game.renderer.addLight(n.x, n.y, 1.8, 0.3 + Math.random() * 0.1, 0xffa860);
   }
 
   contextActions(): ContextAction[] {

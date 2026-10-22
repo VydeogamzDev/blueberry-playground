@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, WORLD } from './constants';
+import { DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, PX, WORLD } from './constants';
 import { clamp, type V2 } from './math';
 
 THREE.ColorManagement.enabled = false;
@@ -126,6 +126,47 @@ void main() {
   gl_FragColor = vec4(base, 1.0);
 }`;
 
+const LIGHT_MAX = 16;
+
+/**
+ * Light map: a full-screen pass that scales everything drawn before it (backdrop,
+ * floor, sprites, stains, connections) by ambient + nearby lights. The blend is
+ * dst * 2 * src, so 0.5 leaves the scene unchanged and lights can brighten up to 2x.
+ * Falloff is stepped in three bands on the art-pixel grid to match the sprites.
+ */
+const LIGHT_FRAG = /* glsl */ `
+uniform vec2 uCam;
+uniform vec2 uRes;
+uniform float uScale;
+uniform float uPx;
+uniform float uAmbient;
+uniform int uLightN;
+uniform vec4 uLights[${LIGHT_MAX}];
+uniform vec3 uLightCol[${LIGHT_MAX}];
+void main() {
+  vec2 world = uCam + (gl_FragCoord.xy - uRes * 0.5) / uScale;
+  vec2 sp = (floor(world / uPx) + 0.5) * uPx;
+  vec3 L = vec3(uAmbient);
+  for (int i = 0; i < ${LIGHT_MAX}; i++) {
+    if (i >= uLightN) break;
+    vec4 l = uLights[i];
+    float d = distance(sp, l.xy) / l.z;
+    float b = d < 0.3 ? 1.0 : d < 0.6 ? 0.55 : d < 1.0 ? 0.22 : 0.0;
+    L += uLightCol[i] * (b * l.w);
+  }
+  gl_FragColor = vec4(clamp(L * 0.5, 0.0, 1.0), 1.0);
+}`;
+
+interface Light {
+  x: number;
+  y: number;
+  r: number;
+  i: number;
+  c: THREE.Color;
+  life: number;
+  max: number;
+}
+
 export class Renderer {
   readonly gl: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -142,6 +183,11 @@ export class Renderer {
   showGrid = true;
 
   private bgMat: THREE.ShaderMaterial;
+  private lightMat: THREE.ShaderMaterial;
+  private lightMesh: THREE.Mesh;
+  private lights: Light[] = [];
+  /** World brightness without lights (1 = day, lower = night). */
+  ambient = 1;
   private shakeAmt = 0;
   private shakeX = 0;
   private shakeY = 0;
@@ -173,6 +219,33 @@ export class Renderer {
     bg.renderOrder = -1000;
     this.scene.add(bg);
 
+    this.lightMat = new THREE.ShaderMaterial({
+      vertexShader: `void main(){ gl_Position = vec4(position.xy * 2.0, 0.0, 1.0); }`,
+      fragmentShader: LIGHT_FRAG,
+      uniforms: {
+        uCam: { value: new THREE.Vector2() },
+        uRes: { value: new THREE.Vector2() },
+        uScale: { value: 1 },
+        uPx: { value: PX },
+        uAmbient: { value: 1 },
+        uLightN: { value: 0 },
+        uLights: { value: Array.from({ length: LIGHT_MAX }, () => new THREE.Vector4()) },
+        uLightCol: { value: Array.from({ length: LIGHT_MAX }, () => new THREE.Vector3()) },
+      },
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.CustomBlending,
+      blendEquation: THREE.AddEquation,
+      blendSrc: THREE.DstColorFactor,
+      blendDst: THREE.SrcColorFactor,
+    });
+    this.lightMesh = new THREE.Mesh(UNIT_QUAD, this.lightMat);
+    this.lightMesh.frustumCulled = false;
+    // after the world and smoke/blood particles, before fire, flashes and tracers
+    this.lightMesh.renderOrder = 10.5;
+    this.scene.add(this.lightMesh);
+
     this.resize();
     window.addEventListener('resize', () => this.resize());
   }
@@ -185,6 +258,19 @@ export class Renderer {
     this.gl.setSize(this.width, this.height, false);
     this.canvas.style.width = this.width + 'px';
     this.canvas.style.height = this.height + 'px';
+  }
+
+  /**
+   * Adds a light for this frame, or for `life` seconds fading out (flashes).
+   * `intensity` around 0.5 is a lamp; radius is where the light ends.
+   */
+  addLight(x: number, y: number, radius: number, intensity: number, color = 0xffe8b0, life = 0): void {
+    this.lights.push({ x, y, r: radius, i: intensity, c: new THREE.Color(color), life, max: life });
+  }
+
+  /** Lights currently queued (for tests). */
+  get lightCount(): number {
+    return this.lights.length;
   }
 
   shake(amount: number): void {
@@ -248,7 +334,30 @@ export class Renderer {
     u.uRes.value.set(this.width * this.dpr, this.height * this.dpr);
     u.uScale.value = scale;
     u.uGrid.value = this.showGrid ? 1 : 0;
+    this.updateLights(cx, cy, hw, hh, scale, dt);
 
     this.gl.render(this.scene, cam);
+  }
+
+  private updateLights(cx: number, cy: number, hw: number, hh: number, scale: number, dt: number): void {
+    const u = this.lightMat.uniforms;
+    // keep the lights that reach the screen, strongest first
+    const vis = this.lights.filter((l) => Math.abs(l.x - cx) < hw + l.r && Math.abs(l.y - cy) < hh + l.r);
+    const strength = (l: Light) => l.i * (l.max > 0 ? l.life / l.max : 1);
+    vis.sort((a, b) => strength(b) * b.r - strength(a) * a.r);
+    const n = Math.min(LIGHT_MAX, vis.length);
+    for (let k = 0; k < n; k++) {
+      const l = vis[k];
+      u.uLights.value[k].set(l.x, l.y, l.r, strength(l));
+      u.uLightCol.value[k].set(l.c.r, l.c.g, l.c.b);
+    }
+    u.uLightN.value = n;
+    u.uAmbient.value = this.ambient;
+    u.uCam.value.set(cx, cy);
+    u.uRes.value.set(this.width * this.dpr, this.height * this.dpr);
+    u.uScale.value = scale;
+    this.lightMesh.visible = n > 0 || this.ambient < 0.999;
+    // one-frame lights go now; flashes fade out over their life
+    this.lights = this.lights.filter((l) => (l.life -= dt) > 0);
   }
 }

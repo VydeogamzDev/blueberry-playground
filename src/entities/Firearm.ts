@@ -100,6 +100,7 @@ export class Firearm extends Item {
     // effects
     const ps = game.particles;
     ps.flash(m.x + fwd.x * g.flash * 0.35, m.y + fwd.y * g.flash * 0.35, g.flash);
+    game.renderer.addLight(m.x + fwd.x * 0.2, m.y + fwd.y * 0.2, 1.4 + g.flash * 2.5, 0.55, 0xffd890, 0.06);
     ps.flash(m.x + fwd.x * g.flash * 0.9, m.y + fwd.y * g.flash * 0.9, g.flash * 0.55, 0xffe6a0, 0.04);
     for (let i = 0; i < 3; i++) {
       ps.emit(PK.Spark, m.x, m.y, {

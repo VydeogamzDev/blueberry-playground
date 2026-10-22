@@ -290,6 +290,46 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (kit.maxSpeed() > 3) return `flip yanked things (${kit.maxSpeed().toFixed(1)} m/s)`;
       return true;
     }],
+    ['extra: flipping a selected welded pair keeps its layout', () => {
+      kit.reset();
+      const a = kit.spawn('crate', -0.5, 0.45)!;
+      const b = kit.spawn('brick', 0.42, 0.25)!;
+      kit.advance(0.3);
+      game.connections.create('weld', a.parts[0], { x: 0, y: 0.3 }, b.parts[0], { x: 0, y: 0.3 });
+      kit.advance(0.3);
+      const ax = a.parts[0].x;
+      const bx = b.parts[0].x;
+      const made = game.flipEntities([a, b]);
+      kit.advance(1);
+      if (made.length !== 2) return `flipped ${made.length} of 2`;
+      const [na, nb] = made;
+      const mid = (ax + bx) / 2;
+      // mirrored as one group: the crate and brick swap sides around their middle
+      if (Math.abs(na.parts[0].x - (2 * mid - ax)) > 0.08) return `crate at ${na.parts[0].x.toFixed(2)}, expected ${(2 * mid - ax).toFixed(2)}`;
+      if (Math.abs(nb.parts[0].x - (2 * mid - bx)) > 0.08) return `brick at ${nb.parts[0].x.toFixed(2)}, expected ${(2 * mid - bx).toFixed(2)}`;
+      if (game.connections.connectionsOf(na).length !== 1) return 'weld lost';
+      return true;
+    }],
+    ['extra: lights: bulb and fire light the scene, night mode', () => {
+      kit.reset();
+      const r = game.renderer;
+      const n = () => (r as unknown as { lightMat: { uniforms: { uLightN: { value: number } } } }).lightMat.uniforms.uLightN.value;
+      kit.advance(0.1);
+      if (n() !== 0) return `lights in an empty scene: ${n()}`;
+      const bulb = kit.spawn('light', 0, 2)!;
+      bulb.activate();
+      kit.advance(0.1);
+      if (n() !== 1) return `lit bulb gave ${n()} lights`;
+      const crate = kit.spawn('crate', 3, 0.5)!;
+      kit.advance(0.2);
+      game.fire.ignite(crate.parts[0], 1);
+      kit.advance(0.2);
+      if (n() < 2) return 'fire gave no light';
+      r.ambient = 0.2;
+      kit.advance(0.1);
+      r.ambient = 1;
+      return true;
+    }],
     ['extra: duplicating a welded pair copies the weld', () => {
       kit.reset();
       const a = kit.spawn('crate', -0.5, 0.45);
@@ -364,16 +404,24 @@ export function makeSelfTest(game: Game, controls: Controls) {
       return true;
     }],
     ['extra: long guns dropped on a hand from either side get held', () => {
-      for (const [id, side] of [['rifle', 1], ['sniper', -1], ['sniper', 1], ['shotgun', -1]] as const) {
+      for (const [id, side] of [['rifle', 1], ['sniper', -1], ['sniper', 1], ['shotgun', -1], ['minigun', -1], ['minigun', 1]] as const) {
         kit.reset();
         const h = human(0);
         kit.advance(1);
         const hand = h.limbs.get('handF')!.part;
         const g = kit.spawn(id, hand.x + side * 1.8, 0.3) as Firearm;
         kit.advance(0.5);
-        // grabbed by the far end, so the body of the gun meets the person first
+        // grabbed by the far end, so the body of the gun meets the person first;
+        // the cursor heads for the hand wherever it is pushed to, like a player would
         const s = g.main.localToWorld(side * 0.5, 0);
-        kit.drag(s.x, s.y, hand.x, hand.y, 0.6, 0.4, true);
+        kit.down(s.x, s.y);
+        for (let i = 1; i <= 36; i++) {
+          const t = i / 36;
+          kit.move(s.x + (hand.x - s.x) * t, s.y + (hand.y - s.y) * t);
+          game.advance(1 / 60);
+        }
+        game.advance(0.3);
+        kit.up(hand.x, hand.y);
         kit.advance(1);
         if (!g.holder) return `${id} from the ${side > 0 ? 'front' : 'back'} not held`;
       }

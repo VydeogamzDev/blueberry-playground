@@ -93,9 +93,34 @@ export class Game {
 
   /** Re-creates an entity (and anything it holds) mirrored around its center. */
   flipEntity(e: Entity): Entity | null {
-    const group = [e, ...e.attachedEntities()];
+    return this.flipEntities([e])[0] ?? null;
+  }
+
+  /**
+   * Mirrors entities (with what they hold) as one group around their common
+   * center, so a selected contraption keeps its layout. Returns the new copies
+   * of `list`, in order.
+   */
+  flipEntities(list: Entity[]): Entity[] {
+    const group: Entity[] = [];
+    const add = (g: Entity) => {
+      if (!g.destroyed && !group.includes(g)) group.push(g);
+    };
+    list.forEach(add);
+    const mains = group.length;
+    if (!mains) return [];
+    for (const g of group.slice(0, mains)) g.attachedEntities().forEach(add);
     const index = new Map(group.map((g, i) => [g, i]));
-    const c = e.center();
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    for (const g of group.slice(0, mains)) {
+      for (const p of g.parts) {
+        if (p.destroyed) continue;
+        x0 = Math.min(x0, p.x);
+        x1 = Math.max(x1, p.x);
+      }
+    }
+    const c = mains === 1 ? group[0].center() : { x: (x0 + x1) / 2 };
     const snap = mirror(capture(this, group), c.x);
     // connections to things outside the group are re-made on the mirrored parts
     const outside = this.connections.list.flatMap((k) => {
@@ -121,7 +146,7 @@ export class Game {
       if (k.mineIsA) this.connections.create(k.kind, mine, wm, k.other, wo, k.rest);
       else this.connections.create(k.kind, k.other, wo, mine, wm, k.rest);
     }
-    return made[0] ?? null;
+    return made.slice(0, mains).filter((m): m is Entity => !!m);
   }
 
   spawn(def: ItemDef, x: number, y: number, opts: SpawnOptions = {}): Entity | null {
@@ -279,6 +304,7 @@ export class Game {
       for (const p of e.parts) if (!p.destroyed) p.render(alpha);
     }
     this.connections.frame(alpha);
+    this.fire.frame();
     this.projectiles.frame();
     this.particles.frame();
     this.stains.frame(this.renderer.zoom * this.renderer.dpr);

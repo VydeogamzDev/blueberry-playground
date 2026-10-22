@@ -491,15 +491,9 @@ export class Controls {
     this.refreshOutlines();
   }
 
-  /** Re-creates an entity mirrored around its center. */
+  /** Mirrors the entities as one group (a single entity flips around its center). */
   flip(list: Entity[]): void {
-    const made: Entity[] = [];
-    for (const e of list) {
-      const conns = this.game.connections.connectionsOf(e).length;
-      const n = this.game.flipEntity(e);
-      if (n) made.push(n);
-      if (conns) this.ui.toast('Connections were removed by flipping');
-    }
+    const made = this.game.flipEntities(list);
     this.selection = new Set(made);
     this.refreshOutlines();
   }
