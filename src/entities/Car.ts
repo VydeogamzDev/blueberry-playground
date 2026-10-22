@@ -65,6 +65,10 @@ export class Car extends Entity {
     return this.on || this.powered;
   }
 
+  canRest(): boolean {
+    return !this.driving;
+  }
+
   private apply(): void {
     const sig = `${this.driving}:${this.dir}`;
     if (sig === this.applied) return;

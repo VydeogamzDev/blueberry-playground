@@ -9,7 +9,6 @@ import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOp
 import { limbArt, faceColors, EYE, MOUTH, HUMAN_SKIN, type BodyKind, type LimbKey, type Skin } from '../art/human';
 import type { Item, Holder } from './Item';
 import type { Drug } from './Syringe';
-import { REST_CHECK } from '../systems/Settle';
 
 interface LimbSpec {
   key: LimbKey;
@@ -68,10 +67,6 @@ const POSE_DOWN: Pose = {
   head: -0.2, midTorso: 0.12, lowerTorso: 0.12, upperArmF: 0.6, upperArmB: 0.35, lowerArmF: 1.1, lowerArmB: 0.9,
   upperLegF: 0.55, upperLegB: 0.3, lowerLegF: -0.9, lowerLegB: -0.7, handF: 0.3, handB: 0.3, footF: 0.15, footB: 0.15,
 };
-
-/** How far (m, rad) parts may jiggle between rest checks and still count as at rest. */
-const REST_DIST = 0.015;
-const REST_ANGLE = 0.06;
 
 /** Dry friction torque (N*m) in a limp body's joints, keyed by the child limb. */
 const JOINT_FRICTION: Record<string, number> = {
@@ -253,31 +248,16 @@ export class Human extends Entity implements Holder {
 
   // ---------------------------------------------------------------- control
 
-  /** Part poses at the last rest check, and how many checks in a row found them still. */
-  private restRef: number[] = [];
-  private restChecks = 0;
-  private restTick = -1;
-
-  /** A limp body whose parts have had no net movement for a second is at rest (see settle()). */
-  private restAssist(): void {
-    const tick = Math.floor(this.game.time / REST_CHECK);
-    if (tick === this.restTick) return;
-    this.restTick = tick;
-    const parts = this.parts.filter((p) => !p.destroyed);
-    const ref = this.restRef;
-    const same = ref.length === parts.length * 3;
-    let moved = !same || this.strength() > 0 || this.held || this.grips.length > 0;
-    let awake = false;
-    for (let i = 0; i < parts.length && !moved; i++) {
-      const p = parts[i];
-      if (p.frozen) moved = true;
-      else if (Math.abs(p.x - ref[i * 3]) > REST_DIST || Math.abs(p.y - ref[i * 3 + 1]) > REST_DIST) moved = true;
-      else if (Math.abs(p.a - ref[i * 3 + 2]) > REST_ANGLE || Math.hypot(p.vx, p.vy) > 1) moved = true;
-      else if (!p.body.isSleeping()) awake = true;
-    }
-    this.restChecks = moved ? 0 : this.restChecks + 1;
-    this.restRef = parts.flatMap((p) => [p.x, p.y, p.a]);
-    this.atRest = this.restChecks >= 2 && awake;
+  /**
+   * Can this body be put to sleep once it stops moving? Not while it is held,
+   * holding something, getting up, or writhing in pain. Someone standing still,
+   * or lying still where they can't get up (pinned, broken legs), may: anything
+   * that disturbs them (a hit, a push, falling over) wakes them again.
+   */
+  canRest(): boolean {
+    if (this.held || this.grips.length > 0) return false;
+    if (this.strength() <= 0) return true;
+    return this.state !== 'getup' && this.stateT > 3 && this.pain < 0.05;
   }
 
   /** Overall muscle strength 0..1. */
@@ -666,7 +646,6 @@ export class Human extends Entity implements Holder {
 
   postStep(dt: number): void {
     this.updateGrips(dt);
-    this.restAssist();
     // ---- joint stress: limbs tear off when stretched too far
     for (const l of this.order) {
       if (!l.joint || l.severed || !l.joint.isValid() || !l.parent) continue;

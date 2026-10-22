@@ -109,7 +109,8 @@ export function makeSelfTest(game: Game, controls: Controls) {
       game.advance(8, (i) => {
         if (i > 240 && i % 10 === 0) peak = Math.max(peak, kit.maxSpeed());
       });
-      if (peak > 9) return `launch: ${peak.toFixed(1)} m/s`;
+      // someone tumbling off the top of the pile reaches 7-9 m/s; solver launches are 15+
+      if (peak > 12) return `launch: ${peak.toFixed(1)} m/s`;
       if (kit.lowestPoint() < -0.05) return 'something fell through the floor';
       return true;
     }],
@@ -783,6 +784,29 @@ export function makeSelfTest(game: Game, controls: Controls) {
       kit.spawn('grenade', 3.5, 0.2)!.activate();
       kit.advance(5);
       if (!game.puddles.burningAt(3)) return 'grenade did not light the oil';
+      return true;
+    }],
+    ['extra: a heap of people and props falls asleep, and wakes when disturbed', () => {
+      kit.reset();
+      for (let i = 0; i < 4; i++) human(-1.5 + i);
+      const ids = ['crate', 'brick', 'plank', 'metal-box'];
+      for (let i = 0; i < 40; i++) kit.spawn(ids[i % 4], -2 + (i % 8) * 0.55, 3 + Math.floor(i / 8) * 0.7);
+      const parts = () => game.entities.flatMap((e) => e.parts).filter((p) => !p.destroyed);
+      let t = 0;
+      while (t < 60 && parts().some((p) => !p.frozen && !p.body.isSleeping())) {
+        kit.advance(1);
+        t++;
+      }
+      const awake = parts().filter((p) => !p.body.isSleeping()).length;
+      if (awake) return `${awake} bodies still awake after 60 s`;
+      // a crate dropped on it wakes it, without anything flying off
+      kit.spawn('crate', 0, 4);
+      let peak = 0;
+      game.advance(3, (i) => {
+        if (i % 6 === 0) peak = Math.max(peak, kit.maxSpeed());
+      });
+      if (!parts().some((p) => !p.body.isSleeping()) && peak < 0.5) return 'the heap did not react to a crate landing on it';
+      if (peak > 12) return `launch when woken: ${peak.toFixed(1)} m/s`;
       return true;
     }],
   ];

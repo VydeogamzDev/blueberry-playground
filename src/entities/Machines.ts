@@ -207,6 +207,10 @@ export class Thruster extends Prop {
     this.game.sound.click(this.main.x, 0.9);
   }
 
+  canRest(): boolean {
+    return !(this.on || this.powered);
+  }
+
   preStep(dt: number): void {
     if (!(this.on || this.powered)) return;
     const p = this.main;
@@ -282,6 +286,10 @@ export class Motor extends Entity {
 
   private running(): boolean {
     return this.on || this.powered;
+  }
+
+  canRest(): boolean {
+    return !this.running();
   }
 
   private apply(): void {

@@ -14,7 +14,7 @@ import { Puddles } from '../systems/Puddles';
 import type { Entity } from './Entity';
 import type { Part } from './Part';
 import type { ItemDef, SpawnOptions } from './types';
-import { settle, REST_CHECK } from '../systems/Settle';
+import { settle, restCheck, REST_CHECK } from '../systems/Settle';
 
 export interface GameHooks {
   onEntitiesChanged?: () => void;
@@ -342,6 +342,7 @@ export class Game {
     const tick = Math.floor(this.time / REST_CHECK);
     if (tick !== this.restTick) {
       this.restTick = tick;
+      restCheck(this.entities);
       settle(this, this.entities);
     }
     for (const e of this.entities) for (const p of e.parts) if (!p.destroyed) p.sync();

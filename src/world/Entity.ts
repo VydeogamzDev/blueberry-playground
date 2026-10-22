@@ -28,8 +28,11 @@ export abstract class Entity {
   usesPower = false;
   /** Can receive activation from the player / wires. */
   activatable = false;
-  /** Set by entities that can tell they have come to rest (limp ragdolls); see settle(). */
+  /** Has had no net movement for a while (see restCheck()/settle()). */
   atRest = false;
+  /** Part poses at the last rest check, and how many checks in a row found them still. */
+  restRef: number[] = [];
+  restChecks = 0;
 
   constructor(game: Game, def: ItemDef, flipped = false) {
     this.id = Entity.nextId++;
@@ -90,6 +93,11 @@ export abstract class Entity {
 
   contextActions(): ContextAction[] {
     return [];
+  }
+
+  /** May it be put to sleep once it stops moving? (Running machines may not.) */
+  canRest(): boolean {
+    return true;
   }
 
   /** Called when one of its parts starts or stops being dragged (`at` is the cursor on release). */
