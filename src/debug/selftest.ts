@@ -9,6 +9,7 @@ import type { Switch, MotionSensor, Timer, Piston } from '../entities/Devices';
 import type { Car } from '../entities/Car';
 import type { Syringe } from '../entities/Syringe';
 import type { Flask } from '../entities/Flask';
+import type { Creature } from '../entities/Creature';
 import type { Entity } from '../world/Entity';
 import { getItem } from '../catalog/items';
 import { makeTestKit } from './testkit';
@@ -801,6 +802,87 @@ export function makeSelfTest(game: Game, controls: Controls) {
       kit.spawn('grenade', 3.5, 0.2)!.activate();
       kit.advance(5);
       if (!game.puddles.burningAt(3)) return 'grenade did not light the oil';
+      return true;
+    }],
+    ['extra: animals: dog and cat stand, get up, land on their feet', () => {
+      kit.reset();
+      const dog = kit.spawn('dog', -1.5, 0.6) as Creature;
+      const cat = kit.spawn('cat', 1.5, 0.4) as Creature;
+      kit.advance(3);
+      for (const a of [dog, cat]) {
+        if (a.state !== 'stand') return `${a.def.id} did not stand (${a.status()})`;
+        if (Math.abs(a.parts[0].a) > 0.1) return `${a.def.id} leans ${a.parts[0].a.toFixed(2)} rad`;
+      }
+      if (kit.maxSpeed() > 0.05) return `still moving ${kit.maxSpeed().toFixed(3)} m/s`;
+      // knocked over onto its back (or side), each gets back up
+      for (const [id, angle] of [['dog', Math.PI], ['dog', Math.PI / 2], ['cat', -Math.PI / 2], ['cat', Math.PI]] as const) {
+        kit.reset();
+        const a = kit.spawn(id, 0, id === 'dog' ? 0.6 : 0.35, { angle }) as Creature;
+        let t = 0;
+        while (t < 12 && !(a.state === 'stand' && Math.abs(a.parts[0].a) < 0.15 && t > 1)) {
+          kit.advance(0.5);
+          t += 0.5;
+        }
+        if (a.state !== 'stand') return `${id} lying at ${angle.toFixed(2)} rad did not get up (${a.status()})`;
+      }
+      // a cat dropped upside down turns over and lands on its feet
+      kit.reset();
+      const c2 = kit.spawn('cat', 0, 2.6, { angle: Math.PI }) as Creature;
+      let landed: number | null = null;
+      for (let i = 0; i < 30 && landed === null; i++) {
+        kit.advance(0.05);
+        if (c2.parts.some((p) => p.y < 0.12) || c2.state === 'down') landed = c2.parts[0].a;
+      }
+      kit.advance(1);
+      if (landed === null || Math.abs(landed) > 0.5 || c2.state !== 'stand') return `cat did not land on its feet (tilt ${landed?.toFixed(2)}, ${c2.status()})`;
+      return true;
+    }],
+    ['extra: animals: bleed, die from a headshot, revived by a syringe, saved', () => {
+      kit.reset();
+      const dog = kit.spawn('dog', -1, 0.6) as Creature;
+      const cat = kit.spawn('cat', 1.5, 0.4) as Creature;
+      kit.advance(1.5);
+      // a shot through the cat's chest: it bleeds and goes down
+      const chest = cat.limbs.get('chest')!.part;
+      const g = kit.spawn('pistol', chest.x + 2.5, chest.y, { flip: true }) as Firearm;
+      g.setFrozen(true);
+      kit.advance(0.05);
+      g.fire();
+      kit.advance(1);
+      if (!(cat.blood < 100)) return `shot cat is not bleeding (${cat.status()})`;
+      g.destroy();
+      // a headshot kills the dog
+      const head = dog.limbs.get('head')!.part;
+      const g2 = kit.spawn('pistol', head.x + 2.5, head.y - 0.02, { flip: true }) as Firearm;
+      g2.setFrozen(true);
+      kit.advance(0.05);
+      g2.fire();
+      kit.advance(1.5);
+      if (dog.alive) return `headshot dog survived (${dog.status()})`;
+      // and it drops where it stood instead of staying up on stiff legs
+      if (dog.limbs.get('chest')!.part.y > 0.45) return `dead dog still standing (chest at ${dog.limbs.get('chest')!.part.y.toFixed(2)} m)`;
+      g2.destroy();
+      // a life syringe in the chest brings it back
+      const t = dog.limbs.get('chest')!.part;
+      const s = kit.spawn('syringe-life', t.x, t.y + 0.9, { angle: -Math.PI / 2 }) as Syringe;
+      kit.advance(0.01);
+      s.setVelocity(0, -6, 0);
+      kit.advance(1.5);
+      if (!dog.alive) return `life syringe did not revive the dog (fill ${s.fill.toFixed(2)}, ${dog.status()})`;
+      // save and load keeps both, wounded cat included
+      const blood = cat.blood;
+      loadFromString(game, saveToString(game));
+      kit.advance(0.2);
+      const animals = game.entities.filter((e) => e.def.id === 'dog' || e.def.id === 'cat') as Creature[];
+      if (animals.length !== 2) return `${animals.length} animals after loading`;
+      const c3 = animals.find((a) => a.def.id === 'cat')!;
+      if (Math.abs(c3.blood - blood) > 3) return `cat blood ${blood.toFixed(0)} -> ${c3.blood.toFixed(0)} after loading`;
+      // a grenade next to them hurts both
+      const d3 = animals.find((a) => a.def.id === 'dog')!;
+      const before = d3.parts.reduce((n, p) => n + p.hp, 0);
+      (kit.spawn('grenade', d3.parts[0].x + 0.6, 0.3) as Explosive).activate();
+      kit.advance(3.5);
+      if (d3.parts.reduce((n, p) => n + (p.destroyed ? 0 : p.hp), 0) >= before) return 'grenade did not hurt the dog';
       return true;
     }],
     ['extra: a heap of people and props falls asleep, and wakes when disturbed', () => {

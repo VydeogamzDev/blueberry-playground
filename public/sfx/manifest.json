@@ -367,6 +367,36 @@
   "liquid/sizzle_loop": [
     "sfx/liquid/sizzle_loop.ogg"
   ],
+  "creature/dog_bark": [
+    "sfx/creature/dog_bark_1.ogg",
+    "sfx/creature/dog_bark_2.ogg",
+    "sfx/creature/dog_bark_3.ogg"
+  ],
+  "creature/dog_yelp": [
+    "sfx/creature/dog_yelp_1.ogg",
+    "sfx/creature/dog_yelp_2.ogg",
+    "sfx/creature/dog_yelp_3.ogg",
+    "sfx/creature/dog_yelp_4.ogg"
+  ],
+  "creature/dog_whine": [
+    "sfx/creature/dog_whine_1.ogg",
+    "sfx/creature/dog_whine_2.ogg",
+    "sfx/creature/dog_whine_3.ogg"
+  ],
+  "creature/dog_die": [
+    "sfx/creature/dog_die_1.ogg"
+  ],
+  "creature/cat_meow": [
+    "sfx/creature/cat_meow_1.ogg",
+    "sfx/creature/cat_meow_2.ogg"
+  ],
+  "creature/cat_hiss": [
+    "sfx/creature/cat_hiss_1.ogg",
+    "sfx/creature/cat_hiss_2.ogg"
+  ],
+  "creature/cat_yowl": [
+    "sfx/creature/cat_yowl_1.ogg"
+  ],
   "ui/click": [
     "sfx/ui/click_1.ogg",
     "sfx/ui/click_2.ogg",

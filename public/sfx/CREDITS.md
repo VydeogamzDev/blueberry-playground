@@ -6,7 +6,7 @@ Processing applied to all files: cut/trimmed (leading silence removed, `@ N s` =
 
 Freesound files were taken from the publicly accessible high-quality preview (`-hq`) of each sound, since original downloads need a login.
 
-Total: 250 files from 86 sources.
+Total: 266 files from 97 sources.
 
 ## Kenney
 
@@ -520,6 +520,16 @@ Total: 250 files from 86 sources.
 |---|---|---|
 | `liquid/sizzle_5.ogg` | freesound #202094 (HQ preview) | @ 0.65 s; 1.40 s; acid bubbling |
 
+### bark yelp dog small int.flac
+
+- Source: https://freesound.org/people/kyles/sounds/452180/
+- Author: kyles
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/dog_yelp_4.ogg` | freesound #452180 (HQ preview) | @ 0.78 s; 0.70 s |
+
 ### Beretta M9 hammer click
 
 - Source: https://freesound.org/people/vabadus/sounds/151068/
@@ -604,6 +614,56 @@ Total: 250 files from 86 sources.
 |---|---|---|
 | `machine/motor_loop_2.ogg` | freesound #54909 (HQ preview) | @ 1.00 s; 4.00 s; loop |
 
+### Cat Hissing
+
+- Source: https://freesound.org/people/aunrea/sounds/485952/
+- Author: aunrea
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/cat_hiss_1.ogg` | freesound #485952 (HQ preview) | 0.65 s |
+
+### cat meow
+
+- Source: https://freesound.org/people/tuberatanka/sounds/110011/
+- Author: tuberatanka
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/cat_meow_1.ogg` | freesound #110011 (HQ preview) | @ 0.15 s; 1.30 s |
+
+### cat meow short
+
+- Source: https://freesound.org/people/skymary/sounds/412017/
+- Author: skymary
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/cat_meow_2.ogg` | freesound #412017 (HQ preview) | @ 0.25 s; 1.00 s |
+
+### Cat Meowing_Yowl_far_mono.wav
+
+- Source: https://freesound.org/people/_stubb/sounds/406613/
+- Author: _stubb
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/cat_yowl_1.ogg` | freesound #406613 (HQ preview) | @ 0.75 s; 1.00 s |
+
+### catHisses1.wav
+
+- Source: https://freesound.org/people/Zabuhailo/sounds/146963/
+- Author: Zabuhailo
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/cat_hiss_2.ogg` | freesound #146963 (HQ preview) | @ 0.35 s; 0.90 s |
+
 ### Civilian Stun Gun 1/10s zap
 
 - Source: https://freesound.org/people/AnthonyChan0/sounds/264779/
@@ -623,6 +683,39 @@ Total: 250 files from 86 sources.
 | File | Original file | Notes |
 |---|---|---|
 | `gun/magnum_4.ogg` | freesound #330634 (HQ preview) | 0.79 s; "Desert Eagle" (deepened version of freesound #49512) |
+
+### Dog Bark
+
+- Source: https://freesound.org/people/aunrea/sounds/495658/
+- Author: aunrea
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/dog_bark_2.ogg` | freesound #495658 (HQ preview) | @ 0.18 s; 0.52 s |
+| `creature/dog_bark_3.ogg` | freesound #495658 (HQ preview) | @ 1.47 s; 0.49 s |
+
+### Dog death cry - video game quality / bad-ish quality
+
+- Source: https://freesound.org/people/greyfeather/sounds/724927/
+- Author: greyfeather
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/dog_die_1.ogg` | freesound #724927 (HQ preview) | 1.06 s; dog death cry |
+
+### Dog's Yelping 7
+
+- Source: https://freesound.org/people/unfa/sounds/160478/
+- Author: unfa
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/dog_yelp_1.ogg` | freesound #160478 (HQ preview) | @ 3.19 s; 0.45 s |
+| `creature/dog_yelp_2.ogg` | freesound #160478 (HQ preview) | @ 6.71 s; 0.50 s |
+| `creature/dog_yelp_3.ogg` | freesound #160478 (HQ preview) | @ 8.26 s; 0.60 s |
 
 ### Dry Fire
 
@@ -914,6 +1007,16 @@ Total: 250 files from 86 sources.
 |---|---|---|
 | `gun/pump_1.ogg` | freesound #351226 (HQ preview) | @ 0.22 s; 0.69 s; Mossberg 590A1 rack (back + forward) |
 
+### Single Dog Bark
+
+- Source: https://freesound.org/people/kwahmah_02/sounds/277058/
+- Author: kwahmah_02
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/dog_bark_1.ogg` | freesound #277058 (HQ preview) | 0.23 s |
+
 ### Sizzle / Acid Burn
 
 - Source: https://freesound.org/people/bottles/sounds/382313/
@@ -1027,6 +1130,18 @@ Total: 250 files from 86 sources.
 | File | Original file | Notes |
 |---|---|---|
 | `gore/splat_4.ogg` | freesound #495118 (HQ preview) | @ 0.06 s; 0.60 s |
+
+### Whining Dog
+
+- Source: https://freesound.org/people/Breviceps/sounds/462660/
+- Author: Breviceps
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/dog_whine_1.ogg` | freesound #462660 (HQ preview) | @ 0.50 s; 0.90 s |
+| `creature/dog_whine_2.ogg` | freesound #462660 (HQ preview) | @ 1.75 s; 1.00 s |
+| `creature/dog_whine_3.ogg` | freesound #462660 (HQ preview) | @ 3.90 s; 0.90 s |
 
 ### Whizzby
 
