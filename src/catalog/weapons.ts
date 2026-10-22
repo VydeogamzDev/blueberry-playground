@@ -1,4 +1,4 @@
-import { register, lazyArt, previewOf } from './items';
+import { register, lazyArt, previewOf, GLASS } from './items';
 import type { ItemDef, Category } from '../world/types';
 import type { PixelArt } from '../art/PixelArt';
 import { PixelArt as Art } from '../art/PixelArt';
@@ -15,6 +15,8 @@ import { Battery, Button, LightBulb, Motor, Thruster } from '../entities/Machine
 import { Syringe, type Drug } from '../entities/Syringe';
 import { Switch, MotionSensor, Timer, LogicGate, Piston } from '../entities/Devices';
 import { Car } from '../entities/Car';
+import { Flask } from '../entities/Flask';
+import { LIQUID_IDS, type LiquidName } from '../systems/Liquids';
 import type { ShapeSpec } from '../world/Part';
 import type { Entity } from '../world/Entity';
 import type { Game } from '../world/Game';
@@ -286,6 +288,29 @@ export function registerMedical(): void {
       const blade: BladeSpec = { blade: [15, 19], tipLen: 3, edge: 'none', sharpness: 0, stab: true, maxDepth: 0.08, grip: 140, stabSpeed: 1.4, stabDamage: 0.08 };
       return new Syringe(game, def, { art, material: MAT.plastic, shapes, density, angularDamping: 0.3, ccd: true }, { grip: [10, 3] }, blade, s.drug, empty, x, y, opts);
     }, ['syringe', 'needle', 'drug', ...s.tags]);
+  }
+}
+
+const FLASKS: { liquid: LiquidName; name: string; desc: string; tags: string[] }[] = [
+  { liquid: 'water', name: 'Water Flask', desc: 'Puts out fires and washes off oil. Uncork and tip it over to pour; smash it to splash.', tags: ['water', 'bottle', 'extinguish'] },
+  { liquid: 'acid', name: 'Acid Flask', desc: 'Corrosive acid: burns skin and eats into whatever it lands on.', tags: ['acid', 'bottle', 'corrosive'] },
+  { liquid: 'oil', name: 'Oil Flask', desc: 'Soaks into things and makes them burn, even metal and people.', tags: ['oil', 'bottle', 'fuel', 'flammable'] },
+];
+
+export function registerLiquids(): void {
+  const shapes: ShapeSpec[] = [{ kind: 'ball', r: 5, y: -3 }, artRect(10, 16, 3, 0, 4, 7)];
+  const density = densityFor(0.6, shapes);
+  for (const f of FLASKS) {
+    const ramp = I.FLASK_RAMPS[f.liquid];
+    const cache = new Map<string, PixelArt>();
+    const art = (level: number, corked: boolean) => {
+      const k = `${level}:${corked}`;
+      let a = cache.get(k);
+      if (!a) cache.set(k, (a = I.flaskArt(ramp, level, corked)));
+      return a;
+    };
+    item(`flask-${f.liquid}`, f.name, 'Medical', f.desc, () => art(1, true), (game, def, a, x, y, opts) =>
+      new Flask(game, def, { art: a, material: GLASS, shapes, density, hp: 5 }, LIQUID_IDS[f.liquid], art, x, y, opts), ['flask', 'liquid', ...f.tags]);
   }
 }
 

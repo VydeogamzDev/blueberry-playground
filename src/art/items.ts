@@ -417,3 +417,38 @@ export function syringeArt(liquid: Ramp | null): PixelArt {
   a.set(17, 3, STEEL_LT[2]).set(18, 3, STEEL_LT[3]).set(19, 3, STEEL_LT[4]);
   return a;
 }
+
+/** Flask liquids. */
+export const FLASK_RAMPS = {
+  water: ramp('#3f7fc8'),
+  acid: ramp('#86d633'),
+  oil: ramp('#3a332a', 1.2),
+} as const;
+
+/** A round-bottomed glass flask, `level` 0..1 full, optionally corked. */
+export function flaskArt(liquid: Ramp, level: number, corked: boolean): PixelArt {
+  const a = new PixelArt(10, 16);
+  a.ellipse(0, 6, 10, 10, GLASS[2]);
+  a.rect(3, 1, 4, 6, GLASS[2]);
+  a.rect(2, 1, 6, 1, GLASS[2]);
+  // liquid fills the inside of the bulb from the bottom up
+  const inside = new PixelArt(10, 16);
+  inside.ellipse(1, 7, 8, 8, 1);
+  const top = 15 - Math.round(level * 8);
+  if (level > 0) {
+    for (let y = Math.max(top, 7); y < 16; y++) {
+      for (let x = 0; x < 10; x++) if (inside.get(x, y) === 1) a.set(x, y, liquid[2]);
+    }
+  }
+  finish(a, { shadow: false });
+  if (level > 0) {
+    for (let x = 0; x < 10; x++) if (inside.get(x, Math.max(top, 7)) === 1) a.set(x, Math.max(top, 7), liquid[3]);
+  }
+  // glass highlights
+  a.set(2, 9, GLASS[4]).set(2, 10, GLASS[4]).set(4, 2, GLASS[4]).set(4, 3, GLASS[4]);
+  if (corked) {
+    a.rect(3, 0, 4, 2, WOOD[2]);
+    a.set(3, 0, WOOD[3]).set(6, 1, WOOD[1]);
+  }
+  return a;
+}

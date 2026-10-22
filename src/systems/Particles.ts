@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { landDroplet, Liquid, LIQUID_COLORS } from './Liquids';
 import { RAPIER } from '../engine/Physics';
 import { GROUP, PX, WORLD, groups } from '../engine/constants';
 import type { Game } from '../world/Game';
@@ -75,6 +76,8 @@ class Layer {
   readonly drag: Float32Array;
   /** Per-particle random 0..1 (offsets color steps). */
   readonly seed: Float32Array;
+  /** Liquid kind of droplets (see Liquids). */
+  readonly liq: Uint8Array;
   readonly ignore: (RAPIER.RigidBody | null)[];
   readonly geo = new THREE.BufferGeometry();
   readonly pos: Float32Array;
@@ -100,6 +103,7 @@ class Layer {
     this.grav = new Float32Array(cap);
     this.drag = new Float32Array(cap);
     this.seed = new Float32Array(cap);
+    this.liq = new Uint8Array(cap);
     this.ignore = new Array(cap).fill(null);
     this.pos = new Float32Array(cap * 3);
     this.rgba = new Float32Array(cap * 4);
@@ -146,6 +150,7 @@ class Layer {
     this.grav[i] = this.grav[last];
     this.drag[i] = this.drag[last];
     this.seed[i] = this.seed[last];
+    this.liq[i] = this.liq[last];
     this.ignore[i] = this.ignore[last];
     this.ignore[last] = null;
     for (let k = 0; k < 4; k++) {
@@ -201,6 +206,8 @@ export interface EmitOpts {
   drag?: number;
   /** Body whose colliders this particle passes through (e.g. the bleeding limb). */
   ignore?: RAPIER.RigidBody | null;
+  /** Liquid kind for droplets. */
+  liquid?: number;
 }
 
 function unpack(c: number, out: Float32Array, o: number, a: number): void {
@@ -247,6 +254,7 @@ export class Particles {
     L.grav[i] = o.gravity ?? 1;
     L.drag[i] = o.drag ?? 0;
     L.ignore[i] = o.ignore ?? null;
+    L.liq[i] = o.liquid ?? 0;
     L.seed[i] = Math.random();
     const c = o.color ?? 0xffffff;
     unpack(c, L.col, i * 4, o.alpha ?? 1);
@@ -272,6 +280,28 @@ export class Particles {
         gravity: 1,
         drag: 0.4,
         ignore,
+      });
+    }
+  }
+
+  /** Emits droplets of a liquid (water, acid, oil) in a fan around (dx, dy). */
+  liquid(kind: Liquid, x: number, y: number, dx: number, dy: number, amount: number, speed = 2.5, spread = 0.55, ignore: RAPIER.RigidBody | null = null): void {
+    const n = Math.min(60, Math.round(amount));
+    const shades = LIQUID_COLORS[kind];
+    for (let k = 0; k < n; k++) {
+      const s = speed * (0.3 + Math.random() * 0.9);
+      const ang = Math.atan2(dy, dx) + (Math.random() * 2 - 1) * spread;
+      this.emit(PK.Blood, x + (Math.random() - 0.5) * PX, y + (Math.random() - 0.5) * PX, {
+        vx: Math.cos(ang) * s,
+        vy: Math.sin(ang) * s,
+        life: 3,
+        size: PX * (Math.random() < 0.3 ? 2 : 1),
+        color: shades[Math.floor(Math.random() * shades.length)],
+        alpha: kind === Liquid.Water ? 0.8 : 1,
+        gravity: 1,
+        drag: 0.4,
+        ignore,
+        liquid: kind,
       });
     }
   }
@@ -369,7 +399,7 @@ export class Particles {
           if (hit) {
             const hx = ox + (dx / d) * hit.timeOfImpact;
             const hy = oy + (dy / d) * hit.timeOfImpact;
-            this.game.onBloodLand(hit.collider, hx, hy, hit.normal.x, hit.normal.y, L.col[i * 4], L.col[i * 4 + 1], L.col[i * 4 + 2]);
+            landDroplet(this.game, L.liq[i], this.game.physics.partOf(hit.collider) ?? null, hx, hy, hit.normal.x, hit.normal.y, L.col[i * 4], L.col[i * 4 + 1], L.col[i * 4 + 2]);
             L.kill(i--);
             continue;
           }

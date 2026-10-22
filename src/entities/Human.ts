@@ -834,6 +834,12 @@ export class Human extends Entity implements Holder {
       }
       return;
     }
+    if (kind === 'acid') {
+      // eats into the skin: steady damage and a lot of pain, no bleeding
+      part.hp -= amt;
+      this.pain = Math.min(1.5, this.pain + amt * 0.04);
+      return;
+    }
     if (kind === 'laser') {
       // a burnt hole: full trauma, but cauterised (no bleeding)
       if (point && this.variant.kind === 'human') part.paintAt(point.x, point.y, 0x2a1d17, 1, 0.85);

@@ -70,6 +70,8 @@ export class Part {
   burning = 0;
   /** 0..1 visual char amount. */
   charred = 0;
+  /** Oil soaked in (0..1): makes anything burn. */
+  oil = 0;
   frozen = false;
   /** Self-collision group: parts with the same non-zero group never collide. */
   group = 0;

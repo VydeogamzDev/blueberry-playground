@@ -2,8 +2,7 @@ import { capture, instantiateIndexed, mirror, mirrorLocal } from './Snapshot';
 import { RAPIER, Physics } from '../engine/Physics';
 import { Renderer } from '../engine/Renderer';
 import { Sound } from '../engine/Sound';
-import { FIXED_DT, MAX_STEPS_PER_FRAME, PX, WORLD } from '../engine/constants';
-import { fromRgb } from '../art/PixelArt';
+import { FIXED_DT, MAX_STEPS_PER_FRAME, WORLD } from '../engine/constants';
 import { Environment } from './Environment';
 import { Particles, Stains } from '../systems/Particles';
 import { Impacts } from '../systems/Impacts';
@@ -243,19 +242,6 @@ export class Game {
       return true;
     });
     return [...out];
-  }
-
-  onBloodLand(collider: RAPIER.Collider, x: number, y: number, nx: number, ny: number, r: number, g: number, b: number): void {
-    const ix = x - nx * PX * 0.5;
-    const iy = y - ny * PX * 0.5;
-    const part = this.physics.partOf(collider);
-    if (part) {
-      part.paintAt(ix, iy, fromRgb(r * 255 * 0.85, g * 255 * 0.85, b * 255 * 0.85), 0, 0.85);
-    } else {
-      this.stains.add(ix, iy, r * 0.8, g * 0.8, b * 0.8, 0.95);
-      // occasional spread into a small puddle on the floor
-      if (ny > 0.7 && Math.random() < 0.35) this.stains.add(ix + (Math.random() < 0.5 ? -PX : PX), iy, r * 0.75, g * 0.75, b * 0.75, 0.9);
-    }
   }
 
   // ---- simulation loop ------------------------------------------------------

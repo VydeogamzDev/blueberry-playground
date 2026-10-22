@@ -29,7 +29,7 @@ export function previewOf(art: () => PixelArt): () => HTMLCanvasElement {
   return () => (c ??= art().toCanvas(1));
 }
 
-const GLASS: PhysMaterial = {
+export const GLASS: PhysMaterial = {
   ...MAT.plastic, name: 'Glass', density: 160, sound: 'glass', restitution: 0.1, bulletResistance: 300, flammability: 0, debrisColor: 0xa9d0dc,
 };
 

@@ -1,7 +1,7 @@
 import { Entity } from '../world/Entity';
 import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
-import type { ItemDef, SpawnOptions, ImpactInfo, DamageKind } from '../world/types';
+import type { ItemDef, SpawnOptions, ImpactInfo, DamageKind, BulletHit } from '../world/types';
 import type { PhysMaterial } from '../world/Materials';
 import type { PixelArt } from '../art/PixelArt';
 import type { V2 } from '../engine/math';
@@ -52,6 +52,11 @@ export class Prop extends Entity {
     const m = Math.min(info.otherMass, 400);
     const e = 0.5 * Math.min(m, this.main.mass * 6) * Math.max(0, info.speed - 4) ** 2;
     if (e > 30) this.damage(info.part, e / 40, 'blunt', info.point, info.normal);
+  }
+
+  onBullet(hit: BulletHit): void {
+    // same share of the bullet's damage as the default, but breakable props now break
+    this.damage(hit.part, hit.damage * 0.2, 'bullet', hit.point, hit.dir);
   }
 
   damage(part: Part, amount: number, kind: DamageKind, point?: V2, _dir?: V2): void {

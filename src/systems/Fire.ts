@@ -16,7 +16,7 @@ export class Fire {
   }
 
   ignite(p: Part, amount = 0.6): void {
-    if (p.destroyed || p.mat.flammability <= 0) return;
+    if (p.destroyed || (p.mat.flammability <= 0 && p.oil <= 0)) return;
     p.burning = Math.min(1, Math.max(p.burning, amount));
     this.burning.add(p);
   }
@@ -45,7 +45,9 @@ export class Fire {
         this.burning.delete(p);
         continue;
       }
-      const fl = p.mat.flammability;
+      // soaked-in oil burns well and burns off
+      const fl = p.mat.flammability + p.oil * 0.9;
+      p.oil = Math.max(0, p.oil - dt * 0.04 * p.burning);
       // fuel: very flammable materials grow, others die down
       p.burning += dt * (fl - 0.45) * 0.25 - dt * p.charred * 0.12;
       p.burning = Math.min(1, p.burning);
@@ -74,7 +76,7 @@ export class Fire {
         for (const c of p.colliders) {
           g.physics.world.contactPairsWith(c, (other) => {
             const q = g.physics.partOf(other);
-            if (q && q !== p && q.burning < 0.1 && Math.random() < q.mat.flammability * 0.35 * p.burning) this.ignite(q, 0.3);
+            if (q && q !== p && q.burning < 0.1 && Math.random() < (q.mat.flammability + q.oil) * 0.35 * p.burning) this.ignite(q, 0.3);
           });
         }
       }

@@ -8,6 +8,7 @@ import type { Motor, LightBulb } from '../entities/Machines';
 import type { Switch, MotionSensor, Timer, Piston } from '../entities/Devices';
 import type { Car } from '../entities/Car';
 import type { Syringe } from '../entities/Syringe';
+import type { Flask } from '../entities/Flask';
 import type { Entity } from '../world/Entity';
 import { getItem } from '../catalog/items';
 import { makeTestKit } from './testkit';
@@ -601,6 +602,63 @@ export function makeSelfTest(game: Game, controls: Controls) {
       kit.advance(3);
       if (car.body.x - cx < 8) return `car only drove ${(car.body.x - cx).toFixed(1)} m in 3 s`;
       if (Math.abs(car.body.a) > 0.5) return 'car tipped over';
+      return true;
+    }],
+    ['extra: liquids: water, acid, oil, shattering', () => {
+      // an uncorked flask held upside down over something
+      const pour = (id: string, x: number, y: number): Flask => {
+        const f = kit.spawn(id, x, y, { angle: Math.PI }) as Flask;
+        f.setFrozen(true);
+        f.activate();
+        return f;
+      };
+      // water puts out a burning crate
+      kit.reset();
+      const crate = kit.spawn('crate', 0, 0.5)!.parts[0];
+      kit.advance(0.5);
+      game.fire.ignite(crate, 1);
+      kit.advance(0.5);
+      if (crate.burning <= 0) return 'crate did not catch fire';
+      const w = pour('flask-water', 0, 2.2);
+      kit.advance(3.5);
+      if (crate.burning > 0) return `water did not put out the fire (${crate.burning.toFixed(2)})`;
+      if (w.amount > 0.05) return `flask did not empty (${w.amount.toFixed(2)} left)`;
+      // acid hurts a person
+      kit.reset();
+      const h = human(0);
+      kit.advance(1);
+      const hp0 = hp(h);
+      const head = h.limbs.get('head')!.part;
+      pour('flask-acid', head.x, head.y + 1.2);
+      kit.advance(2);
+      if (hp(h) > hp0 - 20) return `acid barely hurt (${(hp0 - hp(h)).toFixed(1)} hp)`;
+      // oil makes a steel box burn
+      kit.reset();
+      const box = kit.spawn('metal-box', 0, 0.4)!.parts[0];
+      kit.advance(0.5);
+      game.fire.ignite(box, 0.6);
+      if (box.burning > 0) return 'dry steel caught fire';
+      pour('flask-oil', 0, 2);
+      kit.advance(2.5);
+      if (box.oil < 0.3) return `oil did not soak in (${box.oil.toFixed(2)})`;
+      game.fire.ignite(box, 0.6);
+      kit.advance(2);
+      if (box.burning < 0.3) return `oiled steel did not burn (${box.burning.toFixed(2)})`;
+      // a shot flask shatters and splashes acid on whoever is next to it
+      kit.reset();
+      const h2 = human(0);
+      const f = kit.spawn('flask-acid', 0.35, 2.1) as Flask;
+      f.setFrozen(true);
+      const g = kit.spawn('pistol', -2.5, 2.1) as Firearm;
+      kit.advance(0.5);
+      g.main.teleport(-2.5, 2.1, 0);
+      g.setFrozen(true);
+      const hp1 = hp(h2);
+      g.fire();
+      kit.advance(0.1);
+      if (!f.destroyed) return 'shot flask did not shatter';
+      kit.advance(1.5);
+      if (hp(h2) > hp1 - 10) return `splash barely hurt (${(hp1 - hp(h2)).toFixed(1)} hp)`;
       return true;
     }],
   ];

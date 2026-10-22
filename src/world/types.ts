@@ -69,7 +69,7 @@ export interface ImpactInfo {
   otherSpeed: number;
 }
 
-export type DamageKind = 'blunt' | 'bullet' | 'cut' | 'stab' | 'explosion' | 'fire' | 'crush' | 'shock' | 'laser';
+export type DamageKind = 'blunt' | 'bullet' | 'cut' | 'stab' | 'explosion' | 'fire' | 'crush' | 'shock' | 'laser' | 'acid';
 
 export interface BulletHit {
   part: Part;
