@@ -95,19 +95,31 @@ export class Button extends Prop {
 // ------------------------------------------------------------------ light bulb
 
 let glowTex: THREE.Texture | null = null;
+/** A stepped, pixelated halo (three bands) to match the sprite style. */
 function glowTexture(): THREE.Texture {
   if (glowTex) return glowTex;
+  const N = 50;
   const c = document.createElement('canvas');
-  c.width = c.height = 64;
+  c.width = c.height = N;
   const g = c.getContext('2d')!;
-  const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  grd.addColorStop(0, 'rgba(255,240,190,0.55)');
-  grd.addColorStop(0.35, 'rgba(255,220,140,0.18)');
-  grd.addColorStop(1, 'rgba(255,200,120,0)');
-  g.fillStyle = grd;
-  g.fillRect(0, 0, 64, 64);
-  glowTex = new THREE.CanvasTexture(c);
-  return glowTex;
+  const img = g.createImageData(N, N);
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const r = Math.hypot(x + 0.5 - N / 2, y + 0.5 - N / 2) / (N / 2);
+      const a = r < 0.3 ? 0.42 : r < 0.6 ? 0.22 : r < 1 ? 0.09 : 0;
+      const o = (y * N + x) * 4;
+      img.data[o] = 255;
+      img.data[o + 1] = 232;
+      img.data[o + 2] = 160;
+      img.data[o + 3] = Math.round(a * 255);
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = THREE.NearestFilter;
+  t.minFilter = THREE.NearestFilter;
+  glowTex = t;
+  return t;
 }
 
 /** Lights up when powered (or switched on by hand). */

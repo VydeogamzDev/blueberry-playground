@@ -193,11 +193,14 @@ canvas.cat-icon,
 
 .item-preview {
   flex: 1;
-  width: 100%;
+  width: calc(100% - 4px);
   height: 60px;
   display: grid;
   place-items: center;
   overflow: hidden;
+  border-radius: 2px;
+  /* a lit backdrop so dark sprites (guns, tires) keep their silhouette */
+  background: radial-gradient(ellipse at 50% 45%, #41464d 0%, #30343a 55%, #25282c 100%);
 }
 
 .item-name {

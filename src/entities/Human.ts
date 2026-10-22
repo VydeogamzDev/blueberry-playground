@@ -1034,7 +1034,7 @@ export class Human extends Entity implements Holder {
   }
 
   /** Called when an item is dropped near this person: grab it if a hand is close. */
-  tryHold(item: Item): boolean {
+  tryHold(item: Item, at?: V2): boolean {
     if (!this.alive || this.consciousness < 0.3 || item.holder || !item.hold || this.destroyed) return false;
     const gw = item.gripWorld();
     if (!gw) return false;
@@ -1047,7 +1047,10 @@ export class Human extends Entity implements Holder {
       // onto the hand because the body is in the way)
       const touch = distToSprite(item.main, l.part.x, l.part.y);
       const d = Math.hypot(l.part.x - gw.x, l.part.y - gw.y);
-      if ((d < 0.3 || touch < 0.15) && d < bd) {
+      // or the item was let go with the cursor right on the hand (its body may have
+      // been held back by the person while the cursor went through)
+      const aimed = !!at && Math.hypot(l.part.x - at.x, l.part.y - at.y) < 0.3 && distToSprite(item.main, at.x, at.y) < 0.6;
+      if ((d < 0.3 || touch < 0.15 || aimed) && d < bd) {
         bd = d;
         best = l;
       }

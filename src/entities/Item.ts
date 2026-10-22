@@ -17,7 +17,7 @@ export interface HoldSpec {
 
 /** Anything that can hold items (people). */
 export interface Holder {
-  tryHold(item: Item): boolean;
+  tryHold(item: Item, at?: V2): boolean;
   dropItem(item: Item): void;
 }
 
@@ -91,12 +91,12 @@ export class Item extends Prop {
     return this.totalMass() + (this.holder ? Math.min(80, this.holder.totalMass()) * 0.5 : 0);
   }
 
-  onGrab(_part: Part, held: boolean): void {
+  onGrab(_part: Part, held: boolean, at?: V2): void {
     if (held || !this.hold || this.holder || this.destroyed) return;
     // dropping an item onto someone's hand makes them hold it
     for (const e of this.game.entities) {
       const h = e as Entity & Partial<Holder>;
-      if (e !== this && !e.destroyed && h.tryHold && h.tryHold(this)) return;
+      if (e !== this && !e.destroyed && h.tryHold && h.tryHold(this, at)) return;
     }
   }
 

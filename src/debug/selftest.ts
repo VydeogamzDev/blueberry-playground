@@ -337,6 +337,22 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (k.lodge) return 'could not pull out';
       return true;
     }],
+    ['extra: long guns dropped on a hand from either side get held', () => {
+      for (const [id, side] of [['rifle', 1], ['sniper', -1], ['sniper', 1], ['shotgun', -1]] as const) {
+        kit.reset();
+        const h = human(0);
+        kit.advance(1);
+        const hand = h.limbs.get('handF')!.part;
+        const g = kit.spawn(id, hand.x + side * 1.8, 0.3) as Firearm;
+        kit.advance(0.5);
+        // grabbed by the far end, so the body of the gun meets the person first
+        const s = g.main.localToWorld(side * 0.5, 0);
+        kit.drag(s.x, s.y, hand.x, hand.y, 0.6, 0.4, true);
+        kit.advance(1);
+        if (!g.holder) return `${id} from the ${side > 0 ? 'front' : 'back'} not held`;
+      }
+      return true;
+    }],
   ];
 
   return async (): Promise<Result[]> => {

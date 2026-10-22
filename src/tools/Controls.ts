@@ -275,7 +275,7 @@ export class Controls {
     if (g.anchor && g.anchor.isValid()) world.removeRigidBody(g.anchor);
     if (!g.part.destroyed) {
       g.part.body.setAngularDamping(g.savedDamping);
-      g.part.entity.onGrab(g.part, false);
+      g.part.entity.onGrab(g.part, false, { x: this.wx, y: this.wy });
     }
   }
 

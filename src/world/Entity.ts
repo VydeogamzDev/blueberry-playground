@@ -85,8 +85,8 @@ export abstract class Entity {
     return [];
   }
 
-  /** Called when one of its parts starts or stops being dragged. */
-  onGrab(_part: Part, _held: boolean): void {}
+  /** Called when one of its parts starts or stops being dragged (`at` is the cursor on release). */
+  onGrab(_part: Part, _held: boolean, _at?: V2): void {}
 
   get frozen(): boolean {
     return this.parts.length > 0 && this.parts.every((p) => p.frozen || p.destroyed);
