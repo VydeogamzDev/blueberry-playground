@@ -14,7 +14,7 @@ import type { Entity } from '../world/Entity';
 import { getItem } from '../catalog/items';
 import { makeTestKit } from './testkit';
 import { saveToString, loadFromString } from '../world/SaveLoad';
-import { PX } from '../engine/constants';
+import { COARSE_DT, FIXED_DT, PX } from '../engine/constants';
 
 interface Result {
   name: string;
@@ -218,6 +218,43 @@ export function makeSelfTest(game: Game, controls: Controls) {
       } finally {
         window.requestAnimationFrame = raf;
         game.paused = false;
+      }
+      return true;
+    }],
+    ['9b. a scene too heavy for real time takes longer steps, then short ones again', () => {
+      kit.reset();
+      kit.spawn('crate', 0, 4);
+      const loop = (game as unknown as { loop: (t: number) => void; lastTime: number });
+      // every step made to cost 9 ms: one fits in a 60 Hz frame's budget, two don't
+      let heavy = true;
+      const step = game.step;
+      game.step = () => {
+        step.call(game);
+        const end = performance.now() + (heavy ? 9 : 0);
+        while (performance.now() < end);
+      };
+      const raf = window.requestAnimationFrame;
+      window.requestAnimationFrame = () => 0;
+      try {
+        let t = performance.now();
+        loop.lastTime = t;
+        const run = (ms: number) => {
+          const end = t + ms;
+          while (t < end) loop.loop((t += 1000 / 60));
+        };
+        run(2000);
+        if (game.stepDt !== COARSE_DT) return `still on the short step after 2 s at ${game.simRate.toFixed(2)}x real time`;
+        const t0 = game.time;
+        run(1500);
+        const rate = (game.time - t0) / 1.5;
+        if (rate < 0.95 || game.simRate < 0.95) return `longer steps ran at ${rate.toFixed(2)}x real time (shown as ${game.simRate.toFixed(2)}x)`;
+        heavy = false;
+        run(3000);
+        if (game.stepDt !== FIXED_DT) return 'still on the longer step 3 s after the scene got light';
+      } finally {
+        delete (game as { step?: unknown }).step;
+        window.requestAnimationFrame = raf;
+        game.resetStep();
       }
       return true;
     }],
@@ -1417,6 +1454,8 @@ export function makeSelfTest(game: Game, controls: Controls) {
     window.requestAnimationFrame = () => 0;
     const muted = game.sound.muted;
     game.sound.setMuted(true);
+    // and at the short step, whatever the scene before the run made the loop pick
+    game.resetStep();
     await new Promise((res) => setTimeout(res, 50));
     for (const [name, fn] of tests) {
       if (filter && !name.includes(filter)) continue;

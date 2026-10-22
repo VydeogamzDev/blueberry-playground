@@ -862,8 +862,9 @@ export class Creature extends Entity {
     }
     // hung up on the ledge it hopped off: a hop the rest of the way
     if (this.landT > 0.3 && this.landT < 1 && this.jumpT <= 0 && this.perched()) this.hopDown(0);
-    // pitched over coming down from a leap: steady itself before walking on
-    if (this.landT < 1 && Math.abs(this.tilt().err) > 0.35) speed = 0;
+    // pitched back coming down from a leap: steady itself before walking on (pitched
+    // onto its front paws it keeps going: pulling up short tips it over them)
+    if (this.landT < 1 && this.tilt().err * this.f > 0.35) speed = 0;
     this.speed = Math.abs(speed);
   }
 
@@ -1041,9 +1042,15 @@ export class Creature extends Entity {
     if (!floor) return false;
     const groundY = c.y - floor.timeOfImpact;
     const tall = c.y - groundY;
-    // how far ahead it is, just off the floor
-    const ahead = new RAPIER.Ray({ x: c.x, y: groundY + 0.06 }, { x: this.f, y: 0 });
-    const face = world.castRay(ahead, tall * 2.5 + 0.4, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+    // how far ahead it is: the nearest of just off the floor, knee and chest high
+    // (a lying person's head is held up off the floor by the shoulders: under it,
+    // a paw would catch on it on the way up)
+    let face: RAPIER.RayColliderHit | null = null;
+    for (const h of [0.06, tall * 0.5, tall * 0.9]) {
+      const ahead = new RAPIER.Ray({ x: c.x, y: groundY + h }, { x: this.f, y: 0 });
+      const hit = world.castRay(ahead, tall * 2.5 + 0.4, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+      if (hit && (!face || hit.timeOfImpact < face.timeOfImpact)) face = hit;
+    }
     if (!face) return false;
     const what = this.game.physics.partOf(face.collider);
     // over or onto someone lying on the floor, never onto anyone on their feet
@@ -1061,36 +1068,55 @@ export class Creature extends Entity {
     if (room || roof) return false;
     // where its paws are, ahead of and behind the chest
     const { front, back } = this.pawSpan();
-    // how wide the top is
-    let width = 0;
-    while (width < 1.6) {
-      const x = c.x + this.f * (face.timeOfImpact + width + 0.04);
-      const h = world.castRay(new RAPIER.Ray({ x, y: topY + 0.3 }, { x: 0, y: -1 }), 0.36, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
-      if (!h) break;
-      width += 0.08;
-    }
-    // Room on top for all four paws: up onto it. Too narrow: clean over it. The
-    // paws have to be above the top from when the front ones reach the near edge
-    // until the hind ones are past the near edge (onto it) or the far one (over it):
-    // the arc through those two points, a little higher, peaking between them.
-    const g = -GRAVITY;
-    const onto = width >= front + back + 0.25;
+    // how wide its top is, and how far the whole thing goes on before the floor
+    // (and how high it gets on the way): a lying person's head is narrow, but the
+    // rest of them is no floor to come down on
     const faceD = face.timeOfImpact;
-    const x1 = close ? Math.max(0.15, faceD - front - 0.08) : faceD - front - 0.08;
-    const x2 = onto ? faceD + back + 0.08 : faceD + width + back + 0.12;
-    if (x1 < 0.05) return false;
-    if (!onto) {
-      // somewhere to come down on the far side
-      const far = world.castRay(new RAPIER.Ray({ x: c.x + this.f * (x2 + front + 0.2), y: topY + 0.3 }, { x: 0, y: -1 }), dh + 0.6, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
-      if (!far || Math.abs(topY + 0.3 - far.timeOfImpact - groundY) > 0.3) return false;
+    const from = groundY + J + tall + 0.3;
+    let width = 0;
+    let extent = 0;
+    let high = topY;
+    while (extent < 2.4) {
+      const x = c.x + this.f * (faceD + extent + 0.04);
+      const h = world.castRay(new RAPIER.Ray({ x, y: from }, { x: 0, y: -1 }), from - groundY, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+      const y = h ? from - h.timeOfImpact : groundY;
+      if (y < groundY + 0.06) break;
+      if (width === extent && y > topY - 0.06) width += 0.08;
+      high = Math.max(high, y);
+      extent += 0.08;
     }
-    const rise = dh + 0.14;
-    const D = (x1 + x2) / 2;
-    const d = (x2 - x1) / 2;
-    const speed = Math.sqrt((g * (D * D - d * d)) / (2 * rise));
-    if (!(speed > 0.6 && speed < 4.5)) return false;
-    const vx = speed * this.f;
-    const vy = (g * D) / speed;
+    // Room on top for all four paws: up onto it. Too narrow: clean over all of it
+    // if it can leap that far, or else over the narrow top, coming down on what's
+    // behind it (someone lying there: on the rest of them). The paws have to be
+    // above the top from when the front ones reach the near edge until the hind
+    // ones are past the near edge (onto it) or the far one (over it): the arc
+    // through those two points, a little higher, peaking between them.
+    const g = -GRAVITY;
+    // (only seen once right up against it, it springs from where it stands too)
+    const runUp = faceD - front - 0.08;
+    const x1 = close || runUp < 0.05 ? Math.max(0.15, runUp) : runUp;
+    const arc = (x2: number, rise: number, peak = Infinity) => {
+      const D = (x1 + x2) / 2;
+      const d = (x2 - x1) / 2;
+      const speed = Math.sqrt((g * (D * D - d * d)) / (2 * rise));
+      const vy = (g * D) / speed;
+      return speed > 0.6 && speed < 4.5 && vy * vy < 2 * g * peak ? { vx: speed * this.f, vy } : null;
+    };
+    // somewhere to come down on the far side
+    const landing = (x2: number) => {
+      const far = world.castRay(new RAPIER.Ray({ x: c.x + this.f * (x2 + front + 0.2), y: from }, { x: 0, y: -1 }), from - groundY + 0.3, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+      return !!far && Math.abs(from - far.timeOfImpact - groundY) < 0.3;
+    };
+    let v: { vx: number; vy: number } | null = null;
+    if (width >= front + back + 0.25) v = arc(faceD + back + 0.08, dh + 0.14);
+    else {
+      const all = faceD + extent + back + 0.12;
+      if (extent < 2.4 && landing(all)) v = arc(all, high - groundY + 0.14, J + 0.6);
+      const narrow = faceD + width + back + 0.12;
+      if (!v && landing(narrow)) v = arc(narrow, dh + 0.14);
+    }
+    if (!v) return false;
+    const { vx, vy } = v;
     for (const l of this.order) {
       if (l.gone || !l.attached || l.part.frozen) continue;
       const v = l.part.body.linvel();

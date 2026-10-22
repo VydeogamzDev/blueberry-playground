@@ -3,6 +3,14 @@ export const PX = 1 / 32;
 
 /** Fixed physics timestep (seconds). */
 export const FIXED_DT = 1 / 120;
+/**
+ * The step while a scene is too heavy to simulate in real time with FIXED_DT
+ * (see Game.pickStep()): half as many steps for much the same results. Measured
+ * over 60 seeded heaps of people and animals, they settle (median 26 s against
+ * 22 s) and nothing launches; 100 people settling in heaps cost 1.1 s of CPU per
+ * simulated second instead of 1.9.
+ */
+export const COARSE_DT = FIXED_DT * 2;
 
 /**
  * Max physics steps per rendered frame before we drop time (spiral-of-death

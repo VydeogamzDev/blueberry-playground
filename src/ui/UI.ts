@@ -3,6 +3,7 @@ import type { Controls, UIBridge } from '../tools/Controls';
 import { CATEGORIES, type Category, type ContextAction, type ItemDef } from '../world/types';
 import { ITEMS } from '../catalog/items';
 import { saveToString, loadFromString } from '../world/SaveLoad';
+import { FIXED_DT } from '../engine/constants';
 
 const ICONS: Record<string, string> = {
   pause: '<svg viewBox="0 0 16 16"><rect x="4" y="3" width="3" height="10"/><rect x="9" y="3" width="3" height="10"/></svg>',
@@ -587,10 +588,14 @@ export class UI implements UIBridge {
     if (this.showStats) {
       let parts = 0;
       for (const e of g.entities) parts += e.parts.length;
+      const heavy = [
+        g.stepDt > FIXED_DT ? 'longer physics steps' : '',
+        !g.paused && g.simRate < g.timeScale * 0.9 ? `running at ${Math.round((g.simRate / g.timeScale) * 100)}% speed` : '',
+      ].filter(Boolean).join(', ');
       this.status.textContent =
         `${g.fps.toFixed(0)} fps · step ${g.stepMs.toFixed(2)} ms · ${g.entities.length} objects · ${parts} bodies · ${g.particles.count} particles` +
         (g.paused ? ' · PAUSED' : '') + (g.timeScale !== 1 ? ` · ${g.timeScale}×` : '') +
-        (!g.paused && g.simRate < g.timeScale * 0.9 ? ` · heavy scene: running at ${Math.round((g.simRate / g.timeScale) * 100)}% speed` : '');
+        (heavy ? ` · heavy scene: ${heavy}` : '');
     } else this.status.textContent = '';
     const targets = this.controls.touchMode ? this.controls.touchTargets() : [];
     this.touchBar.classList.toggle('hidden', !targets.length);

@@ -60,11 +60,13 @@ try {
     console.log(`Timing crowded scenes${filter ? ` matching "${filter}"` : ''} (physics and frame CPU time; the GPU draw is software here and not counted)...\n`);
     const rows = JSON.parse(await evaluate(`bp.bench(${JSON.stringify(filter)}).then((r) => JSON.stringify(r))`, 15 * 60 * 1000));
     const pad = (s, n) => String(s).padEnd(n);
-    console.log(pad('scene', 14) + pad('bodies', 8) + pad('step ms', 10) + pad('p95', 8) + pad('max', 8) + pad('frame ms', 10) + pad('load', 7) + 'draws');
+    console.log(pad('scene', 14) + pad('bodies', 8) + pad('step ms', 10) + pad('p95', 8) + pad('max', 8) + pad('frame ms', 10) + pad('load', 7) + pad('coarse', 8) + 'draws');
     for (const r of rows) {
-      console.log(pad(r.scene, 14) + pad(r.bodies, 8) + pad(r.step.mean, 10) + pad(r.step.p95, 8) + pad(r.step.max, 8) + pad(r.frame, 10) + pad(r.load, 7) + r.draws);
+      console.log(pad(r.scene, 14) + pad(r.bodies, 8) + pad(r.step.mean, 10) + pad(r.step.p95, 8) + pad(r.step.max, 8) + pad(r.frame, 10) + pad(r.load, 7) + pad(r.coarseLoad ?? '', 8) + r.draws);
       console.log('    ' + Object.entries(r.stages).map(([k, v]) => `${k} ${v}`).join(' · '));
     }
+    console.log('\nload: share of a 60 Hz frame the scene needs at full speed (over 1 runs slower than real time);');
+    console.log('coarse: the same at the longer physics step the game switches to when load is over 0.9.');
     if (errors.length) console.log(`\nPage errors:\n  ${errors.join('\n  ')}`);
     exitCode = errors.length ? 1 : 0;
   } else {

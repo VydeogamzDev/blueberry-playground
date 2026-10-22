@@ -4,7 +4,7 @@ import type { Human } from '../entities/Human';
 import type { Firearm } from '../entities/Firearm';
 import type { Explosive } from '../entities/Explosive';
 import { makeTestKit } from './testkit';
-import { FIXED_DT } from '../engine/constants';
+import { COARSE_DT, FIXED_DT } from '../engine/constants';
 
 type World = Game['physics']['world'];
 /** Rapier's own breakdown of a step (its profiler is on while timing). */
@@ -29,19 +29,25 @@ export interface BenchResult {
   stages: Record<string, number>;
   /** Fraction of a 60 Hz frame budget (16.7 ms) the simulation uses at full speed. */
   load: number;
+  /**
+   * The same at the longer step the game falls back on when `load` is too high
+   * for real time (see Game.pickStep()); absent when it wouldn't.
+   */
+  coarseLoad?: number;
   draws: number;
 }
 
 /**
  * Timing benchmark for crowded scenes, exposed as `bp.bench()` and run by
  * `npm run bench`. Builds each scene, lets it settle, then times a few
- * seconds of simulation (two physics steps per rendered frame, as at 60 fps).
+ * seconds of simulation (two physics steps per rendered frame, as at 60 fps;
+ * a scene too heavy for that is timed again at the longer step, one a frame).
  */
 export function makeBench(game: Game, controls: Controls) {
   const kit = makeTestKit(game, controls);
   const row = (n: number, i: number) => -60 + (120 * (i + 0.5)) / n;
 
-  const scenes: Record<string, (n: number) => (() => void) | void> = {
+  const scenes: Record<string, (n: number) => ((dt: number) => void) | void> = {
     /** People standing in a row, each balancing. */
     stand(n) {
       for (let i = 0; i < n; i++) kit.spawn('human', row(n, i), 0.9);
@@ -69,10 +75,12 @@ export function makeBench(game: Game, controls: Controls) {
         guns.push(g);
       }
       let t = 0;
-      return () => {
-        t += FIXED_DT;
-        if (Math.round(t / FIXED_DT) % 12 === 0) for (const g of guns) if (!g.destroyed) g.fire();
-        if (Math.abs(t % 1.5) < FIXED_DT) (kit.spawn('grenade', (Math.random() - 0.5) * 40, 3) as Explosive).activate();
+      return (dt) => {
+        t += dt;
+        // in short steps, so the same shots and grenades at either step length
+        const k = Math.round(t / FIXED_DT);
+        if (k % 12 === 0) for (const g of guns) if (!g.destroyed) g.fire();
+        if (k % 180 === 0) (kit.spawn('grenade', (Math.random() - 0.5) * 40, 3) as Explosive).activate();
       };
     },
     /** Crates stacked in towers. */
@@ -81,6 +89,49 @@ export function makeBench(game: Game, controls: Controls) {
       for (let i = 0; i < n; i++) kit.spawn('crate', row(towers, i % towers), 0.45 + Math.floor(i / towers) * 0.9);
     },
   };
+
+  /** Builds a scene, lets it settle for 1.5 s, then times `seconds` of it at steps of `dt`. */
+  async function time(build: (n: number) => ((dt: number) => void) | void, n: number, dt: number, seconds: number) {
+    kit.reset();
+    game.paused = true;
+    game.stepDt = dt;
+    const tick = build(n) ?? null;
+    for (let i = 0; i < 1.5 / dt; i++) {
+      tick?.(dt);
+      game.step();
+    }
+    game.physics.world.profilerEnabled = true;
+    const times: number[] = [];
+    const prof: Record<string, number> = {};
+    // a frame drawn every 60th of a second of game time
+    const perFrame = Math.round(1 / 60 / dt);
+    let frames = 0;
+    let draws = 0;
+    for (let i = 0; i < seconds / dt; i++) {
+      tick?.(dt);
+      game.prof = prof;
+      const t0 = performance.now();
+      game.step();
+      times.push(performance.now() - t0);
+      if (i % perFrame === perFrame - 1) {
+        game.renderFrame(1 / 60, 1);
+        frames++;
+        draws += game.renderer.drawCalls();
+      }
+      game.prof = null;
+      const w = game.physics.world;
+      for (const [k, f] of RAPIER_STAGES) prof[k] = (prof[k] ?? 0) + f(w);
+      // let the browser breathe so a long run doesn't trip the page's hang guard
+      if (i % 120 === 119) await new Promise((r) => setTimeout(r, 0));
+    }
+    game.physics.world.profilerEnabled = false;
+    times.sort((a, b) => a - b);
+    const mean = times.reduce((s, t) => s + t, 0) / times.length;
+    const stages: Record<string, number> = {};
+    for (const [k, v] of Object.entries(prof)) stages[k] = +(v / (k.startsWith('frame') ? frames : times.length)).toFixed(3);
+    const frame = (stages['frame: entities'] ?? 0) + (stages['frame: effects'] ?? 0);
+    return { times, mean, stages, frame, frames, draws, load: (mean * perFrame + frame) / (1000 / 60) };
+  }
 
   return async function bench(only = '', sizes = [25, 50, 100], seconds = 4): Promise<BenchResult[]> {
     const out: BenchResult[] = [];
@@ -92,54 +143,25 @@ export function makeBench(game: Game, controls: Controls) {
       for (const [name, build] of Object.entries(scenes)) {
         if (only && !name.includes(only)) continue;
         for (const n of name === 'props' ? sizes.map((s) => s * 3) : sizes) {
-          kit.reset();
-          game.paused = true;
-          const tick = build(n) ?? null;
-          for (let i = 0; i < 1.5 / FIXED_DT; i++) {
-            tick?.();
-            game.step();
-          }
-          game.physics.world.profilerEnabled = true;
-          const times: number[] = [];
-          const prof: Record<string, number> = {};
-          let frames = 0;
-          let draws = 0;
-          for (let i = 0; i < seconds / FIXED_DT; i++) {
-            tick?.();
-            game.prof = prof;
-            const t0 = performance.now();
-            game.step();
-            times.push(performance.now() - t0);
-            if (i % 2 === 1) {
-              game.renderFrame(1 / 60, 1);
-              frames++;
-              draws += game.renderer.drawCalls();
-            }
-            game.prof = null;
-            const w = game.physics.world;
-            for (const [k, f] of RAPIER_STAGES) prof[k] = (prof[k] ?? 0) + f(w);
-            // let the browser breathe so a long run doesn't trip the page's hang guard
-            if (i % 120 === 119) await new Promise((r) => setTimeout(r, 0));
-          }
-          game.physics.world.profilerEnabled = false;
-          times.sort((a, b) => a - b);
-          const mean = times.reduce((s, t) => s + t, 0) / times.length;
-          const stages: Record<string, number> = {};
-          for (const [k, v] of Object.entries(prof)) stages[k] = +(v / (k.startsWith('frame') ? frames : times.length)).toFixed(3);
-          const frame = (stages['frame: entities'] ?? 0) + (stages['frame: effects'] ?? 0);
+          const r = await time(build, n, FIXED_DT, seconds);
           let bodies = 0;
           for (const e of game.entities) for (const p of e.parts) if (!p.destroyed) bodies++;
+          const { times, mean } = r;
+          // the game takes the longer step once it falls 10% behind real time
+          const coarse = r.load > 0.9 ? await time(build, n, COARSE_DT, seconds) : null;
           out.push({
             scene: `${name} ${n}`, bodies,
             step: { mean: +mean.toFixed(3), p95: +times[Math.floor(times.length * 0.95)].toFixed(3), max: +times[times.length - 1].toFixed(3) },
-            frame: +frame.toFixed(3), stages,
-            load: +((mean * 2 + frame) / (1000 / 60)).toFixed(2),
-            draws: Math.round(draws / Math.max(1, frames)),
+            frame: +r.frame.toFixed(3), stages: r.stages,
+            load: +r.load.toFixed(2),
+            ...(coarse ? { coarseLoad: +coarse.load.toFixed(2) } : {}),
+            draws: Math.round(r.draws / Math.max(1, r.frames)),
           });
         }
       }
     } finally {
       kit.reset();
+      game.resetStep();
       game.paused = wasPaused;
       game.sound.muted = muted;
     }

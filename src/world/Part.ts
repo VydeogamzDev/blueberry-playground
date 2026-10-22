@@ -202,7 +202,7 @@ export class Part {
       .setCollisionGroups(GROUPS_DYNAMIC)
       .setActiveHooks(RAPIER.ActiveHooks.FILTER_CONTACT_PAIRS)
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
-      .setContactForceEventThreshold(spec.forceThreshold ?? 40);
+      .setContactForceEventThreshold((spec.forceThreshold ?? 40) * this.entity.game.physics.forceScale);
     const col = this.entity.game.physics.world.createCollider(desc, this.body);
     this.colliders.push(col);
     this.entity.game.physics.partByCollider.set(col.handle, this);

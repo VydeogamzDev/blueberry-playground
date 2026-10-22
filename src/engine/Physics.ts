@@ -58,6 +58,31 @@ export class Physics {
     };
   }
 
+  private dt = FIXED_DT;
+
+  /**
+   * Contact force thresholds are set for FIXED_DT steps. Rapier reports a knock
+   * as its impulse over the step, so over a longer step the same knock reports
+   * less force: the thresholds scale with it (a needle would no longer stab in).
+   */
+  get forceScale(): number {
+    return FIXED_DT / this.dt;
+  }
+
+  /** Sets the length of the next steps (s). */
+  setDt(dt: number): void {
+    if (dt === this.dt) return;
+    const k = this.dt / dt;
+    this.dt = dt;
+    const ip = this.world.integrationParameters;
+    ip.dt = dt;
+    // contacts predicted as many steps ahead as at FIXED_DT (Rapier's default 2 cm
+    // there): over a 60th of a second a paw landing at 4 m/s sinks 6 cm into the
+    // ground, and pushed back out of it the animal bounces off its feet
+    ip.normalizedPredictionDistance = 0.02 * (dt / FIXED_DT);
+    this.world.colliders.forEach((c) => c.setContactForceEventThreshold(c.contactForceEventThreshold() * k));
+  }
+
   step(): void {
     this.world.step(this.events, this.hooks);
     this.stepCount++;

@@ -2,7 +2,7 @@ import { capture, instantiateIndexed, mirror, mirrorLocal } from './Snapshot';
 import { RAPIER, Physics } from '../engine/Physics';
 import { Renderer } from '../engine/Renderer';
 import { Sound } from '../engine/Sound';
-import { FIXED_DT, MAX_STEPS_PER_FRAME, STEP_BUDGET_MS, WORLD } from '../engine/constants';
+import { COARSE_DT, FIXED_DT, MAX_STEPS_PER_FRAME, STEP_BUDGET_MS, WORLD } from '../engine/constants';
 import { Environment } from './Environment';
 import { Particles, Stains } from '../systems/Particles';
 import { Impacts } from '../systems/Impacts';
@@ -49,6 +49,10 @@ export class Game {
   stepRequests = 0;
   /** Simulated time in seconds. */
   time = 0;
+  /** Length of a physics step (s): FIXED_DT, or COARSE_DT while the scene is too heavy for real time (see pickStep()). */
+  stepDt = FIXED_DT;
+  /** How long (s) the step has looked worth changing (see pickStep()). */
+  private pickT = 0;
   private acc = 0;
   private restTick = -1;
   /** Groups of parts put to sleep together by settle(). */
@@ -65,6 +69,8 @@ export class Game {
   stepMs = 0;
   /** Simulated seconds per real second the loop managed (below timeScale when the scene is too heavy). */
   simRate = 1;
+  /** The same smoothed but unclamped: a single frame's rate is usually 0 or over 1. */
+  private rateAvg = 1;
   frameMs = 0;
   /** Milliseconds spent per stage, summed while set (see debug/bench). */
   prof: Record<string, number> | null = null;
@@ -293,17 +299,22 @@ export class Game {
     // a slow frame rate (a throttled tab, a slow GPU) still gets real time while
     // the physics is cheap; a heavy scene slows down rather than stalling: steps
     // stop when the next one wouldn't fit in the frame's budget
-    while (this.acc >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
+    const dt = this.stepDt;
+    while (this.acc >= dt && steps < MAX_STEPS_PER_FRAME) {
       if (steps > 0 && performance.now() - s0 + this.stepMs > STEP_BUDGET_MS) break;
       this.step();
-      this.acc -= FIXED_DT;
+      this.acc -= dt;
       steps++;
     }
     // time that didn't fit is dropped, not owed
-    if (this.acc >= FIXED_DT) this.acc = 0;
+    if (this.acc >= dt) this.acc = 0;
     if (!this.paused && realDt > 0) {
-      const rate = (steps * FIXED_DT) / realDt;
-      this.simRate += (Math.min(rate, this.timeScale) - this.simRate) * Math.min(1, realDt * 2);
+      // clamped only after averaging: on a screen refreshing faster than the
+      // physics steps, most frames take no step and the rest one, so clamping
+      // each frame's rate read real time as slow motion
+      const rate = (steps * dt) / realDt;
+      this.rateAvg += (rate - this.rateAvg) * Math.min(1, realDt * 2);
+      this.simRate = Math.min(this.rateAvg, this.timeScale);
     }
     while (this.stepRequests > 0) {
       this.step();
@@ -312,11 +323,40 @@ export class Game {
     }
     const stepTime = performance.now() - s0;
     if (steps > 0) this.stepMs = this.stepMs * 0.9 + (stepTime / steps) * 0.1;
+    if (!this.paused && realDt > 0) this.pickStep(realDt);
 
-    const alpha = this.paused ? 1 : Math.min(1, this.acc / FIXED_DT);
+    const alpha = this.paused ? 1 : Math.min(1, this.acc / dt);
     this.renderFrame(realDt, alpha);
     this.frameMs = this.frameMs * 0.9 + (performance.now() - t0) * 0.1;
   };
+
+  /**
+   * A scene too heavy to keep up with in real time takes longer steps, half as
+   * many, rather than running in slow motion (after falling behind for a second);
+   * it goes back to the short ones once they would fit in the frames' budget
+   * easily for a couple of seconds. A short step costs about what a long one
+   * does: it's the number of them that halves.
+   */
+  private pickStep(realDt: number): void {
+    const coarse = this.stepDt !== FIXED_DT;
+    // CPU per real second the short step would take, against what a second of
+    // frames allows (a second at most, however fast the screen refreshes)
+    const fineCost = (this.stepMs / FIXED_DT) * this.timeScale;
+    const allowed = Math.min(1000, STEP_BUDGET_MS * Math.max(1, this.fps));
+    const change = coarse ? fineCost < allowed * 0.7 : this.simRate < this.timeScale * 0.9;
+    this.pickT = change ? this.pickT + realDt : 0;
+    if (this.pickT < (coarse ? 2 : 1)) return;
+    this.pickT = 0;
+    this.stepDt = coarse ? FIXED_DT : COARSE_DT;
+    this.acc = 0;
+  }
+
+  /** Back to the short step, as if the scene had never been too heavy (tests time their own). */
+  resetStep(): void {
+    this.stepDt = FIXED_DT;
+    this.pickT = 0;
+    this.rateAvg = this.simRate = this.timeScale;
+  }
 
   /** Runs per-frame logic and draws the scene. */
   renderFrame(realDt: number, alpha: number): void {
@@ -357,7 +397,7 @@ export class Game {
    * automated tests (works even when the page is hidden and rAF is throttled).
    */
   advance(seconds: number, onStep?: (i: number) => void): void {
-    const n = Math.round(seconds / FIXED_DT);
+    const n = Math.round(seconds / this.stepDt);
     for (let i = 0; i < n; i++) {
       onStep?.(i);
       this.step();
@@ -367,7 +407,8 @@ export class Game {
 
   /** Advances the simulation by exactly one fixed step. */
   step(): void {
-    const dt = FIXED_DT;
+    const dt = this.stepDt;
+    this.physics.setDt(dt);
     const lap = this.lapper();
     this.stepping = true;
     for (const h of this.preStepHandlers) h(dt);
