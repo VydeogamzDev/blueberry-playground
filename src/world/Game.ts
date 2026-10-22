@@ -17,6 +17,9 @@ import type { Part } from './Part';
 import type { ItemDef, SpawnOptions } from './types';
 import { settle, restCheck, wakeSettled, resleepSettled, REST_CHECK } from '../systems/Settle';
 
+/** Seconds the short step must look affordable before a heavy scene goes back to it (see Game.pickStep()). */
+const BACK_AFTER = 2;
+
 export interface GameHooks {
   onEntitiesChanged?: () => void;
   onPartRemoved?: (p: Part) => void;
@@ -55,6 +58,10 @@ export class Game {
   stepDt = FIXED_DT;
   /** How long (s) the step has looked worth changing (see pickStep()). */
   private pickT = 0;
+  /** How long (s) the short step must look affordable before going back to it (see pickStep()). */
+  private backAfter = BACK_AFTER;
+  /** Real time (s) on the short step since last going back to it. */
+  private fineT = 0;
   private acc = 0;
   private restTick = -1;
   /** Groups of parts put to sleep together by settle(). */
@@ -341,18 +348,22 @@ export class Game {
    * many, rather than running in slow motion (after falling behind for a second);
    * it goes back to the short ones once they would fit in the frames' budget
    * easily for a couple of seconds. A short step costs about what a long one
-   * does: it's the number of them that halves.
+   * does: it's the number of them that halves. A scene that turns out too heavy
+   * again soon after (a lull in a battle) waits twice as long the next time.
    */
   private pickStep(realDt: number): void {
     const coarse = this.stepDt !== FIXED_DT;
+    if (!coarse) this.fineT += realDt;
     // CPU per real second the short step would take, against what a second of
     // frames allows (a second at most, however fast the screen refreshes)
     const fineCost = (this.stepMs / FIXED_DT) * this.timeScale;
     const allowed = Math.min(1000, STEP_BUDGET_MS * Math.max(1, this.fps));
     const change = coarse ? fineCost < allowed * 0.7 : this.simRate < this.timeScale * 0.9;
     this.pickT = change ? this.pickT + realDt : 0;
-    if (this.pickT < (coarse ? 2 : 1)) return;
+    if (this.pickT < (coarse ? this.backAfter : 1)) return;
     this.pickT = 0;
+    if (!coarse) this.backAfter = this.fineT < 10 ? Math.min(16, this.backAfter * 2) : BACK_AFTER;
+    this.fineT = 0;
     this.stepDt = coarse ? FIXED_DT : COARSE_DT;
     this.acc = 0;
   }
@@ -361,6 +372,8 @@ export class Game {
   resetStep(): void {
     this.stepDt = FIXED_DT;
     this.pickT = 0;
+    this.backAfter = BACK_AFTER;
+    this.fineT = 0;
     this.rateAvg = this.simRate = this.timeScale;
   }
 
