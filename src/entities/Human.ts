@@ -551,16 +551,20 @@ export class Human extends Entity {
     const l = this.limbOf(info.part);
     if (!l || l.gone) return;
     const mEff = info.part.mass * (l.spec.cy > 24 ? 2.6 : 2.2);
-    const mo = info.otherMass;
-    const mu = mo === Infinity ? mEff : (mEff * mo) / (mEff + mo);
-    const E = 0.5 * mu * info.speed * info.speed;
+    // energy from this limb's own motion (falling onto something)...
+    const Eself = 0.5 * Math.min(mEff, info.otherMass) * info.selfSpeed * info.selfSpeed;
+    // ...plus energy delivered by the other object, which the rest of the body
+    // backs up (a crate dropped on a head crushes it against the body)
+    const backing = l.attached ? Math.max(mEff, this.totalMass() * 0.8) : mEff;
+    const Eother = 0.5 * Math.min(info.otherMass, backing) * info.otherSpeed * info.otherSpeed;
+    const E = Eself + Eother;
     const frag = l.spec.fragility / this.variant.toughness;
     const E0 = (24 * mEff) / frag;
     if (E <= E0) return;
     const frac = (E - E0) / ((115 * mEff) / frag);
     this.injure(l, frac * l.spec.hp, 'blunt', info.point, { x: -info.normal.x, y: -info.normal.y });
     // a hard hit knocks a standing person over
-    if (frac > 0.08 && this.state === 'stand' && l.spec.cy > 24) this.setState('down');
+    if ((frac > 0.08 || Eother > 150) && this.state === 'stand' && l.spec.cy > 24) this.setState('down');
   }
 
   onBullet(hit: BulletHit): void {

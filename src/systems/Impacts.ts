@@ -98,15 +98,20 @@ export class Impacts {
         n1x = -nx;
         n1y = -ny;
       }
+      // split the approach into each body's own motion (n1 points into p1)
+      const s1 = Math.max(0, -(va.x * n1x + va.y * n1y));
+      const s2 = Math.max(0, vb.x * n1x + vb.y * n1y);
       if (p1) {
         const info: ImpactInfo = {
           part: p1, other: p2, speed, force, point: { x: px, y: py }, normal: { x: n1x, y: n1y }, otherMass: m2, slide,
+          selfSpeed: s1, otherSpeed: s2,
         };
         p1.entity.onImpact(info);
       }
       if (p2 && !p2.destroyed) {
         const info: ImpactInfo = {
           part: p2, other: p1, speed, force, point: { x: px, y: py }, normal: { x: -n1x, y: -n1y }, otherMass: m1, slide,
+          selfSpeed: s2, otherSpeed: s1,
         };
         p2.entity.onImpact(info);
       }

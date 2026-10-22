@@ -61,6 +61,10 @@ export interface ImpactInfo {
   otherMass: number;
   /** Tangential (sliding) speed at contact. */
   slide: number;
+  /** This part's own speed into the contact (m/s, >= 0). */
+  selfSpeed: number;
+  /** The other body's speed into this part (m/s, >= 0). */
+  otherSpeed: number;
 }
 
 export type DamageKind = 'blunt' | 'bullet' | 'cut' | 'stab' | 'explosion' | 'fire' | 'crush' | 'shock';
