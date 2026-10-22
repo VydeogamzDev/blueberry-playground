@@ -22,6 +22,12 @@ export const MAX_STEPS_PER_FRAME = 16;
  * real time within it runs in slow motion at a steady frame rate.
  */
 export const STEP_BUDGET_MS = 13;
+/**
+ * Seconds short of a whole step that still count as a step due (see Game.loop):
+ * frame timestamps are rounded and a display's frames jitter, so on a 60 Hz
+ * screen at the 1/60 s step a frame often comes a hair short of one.
+ */
+export const STEP_SLACK = 0.001;
 
 export const GRAVITY = -9.81;
 

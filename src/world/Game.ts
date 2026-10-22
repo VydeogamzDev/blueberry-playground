@@ -2,7 +2,7 @@ import { capture, instantiateIndexed, mirror, mirrorLocal } from './Snapshot';
 import { RAPIER, Physics } from '../engine/Physics';
 import { Renderer } from '../engine/Renderer';
 import { Sound } from '../engine/Sound';
-import { COARSE_DT, FIXED_DT, MAX_STEPS_PER_FRAME, STEP_BUDGET_MS, WORLD } from '../engine/constants';
+import { COARSE_DT, FIXED_DT, MAX_STEPS_PER_FRAME, STEP_BUDGET_MS, STEP_SLACK, WORLD } from '../engine/constants';
 import { Environment } from './Environment';
 import { Particles, Stains } from '../systems/Particles';
 import { Impacts } from '../systems/Impacts';
@@ -303,14 +303,17 @@ export class Game {
     // the physics is cheap; a heavy scene slows down rather than stalling: steps
     // stop when the next one wouldn't fit in the frame's budget
     const dt = this.stepDt;
-    while (this.acc >= dt && steps < MAX_STEPS_PER_FRAME) {
+    const due = dt - STEP_SLACK;
+    while (this.acc >= due && steps < MAX_STEPS_PER_FRAME) {
       if (steps > 0 && performance.now() - s0 + this.stepMs > STEP_BUDGET_MS) break;
       this.step();
       this.acc -= dt;
       steps++;
     }
-    // time that didn't fit is dropped, not owed
-    if (this.acc >= dt) this.acc = 0;
+    // time that didn't fit is dropped, not owed, all but the next step: a scene
+    // that fits one step a frame and no more would otherwise lose a whole step
+    // whenever a frame came a little late (and skip one when the next came early)
+    if (this.acc >= due) this.acc = due - 1e-6;
     if (!this.paused && realDt > 0) {
       // clamped only after averaging: on a screen refreshing faster than the
       // physics steps, most frames take no step and the rest one, so clamping
@@ -328,7 +331,7 @@ export class Game {
     if (steps > 0) this.stepMs = this.stepMs * 0.9 + (stepTime / steps) * 0.1;
     if (!this.paused && realDt > 0) this.pickStep(realDt);
 
-    const alpha = this.paused ? 1 : Math.min(1, this.acc / dt);
+    const alpha = this.paused ? 1 : Math.min(1, Math.max(0, this.acc / dt));
     this.renderFrame(realDt, alpha);
     this.frameMs = this.frameMs * 0.9 + (performance.now() - t0) * 0.1;
   };
