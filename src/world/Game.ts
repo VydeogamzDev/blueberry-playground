@@ -345,7 +345,8 @@ export class Game {
 
   /**
    * A scene too heavy to keep up with in real time takes longer steps, half as
-   * many, rather than running in slow motion (after falling behind for a second);
+   * many, rather than running in slow motion (as soon as the steps cost more than
+   * the frames allow, or after falling behind for a second);
    * it goes back to the short ones once they would fit in the frames' budget
    * easily for a couple of seconds. A short step costs about what a long one
    * does: it's the number of them that halves. A scene that turns out too heavy
@@ -358,9 +359,12 @@ export class Game {
     // frames allows (a second at most, however fast the screen refreshes)
     const fineCost = (this.stepMs / FIXED_DT) * this.timeScale;
     const allowed = Math.min(1000, STEP_BUDGET_MS * Math.max(1, this.fps));
-    const change = coarse ? fineCost < allowed * 0.7 : this.simRate < this.timeScale * 0.9;
+    // too heavy for the short step: by the steps' own cost (half a second of it),
+    // or by the slow motion (a second of it)
+    const over = !coarse && fineCost > allowed;
+    const change = coarse ? fineCost < allowed * 0.7 : over || this.simRate < this.timeScale * 0.9;
     this.pickT = change ? this.pickT + realDt : 0;
-    if (this.pickT < (coarse ? this.backAfter : 1)) return;
+    if (this.pickT < (coarse ? this.backAfter : over ? 0.5 : 1)) return;
     this.pickT = 0;
     if (!coarse) this.backAfter = this.fineT < 10 ? Math.min(16, this.backAfter * 2) : BACK_AFTER;
     this.fineT = coarse ? 0 : Infinity;
