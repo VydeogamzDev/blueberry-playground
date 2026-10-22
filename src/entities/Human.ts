@@ -701,8 +701,15 @@ export class Human extends Entity implements Holder {
     if (!l || l.gone) return;
     const amt = amount / this.variant.toughness;
     if (kind === 'fire') {
-      part.hp -= amt * 0.25;
-      this.pain = Math.min(1.5, this.pain + amt * 0.006);
+      part.hp -= amt * 0.55;
+      this.pain = Math.min(1.5, this.pain + amt * 0.025);
+      this.shock = Math.min(1, this.shock + amt * 0.002);
+      // burning people drop and writhe
+      if (this.state !== 'down' && part.burning > 0.35) this.setState('down');
+      if (this.variant.kind === 'human' && Math.random() < amt * 0.6) {
+        const w = part.pixelToWorld(Math.floor(Math.random() * part.w), Math.floor(Math.random() * part.h));
+        part.paintAt(w.x, w.y, 0x2a1d17, 0, 0.25);
+      }
       return;
     }
     if (kind === 'explosion') {
