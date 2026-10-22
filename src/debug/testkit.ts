@@ -34,6 +34,26 @@ export function makeTestKit(game: Game, controls: Controls) {
     advance(seconds: number): void {
       game.advance(seconds);
     },
+    /**
+     * Runs `fn` with the game's frame loop held still, at the short step. Left
+     * running, the loop steps the scene in real time whenever `fn` waits (by
+     * however long that takes), and may pick the longer step for it.
+     */
+    async still<T>(fn: () => Promise<T>): Promise<T> {
+      const raf = window.requestAnimationFrame;
+      window.requestAnimationFrame = () => 0;
+      // (the frame already asked for still runs, once)
+      await new Promise((res) => setTimeout(res, 50));
+      game.resetStep();
+      try {
+        return await fn();
+      } finally {
+        window.requestAnimationFrame = raf;
+        const loop = game as unknown as { loop: FrameRequestCallback; lastTime: number };
+        loop.lastTime = performance.now();
+        window.requestAnimationFrame(loop.loop);
+      }
+    },
     down(x: number, y: number, button = 0, extra: PointerEventInit = {}): void {
       ev('pointerdown', x, y, button, cv, extra);
     },

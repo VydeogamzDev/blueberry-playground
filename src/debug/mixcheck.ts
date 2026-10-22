@@ -4,7 +4,6 @@ import type { Firearm } from '../entities/Firearm';
 import type { Explosive } from '../entities/Explosive';
 import type { ImpactSound } from '../world/Materials';
 import { Voices, bufferPeak, type GunSound, type TappedSound } from '../engine/Sound';
-import { FIXED_DT } from '../engine/constants';
 import { makeTestKit } from './testkit';
 
 const SR = 48000;
@@ -173,13 +172,13 @@ export function makeMixCheck(game: Game, controls: Controls) {
       frame(15);
       const tick = setup();
       game.advance(1, () => {
-        simT += FIXED_DT;
+        simT += game.stepDt;
       });
       on = true;
       t0 = simT;
       game.advance(seconds, () => {
         tick?.();
-        simT += FIXED_DT;
+        simT += game.stepDt;
       });
     } finally {
       snd.tap = null;
@@ -399,51 +398,58 @@ export function makeMixCheck(game: Game, controls: Controls) {
     return out;
   }
 
+  /** Records, renders and measures the busy scenes (all, or those whose name contains `filter`). */
+  async function recordScenes(filter: string, wav: boolean): Promise<MixReport[]> {
+    const reports: MixReport[] = [];
+    for (const [name, sc] of Object.entries(scenes)) {
+      if (filter && !name.includes(filter)) continue;
+      const rec = record(sc.seconds, sc.setup);
+      const dry = await render(rec, false);
+      const wet = await render(rec, true);
+      const full = analyse((await render(rec, true, 1)).out);
+      const a = analyse(dry.out);
+      const b = analyse(wet.out);
+      const keys = new Map<string, { n: number; peak: number }>();
+      for (const s of wet.played) {
+        const k = keys.get(s.key) ?? { n: 0, peak: 0 };
+        k.n++;
+        k.peak = Math.max(k.peak, bufLevel(s.buf).peak * s.gain * snd.volume);
+        keys.set(s.key, k);
+      }
+      reports.push({
+        scene: name,
+        seconds: sc.seconds,
+        sounds: rec.started.length,
+        dropped: wet.dropped,
+        cut: wet.cut,
+        voices: wet.voices,
+        peakIn: round1(dB(a.peak)),
+        peakOut: round1(dB(b.peak)),
+        over: Math.round(b.over * 1e5) / 1e3,
+        peakFull: round1(dB(full.peak)),
+        overFull: Math.round(full.over * 1e5) / 1e3,
+        loudest: round1(dB(b.loudest)),
+        mean: round1(dB(b.mean)),
+        top: [...keys.entries()].sort((p, q) => q[1].peak - p[1].peak).slice(0, 8).map(([k, v]) => [k, round1(dB(v.peak)), v.n]),
+        wav: wav ? wavBase64(wet.out) : undefined,
+      });
+    }
+    kit.reset();
+    return reports;
+  }
+
   return {
     /** Records, renders and measures the busy scenes (all, or those whose name contains `filter`). */
     async scenes(filter = '', wav = false): Promise<MixReport[]> {
       await snd.whenLoaded();
-      const reports: MixReport[] = [];
-      for (const [name, sc] of Object.entries(scenes)) {
-        if (filter && !name.includes(filter)) continue;
-        const rec = record(sc.seconds, sc.setup);
-        const dry = await render(rec, false);
-        const wet = await render(rec, true);
-        const full = analyse((await render(rec, true, 1)).out);
-        const a = analyse(dry.out);
-        const b = analyse(wet.out);
-        const keys = new Map<string, { n: number; peak: number }>();
-        for (const s of wet.played) {
-          const k = keys.get(s.key) ?? { n: 0, peak: 0 };
-          k.n++;
-          k.peak = Math.max(k.peak, bufLevel(s.buf).peak * s.gain * snd.volume);
-          keys.set(s.key, k);
-        }
-        reports.push({
-          scene: name,
-          seconds: sc.seconds,
-          sounds: rec.started.length,
-          dropped: wet.dropped,
-          cut: wet.cut,
-          voices: wet.voices,
-          peakIn: round1(dB(a.peak)),
-          peakOut: round1(dB(b.peak)),
-          over: Math.round(b.over * 1e5) / 1e3,
-          peakFull: round1(dB(full.peak)),
-          overFull: Math.round(full.over * 1e5) / 1e3,
-          loudest: round1(dB(b.loudest)),
-          mean: round1(dB(b.mean)),
-          top: [...keys.entries()].sort((p, q) => q[1].peak - p[1].peak).slice(0, 8).map(([k, v]) => [k, round1(dB(v.peak)), v.n]),
-          wav: wav ? wavBase64(wet.out) : undefined,
-        });
-      }
-      kit.reset();
-      return reports;
+      // (rendering takes real time: meanwhile the loop would run the scene just
+      // recorded, heavy enough to switch the next one to the longer step)
+      return kit.still(() => recordScenes(filter, wav));
     },
     /** Every game sound measured on its own (before the master volume and bus). */
     async levels(): Promise<Level[]> {
       await snd.whenLoaded();
-      return levels();
+      return kit.still(async () => levels());
     },
   };
 }

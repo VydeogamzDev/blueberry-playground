@@ -1450,29 +1450,23 @@ export function makeSelfTest(game: Game, controls: Controls) {
     // Repeatable runs: the real-time loop would step the world between tests by
     // however long they took, and sounds pick variants with Math.random as wall-
     // clock throttling allows. Hold the loop still and the sound off meanwhile.
-    const raf = window.requestAnimationFrame;
-    window.requestAnimationFrame = () => 0;
     const muted = game.sound.muted;
     game.sound.setMuted(true);
-    // and at the short step, whatever the scene before the run made the loop pick
-    game.resetStep();
-    await new Promise((res) => setTimeout(res, 50));
-    for (const [name, fn] of tests) {
-      if (filter && !name.includes(filter)) continue;
-      const t0 = performance.now();
-      let r: string | true;
-      try {
-        r = fn();
-      } catch (e) {
-        r = 'threw: ' + String(e);
+    await kit.still(async () => {
+      for (const [name, fn] of tests) {
+        if (filter && !name.includes(filter)) continue;
+        const t0 = performance.now();
+        let r: string | true;
+        try {
+          r = fn();
+        } catch (e) {
+          r = 'threw: ' + String(e);
+        }
+        results.push({ name, pass: r === true, detail: r === true ? 'ok' : r, ms: Math.round(performance.now() - t0) });
+        await new Promise((res) => setTimeout(res, 0));
       }
-      results.push({ name, pass: r === true, detail: r === true ? 'ok' : r, ms: Math.round(performance.now() - t0) });
-      await new Promise((res) => setTimeout(res, 0));
-    }
+    });
     game.sound.setMuted(muted);
-    window.requestAnimationFrame = raf;
-    (game as unknown as { lastTime: number }).lastTime = performance.now();
-    window.requestAnimationFrame((game as unknown as { loop: FrameRequestCallback }).loop);
     kit.reset();
     console.table(results);
     return results;
