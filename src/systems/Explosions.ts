@@ -1,5 +1,5 @@
 import { RAPIER } from '../engine/Physics';
-import { GROUP, PX, groups } from '../engine/constants';
+import { GROUP, PX, WORLD, groups } from '../engine/constants';
 import { PK } from './Particles';
 import type { Game } from '../world/Game';
 import type { Part } from '../world/Part';
@@ -57,6 +57,8 @@ export class Explosions {
     const g = this.game;
     const world = g.physics.world;
     const R = o.radius;
+    // oil on the floor nearby catches
+    if (y - WORLD.floor < R) g.puddles.igniteNear(x, Math.sqrt(Math.max(0, R * R - (y - WORLD.floor) ** 2)));
 
     // ---- visuals & audio
     this.visuals(x, y, o);

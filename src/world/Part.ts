@@ -209,6 +209,7 @@ export class Part {
     const col = this.entity.game.physics.world.createCollider(desc, this.body);
     this.colliders.push(col);
     this.entity.game.physics.partByCollider.set(col.handle, this);
+    this.entity.game.physics.fresh.push(col);
   }
 
   updateZ(): void {

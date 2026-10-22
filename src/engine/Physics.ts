@@ -16,6 +16,8 @@ export class Physics {
   readonly world: RAPIER.World;
   readonly events: RAPIER.EventQueue;
   readonly partByCollider = new Map<number, Part>();
+  /** Colliders made since the last step: scene queries only see them after it. */
+  fresh: RAPIER.Collider[] = [];
   /** Number of steps simulated so far. */
   stepCount = 0;
 
@@ -53,6 +55,7 @@ export class Physics {
   step(): void {
     this.world.step(this.events, this.hooks);
     this.stepCount++;
+    this.fresh = [];
   }
 
   /** Do two parts' colliders currently interpenetrate? */

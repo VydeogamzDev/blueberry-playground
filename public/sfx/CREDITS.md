@@ -6,7 +6,7 @@ Processing applied to all files: cut/trimmed (leading silence removed, `@ N s` =
 
 Freesound files were taken from the publicly accessible high-quality preview (`-hq`) of each sound, since original downloads need a login.
 
-Total: 231 files from 75 sources.
+Total: 250 files from 86 sources.
 
 ## Kenney
 
@@ -170,6 +170,8 @@ Total: 231 files from 75 sources.
 | `hit/glass_3.ogg` | glass_02.ogg | @ 0.00 s; 0.35 s |
 | `impact/glass_break_4.ogg` | glass_04.ogg | @ 0.09 s; 0.60 s |
 | `machine/switch_4.ogg` | switch_01.ogg | @ 0.02 s; 0.15 s |
+| `liquid/splash_3.ogg` | splash_01.ogg | 0.57 s |
+| `liquid/splash_4.ogg` | splash_02.ogg | 0.60 s |
 
 ### 100 CC0 SFX #2
 
@@ -407,6 +409,19 @@ Total: 231 files from 75 sources.
 |---|---|---|
 | `gun/pump_2.ogg` | ShotgunSounds__Rack.mp3 | @ 0.61 s; 0.52 s |
 
+### Steam Release Sounds
+
+- Source: https://opengameart.org/content/steam-release-sounds
+- Author: bart
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/steam_1.ogg` | steam hisses - Marker #1.wav | 0.90 s |
+| `liquid/steam_2.ogg` | steam hisses - Marker #2.wav | 0.90 s |
+| `liquid/steam_3.ogg` | steam hisses - Marker #3.wav | 0.90 s |
+| `liquid/steam_4.ogg` | steam hisses - Marker #4.wav | 0.90 s |
+
 ### Swishes Sound Pack
 
 - Source: https://opengameart.org/content/swishes-sound-pack
@@ -494,6 +509,16 @@ Total: 231 files from 75 sources.
 | File | Original file | Notes |
 |---|---|---|
 | `machine/rope_snap_1.ogg` | freesound #443833 (HQ preview) | 0.16 s; breaking rope |
+
+### Acid Bubbling.wav
+
+- Source: https://freesound.org/people/spookymodem/sounds/202094/
+- Author: spookymodem
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/sizzle_5.ogg` | freesound #202094 (HQ preview) | @ 0.65 s; 1.40 s; acid bubbling |
 
 ### Beretta M9 hammer click
 
@@ -827,6 +852,16 @@ Total: 231 files from 75 sources.
 |---|---|---|
 | `machine/motor_loop_1.ogg` | freesound #325810 (HQ preview) | @ 0.15 s; 3.00 s; loop |
 
+### Pouring_Water_04.wav
+
+- Source: https://freesound.org/people/moai15/sounds/336386/
+- Author: moai15
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/pour_loop_1.ogg` | freesound #336386 (HQ preview) | @ 2.00 s; 5.00 s; loop |
+
 ### ricochet.mp3
 
 - Source: https://freesound.org/people/cedarstudios/sounds/148840/
@@ -879,6 +914,29 @@ Total: 231 files from 75 sources.
 |---|---|---|
 | `gun/pump_1.ogg` | freesound #351226 (HQ preview) | @ 0.22 s; 0.69 s; Mossberg 590A1 rack (back + forward) |
 
+### Sizzle / Acid Burn
+
+- Source: https://freesound.org/people/bottles/sounds/382313/
+- Author: bottles
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/sizzle_1.ogg` | freesound #382313 (HQ preview) | @ 28.23 s; 1.20 s; acid burn |
+| `liquid/sizzle_2.ogg` | freesound #382313 (HQ preview) | @ 73.22 s; 1.20 s; acid burn |
+| `liquid/sizzle_3.ogg` | freesound #382313 (HQ preview) | @ 83.68 s; 1.20 s; acid burn |
+| `liquid/sizzle_4.ogg` | freesound #382313 (HQ preview) | @ 0.40 s; 1.20 s; acid burn |
+
+### Small Puddle Splash
+
+- Source: https://freesound.org/people/Robo9418/sounds/841834/
+- Author: Robo9418
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/drip_1.ogg` | freesound #841834 (HQ preview) | 0.40 s |
+
 ### Spark
 
 - Source: https://freesound.org/people/elliott.klein/sounds/189630/
@@ -888,6 +946,16 @@ Total: 231 files from 75 sources.
 | File | Original file | Notes |
 |---|---|---|
 | `machine/spark_1.ogg` | freesound #189630 (HQ preview) | @ 0.01 s; 0.15 s |
+
+### Splash
+
+- Source: https://freesound.org/people/swordofkings128/sounds/398032/
+- Author: swordofkings128
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/splash_1.ogg` | freesound #398032 (HQ preview) | @ 0.14 s; 1.00 s |
 
 ### VisceralBulletImpacts.wav
 
@@ -899,6 +967,56 @@ Total: 231 files from 75 sources.
 |---|---|---|
 | `hit/flesh_1.ogg` | freesound #423301 (HQ preview) | @ 1.20 s; 0.26 s |
 | `hit/flesh_2.ogg` | freesound #423301 (HQ preview) | @ 1.90 s; 0.26 s |
+
+### Water Drip
+
+- Source: https://freesound.org/people/spanrucker/sounds/466559/
+- Author: spanrucker
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/drip_3.ogg` | freesound #466559 (HQ preview) | 0.30 s |
+
+### water drop
+
+- Source: https://freesound.org/people/florianreichelt/sounds/683102/
+- Author: florianreichelt
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/drip_2.ogg` | freesound #683102 (HQ preview) | @ 0.06 s; 0.30 s |
+
+### Water sizzle 1.wav
+
+- Source: https://freesound.org/people/xenognosis/sounds/137262/
+- Author: xenognosis
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/sizzle_loop.ogg` | freesound #137262 (HQ preview) | @ 72.00 s; 6.00 s; loop |
+
+### water splash 2
+
+- Source: https://freesound.org/people/swordofkings128/sounds/398039/
+- Author: swordofkings128
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/splash_2.ogg` | freesound #398039 (HQ preview) | @ 0.15 s; 0.80 s |
+
+### Water_Pour.wav
+
+- Source: https://freesound.org/people/Q.K./sounds/56272/
+- Author: Q.K.
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/pour_loop_2.ogg` | freesound #56272 (HQ preview) | @ 0.50 s; 3.00 s; loop |
 
 ### Wet Splat 1.mp3
 

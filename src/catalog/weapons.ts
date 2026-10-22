@@ -15,7 +15,7 @@ import { Battery, Button, LightBulb, Motor, Thruster } from '../entities/Machine
 import { Syringe, type Drug } from '../entities/Syringe';
 import { Switch, MotionSensor, Timer, LogicGate, Piston } from '../entities/Devices';
 import { Car } from '../entities/Car';
-import { Flask } from '../entities/Flask';
+import { Flask, FLASK_TILTS } from '../entities/Flask';
 import { LIQUID_IDS, type LiquidName } from '../systems/Liquids';
 import type { ShapeSpec } from '../world/Part';
 import type { Entity } from '../world/Entity';
@@ -303,10 +303,10 @@ export function registerLiquids(): void {
   for (const f of FLASKS) {
     const ramp = I.FLASK_RAMPS[f.liquid];
     const cache = new Map<string, PixelArt>();
-    const art = (level: number, corked: boolean) => {
-      const k = `${level}:${corked}`;
+    const art = (level: number, corked: boolean, tilt = 0) => {
+      const k = `${level}:${corked}:${tilt}`;
       let a = cache.get(k);
-      if (!a) cache.set(k, (a = I.flaskArt(ramp, level, corked)));
+      if (!a) cache.set(k, (a = I.flaskArt(ramp, level, corked, (tilt * Math.PI * 2) / FLASK_TILTS)));
       return a;
     };
     item(`flask-${f.liquid}`, f.name, 'Medical', f.desc, () => art(1, true), (game, def, a, x, y, opts) =>

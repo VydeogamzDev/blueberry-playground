@@ -704,6 +704,85 @@ export function makeSelfTest(game: Game, controls: Controls) {
       const h = game.connections.list[0];
       const ends = h ? [h.a.entity, h.b?.entity] : [];
       if (!ends.includes(crate) || !ends.includes(wheel)) return `wheel not hinged to the crate (${h ? h.b?.entity.def.id ?? 'background' : 'none'})`;
+      // tools find things spawned this very step (before physics has seen them)
+      kit.reset();
+      const fresh = kit.spawn('crate', 2, 2)!;
+      click('tool-weld', 2, 2);
+      const wc = game.connections.list[0];
+      if (!wc || wc.a.entity !== fresh) return 'weld missed a just-spawned crate';
+      kit.advance(1);
+      if (Math.abs(fresh.parts[0].y - 2) > 0.02) return 'crate welded to the background fell';
+      return true;
+    }],
+    ['extra: puddles: pool and spread, put out, burn, corrode', () => {
+      const pour = (id: string, x: number) => {
+        const f = kit.spawn(id, x, 1.8, { angle: Math.PI }) as Flask;
+        f.setFrozen(true);
+        f.activate();
+      };
+      const span = () => {
+        let a = Infinity;
+        let b = -Infinity;
+        for (let x = -4; x < 4; x += 1 / 32) if (game.puddles.amountAt(x) > 0) [a, b] = [Math.min(a, x), Math.max(b, x)];
+        return b - a;
+      };
+      // a flask of water pools and runs out into a thin, wide puddle
+      kit.reset();
+      pour('flask-water', 0);
+      kit.advance(5);
+      const vol = game.puddles.total;
+      if (vol < 35 || vol > 60) return `water puddle holds ${vol.toFixed(1)} px² (want about a flask, ~50)`;
+      if (span() < 1.5) return `puddle only ${span().toFixed(2)} m wide`;
+      // poured over someone, it runs off them and pools at their feet
+      kit.reset();
+      human(0);
+      pour('flask-water', 0);
+      kit.advance(5);
+      if (game.puddles.total < 20) return `water poured on a person left only ${game.puddles.total.toFixed(1)} px² on the floor`;
+      // a smashed flask spills most of what it held
+      kit.reset();
+      const sm = kit.spawn('flask-oil', 0, 1) as Flask;
+      sm.setFrozen(true);
+      kit.advance(0.1);
+      sm.shatter();
+      kit.advance(4);
+      if (game.puddles.total < 25) return `smashed flask spilled only ${game.puddles.total.toFixed(1)} px²`;
+      kit.reset();
+      pour('flask-water', 0);
+      kit.advance(5);
+      // a burning body dropped in water goes out
+      const h = kit.spawn('human', 0, 0.4, { angle: Math.PI / 2 }) as Human;
+      h.limp = true;
+      for (const p of h.parts) game.fire.ignite(p, 1);
+      kit.advance(2);
+      if (h.parts.some((p) => p.burning > 0)) return 'water puddle did not put out a burning body';
+      // acid eats into someone lying in it
+      kit.reset();
+      pour('flask-acid', 0);
+      pour('flask-acid', 0.6);
+      kit.advance(4);
+      const v = kit.spawn('human', 0.3, 0.4, { angle: Math.PI / 2 }) as Human;
+      v.limp = true;
+      kit.advance(0.5);
+      const hp0 = hp(v);
+      kit.advance(3);
+      if (hp(v) > hp0 - 50) return `acid puddle barely hurt (${(hp0 - hp(v)).toFixed(1)} hp)`;
+      // oil: flames run along it and catch whoever stands in it; grenades light it too
+      kit.reset();
+      const s = human(0);
+      pour('flask-oil', 0.3);
+      pour('flask-oil', -0.3);
+      kit.advance(4);
+      game.puddles.igniteNear(-0.9, 0.1);
+      kit.advance(3);
+      if (!game.puddles.burningAt(0)) return 'fire did not spread along the oil';
+      if (!s.parts.some((p) => p.burning > 0)) return 'person standing in burning oil did not catch fire';
+      kit.reset();
+      pour('flask-oil', 3);
+      kit.advance(4);
+      kit.spawn('grenade', 3.5, 0.2)!.activate();
+      kit.advance(5);
+      if (!game.puddles.burningAt(3)) return 'grenade did not light the oil';
       return true;
     }],
   ];

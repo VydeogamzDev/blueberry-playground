@@ -336,6 +336,37 @@
     "sfx/machine/rope_snap_3.ogg",
     "sfx/machine/rope_snap_4.ogg"
   ],
+  "liquid/splash": [
+    "sfx/liquid/splash_1.ogg",
+    "sfx/liquid/splash_2.ogg",
+    "sfx/liquid/splash_3.ogg",
+    "sfx/liquid/splash_4.ogg"
+  ],
+  "liquid/drip": [
+    "sfx/liquid/drip_1.ogg",
+    "sfx/liquid/drip_2.ogg",
+    "sfx/liquid/drip_3.ogg"
+  ],
+  "liquid/sizzle": [
+    "sfx/liquid/sizzle_1.ogg",
+    "sfx/liquid/sizzle_2.ogg",
+    "sfx/liquid/sizzle_3.ogg",
+    "sfx/liquid/sizzle_4.ogg",
+    "sfx/liquid/sizzle_5.ogg"
+  ],
+  "liquid/steam": [
+    "sfx/liquid/steam_1.ogg",
+    "sfx/liquid/steam_2.ogg",
+    "sfx/liquid/steam_3.ogg",
+    "sfx/liquid/steam_4.ogg"
+  ],
+  "liquid/pour_loop": [
+    "sfx/liquid/pour_loop_1.ogg",
+    "sfx/liquid/pour_loop_2.ogg"
+  ],
+  "liquid/sizzle_loop": [
+    "sfx/liquid/sizzle_loop.ogg"
+  ],
   "ui/click": [
     "sfx/ui/click_1.ogg",
     "sfx/ui/click_2.ogg",
@@ -376,6 +407,8 @@
     "machine/electric_loop",
     "machine/motor_loop",
     "machine/hum_loop",
-    "machine/thruster_loop"
+    "machine/thruster_loop",
+    "liquid/pour_loop",
+    "liquid/sizzle_loop"
   ]
 }

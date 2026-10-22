@@ -10,6 +10,7 @@ import { Projectiles } from '../systems/Projectiles';
 import { Explosions } from '../systems/Explosions';
 import { Connections } from '../systems/Connections';
 import { Fire } from '../systems/Fire';
+import { Puddles } from '../systems/Puddles';
 import type { Entity } from './Entity';
 import type { Part } from './Part';
 import type { ItemDef, SpawnOptions } from './types';
@@ -28,6 +29,7 @@ export class Game {
   readonly sound = new Sound();
   readonly particles: Particles;
   readonly stains: Stains;
+  readonly puddles: Puddles;
   readonly env: Environment;
   readonly impacts: Impacts;
   readonly projectiles: Projectiles;
@@ -69,6 +71,7 @@ export class Game {
     this.env = new Environment(this.physics, this.renderer.scene);
     this.particles = new Particles(this);
     this.stains = new Stains(this.renderer.scene);
+    this.puddles = new Puddles(this, this.renderer.scene);
     this.impacts = new Impacts(this);
     this.projectiles = new Projectiles(this);
     this.explosions = new Explosions(this);
@@ -195,6 +198,7 @@ export class Game {
   resetEnvironment(): void {
     this.clearAll();
     this.stains.clear();
+    this.puddles.clear();
     this.fire.clear();
   }
 
@@ -203,19 +207,23 @@ export class Game {
   /** Returns the front-most part at a world point, within `radius` meters. */
   pick(x: number, y: number, radius = 0, filter?: (p: Part) => boolean): Part | null {
     const world = this.physics.world;
+    // things spawned this step aren't in the scene queries yet: test them directly
+    const fresh = this.physics.fresh.filter((c) => c.isValid());
     let best: Part | null = null;
     let bestZ = -Infinity;
-    world.intersectionsWithPoint({ x, y }, (c) => {
+    const onPoint = (c: RAPIER.Collider): boolean => {
       const p = this.physics.partOf(c);
       if (p && !p.destroyed && (!filter || filter(p)) && p.mesh.position.z > bestZ) {
         best = p;
         bestZ = p.mesh.position.z;
       }
       return true;
-    });
+    };
+    world.intersectionsWithPoint({ x, y }, onPoint);
+    for (const c of fresh) if (c.containsPoint({ x, y })) onPoint(c);
     if (best || radius <= 0) return best;
     let bestD = Infinity;
-    world.intersectionsWithShape({ x, y }, 0, new RAPIER.Ball(radius), (c) => {
+    const near = (c: RAPIER.Collider): boolean => {
       const p = this.physics.partOf(c);
       if (!p || p.destroyed || (filter && !filter(p))) return true;
       const proj = c.projectPoint({ x, y }, true);
@@ -227,7 +235,12 @@ export class Game {
         bestZ = p.mesh.position.z;
       }
       return true;
-    });
+    };
+    world.intersectionsWithShape({ x, y }, 0, new RAPIER.Ball(radius), near);
+    for (const c of fresh) {
+      const proj = c.projectPoint({ x, y }, true);
+      if (proj && Math.hypot(proj.point.x - x, proj.point.y - y) <= radius) near(c);
+    }
     return best;
   }
 
@@ -293,6 +306,7 @@ export class Game {
     }
     this.connections.frame(alpha);
     this.fire.frame();
+    this.puddles.frame();
     this.projectiles.frame();
     this.particles.frame();
     this.stains.frame(this.renderer.zoom * this.renderer.dpr);
@@ -335,6 +349,7 @@ export class Game {
     this.fire.step(dt);
     this.explosions.step(dt);
     this.particles.step(dt);
+    this.puddles.step(dt);
     this.time += dt;
     this.stepping = false;
     if (this.pendingRemoval.length) {

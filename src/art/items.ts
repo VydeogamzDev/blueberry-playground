@@ -426,23 +426,37 @@ export const FLASK_RAMPS = {
 } as const;
 
 /** A round-bottomed glass flask, `level` 0..1 full, optionally corked. */
-export function flaskArt(liquid: Ramp, level: number, corked: boolean): PixelArt {
+export function flaskArt(liquid: Ramp, level: number, corked: boolean, tilt = 0): PixelArt {
   const a = new PixelArt(10, 16);
   a.ellipse(0, 6, 10, 10, GLASS[2]);
   a.rect(3, 1, 4, 6, GLASS[2]);
   a.rect(2, 1, 6, 1, GLASS[2]);
-  // liquid fills the inside of the bulb from the bottom up
-  const inside = new PixelArt(10, 16);
-  inside.ellipse(1, 7, 8, 8, 1);
-  const top = 15 - Math.round(level * 8);
-  if (level > 0) {
-    for (let y = Math.max(top, 7); y < 16; y++) {
-      for (let x = 0; x < 10; x++) if (inside.get(x, y) === 1) a.set(x, y, liquid[2]);
+  // the liquid settles to whichever side is down: `tilt` is the flask's rotation
+  // (radians, counter-clockwise), so in art space (y down) gravity points along g
+  const gx = -Math.sin(tilt);
+  const gy = Math.cos(tilt);
+  const bulb = new PixelArt(10, 16);
+  bulb.ellipse(1, 7, 8, 8, 1);
+  const cells: [number, number, number][] = [];
+  let capacity = 0;
+  for (let y = 0; y < 16; y++) {
+    for (let x = 0; x < 10; x++) {
+      const inBulb = bulb.get(x, y) === 1;
+      const inNeck = x >= 4 && x <= 5 && y >= 2 && y <= 6;
+      if (inBulb) capacity++;
+      if (inBulb || inNeck) cells.push([x, y, x * gx + y * gy]);
     }
   }
+  // fill the lowest cells first; ties go to the middle so the surface stays level
+  cells.sort((p, q) => q[2] - p[2] || Math.abs(p[0] - 4.5) - Math.abs(q[0] - 4.5));
+  const n = Math.round(level * capacity);
+  const filled = cells.slice(0, n);
+  for (const [x, y] of filled) a.set(x, y, liquid[2]);
   finish(a, { shadow: false });
-  if (level > 0) {
-    for (let x = 0; x < 10; x++) if (inside.get(x, Math.max(top, 7)) === 1) a.set(x, Math.max(top, 7), liquid[3]);
+  if (n > 0) {
+    // a lighter line along the surface
+    const surface = filled[n - 1][2];
+    for (const [x, y, h] of filled) if (h < surface + 0.9) a.set(x, y, liquid[3]);
   }
   // glass highlights
   a.set(2, 9, GLASS[4]).set(2, 10, GLASS[4]).set(4, 2, GLASS[4]).set(4, 3, GLASS[4]);

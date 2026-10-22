@@ -5,8 +5,12 @@ import type { Game } from '../world/Game';
 import type { V2 } from '../engine/math';
 import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
 
+type FlaskArt = (level: number, corked: boolean, tilt?: number) => PixelArt;
+
 /** Seconds a full flask takes to pour out upside down. */
 const POUR_TIME = 3;
+/** The liquid inside is redrawn for this many tilts of the flask. */
+export const FLASK_TILTS = 16;
 
 /**
  * A glass flask of liquid. Uncork it and tip it over to pour; it shatters when
@@ -19,9 +23,9 @@ export class Flask extends Prop {
   corked = true;
   private drip = 0;
   private shown = '';
-  private art: (level: number, corked: boolean) => PixelArt;
+  private art: FlaskArt;
 
-  constructor(game: Game, def: ItemDef, cfg: PropConfig, liquid: Liquid, art: (level: number, corked: boolean) => PixelArt, x: number, y: number, opts: SpawnOptions) {
+  constructor(game: Game, def: ItemDef, cfg: PropConfig, liquid: Liquid, art: FlaskArt, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
     this.liquid = liquid;
     this.art = art;
@@ -46,6 +50,7 @@ export class Flask extends Prop {
     const rate = Math.min(1, Math.max(0, (0.35 - d.y) / 1.35));
     if (rate <= 0) return;
     this.amount = Math.max(0, this.amount - (dt / POUR_TIME) * rate);
+    this.game.sound.hold(this, 'liquid/pour_loop', 0.12 + rate * 0.3, p.x, 0.85 + rate * 0.3);
     this.drip += dt * 90 * rate;
     const n = Math.floor(this.drip);
     if (n > 0) {
@@ -59,18 +64,23 @@ export class Flask extends Prop {
   }
 
   private refresh(): void {
-    // the art shows the level in eighths
+    if (this.destroyed) return;
+    // the art shows the level in eighths, settled to whichever side is down
     const level = Math.ceil(this.amount * 8) / 8;
-    const key = `${level}:${this.corked}`;
-    if (key === this.shown || this.destroyed) return;
+    const turn = (this.main.a * this.main.flip) / (Math.PI * 2);
+    const tilt = level > 0 && level < 1 ? ((Math.round(turn * FLASK_TILTS) % FLASK_TILTS) + FLASK_TILTS) % FLASK_TILTS : 0;
+    const key = `${level}:${this.corked}:${tilt}`;
+    if (key === this.shown) return;
     this.shown = key;
-    this.main.setArt(this.art(level, this.corked));
+    this.main.setArt(this.art(level, this.corked, tilt));
   }
 
   shatter(point?: V2): void {
     if (this.amount > 0 && !this.destroyed) {
       const p = this.main;
-      this.game.particles.liquid(this.liquid, p.x, p.y, 0, 1, Math.round(10 + this.amount * 50), 2.2, Math.PI, p.body);
+      // the whole content splashes out (a pour is ~270 drops)
+      this.game.particles.liquid(this.liquid, p.x, p.y, 0, 1, Math.round(20 + this.amount * 200), 2.2, Math.PI, p.body);
+      this.game.sound.play('liquid/splash', { gain: 0.5 + this.amount * 0.4, x: p.x });
     }
     super.shatter(point);
   }

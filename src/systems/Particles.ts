@@ -218,6 +218,12 @@ function unpack(c: number, out: Float32Array, o: number, a: number): void {
 }
 
 const BLOOD_FILTER = groups(GROUP.DEBRIS, GROUP.STATIC | GROUP.DYNAMIC);
+/** Runoff only meets the floor and walls. */
+const RUNOFF_FILTER = groups(GROUP.DEBRIS, GROUP.STATIC);
+/** Flag on `liq` for a drop running off something on its way to the floor. */
+const RUNOFF = 0x80;
+/** Share of drops that run off what they hit (the rest soak in); blood always sticks. */
+const RUNOFF_CHANCE: Record<number, number> = { [Liquid.Water]: 0.7, [Liquid.Acid]: 0.6, [Liquid.Oil]: 0.45 };
 
 export class Particles {
   private smokeL = new Layer(3000, false, 44);
@@ -286,7 +292,7 @@ export class Particles {
 
   /** Emits droplets of a liquid (water, acid, oil) in a fan around (dx, dy). */
   liquid(kind: Liquid, x: number, y: number, dx: number, dy: number, amount: number, speed = 2.5, spread = 0.55, ignore: RAPIER.RigidBody | null = null): void {
-    const n = Math.min(60, Math.round(amount));
+    const n = Math.min(300, Math.round(amount));
     const shades = LIQUID_COLORS[kind];
     for (let k = 0; k < n; k++) {
       const s = speed * (0.3 + Math.random() * 0.9);
@@ -393,13 +399,26 @@ export class Particles {
           this.ray.origin = { x: ox, y: oy };
           this.ray.dir = { x: dx / d, y: dy / d };
           const ign = L.ignore[i];
+          const liq = L.liq[i] & ~RUNOFF;
+          const runoff = (L.liq[i] & RUNOFF) !== 0;
           const hit = world.castRayAndGetNormal(
-            this.ray, d, true, undefined, BLOOD_FILTER, undefined, ign && ign.isValid() ? ign : undefined,
+            this.ray, d, true, undefined, runoff ? RUNOFF_FILTER : BLOOD_FILTER, undefined, ign && ign.isValid() ? ign : undefined,
           );
           if (hit) {
             const hx = ox + (dx / d) * hit.timeOfImpact;
             const hy = oy + (dy / d) * hit.timeOfImpact;
-            landDroplet(this.game, L.liq[i], this.game.physics.partOf(hit.collider) ?? null, hx, hy, hit.normal.x, hit.normal.y, L.col[i * 4], L.col[i * 4 + 1], L.col[i * 4 + 2]);
+            const part = this.game.physics.partOf(hit.collider) ?? null;
+            landDroplet(this.game, liq, part, hx, hy, hit.normal.x, hit.normal.y, L.col[i * 4], L.col[i * 4 + 1], L.col[i * 4 + 2]);
+            if (part && Math.random() < (RUNOFF_CHANCE[liq] ?? 0)) {
+              // trickles off and drips down to the floor
+              L.x[i] = hx + hit.normal.x * PX * 0.5;
+              L.y[i] = hy;
+              L.vx[i] = L.vx[i] * 0.1 + hit.normal.x * 0.3;
+              L.vy[i] = Math.min(0, L.vy[i] * 0.1);
+              L.liq[i] = liq | RUNOFF;
+              L.life[i] = Math.max(L.life[i], 2);
+              continue;
+            }
             L.kill(i--);
             continue;
           }
