@@ -11,6 +11,7 @@
     "test": "node tools/selftest.mjs",
     "test:touch": "node tools/touchtest.mjs",
     "bench": "node tools/selftest.mjs --bench",
+    "mixcheck": "node tools/selftest.mjs --mix",
     "sheet": "vitest run --config tools/vitest.config.ts"
   },
   "dependencies": {

@@ -1,5 +1,5 @@
 import { RAPIER } from '../engine/Physics';
-import { PX, WORLD } from '../engine/constants';
+import { GRAVITY, PX, WORLD } from '../engine/constants';
 import { clamp, rotate, smoothstep, wrapAngle, type V2 } from '../engine/math';
 import { Entity } from '../world/Entity';
 import type { Part, ShapeSpec } from '../world/Part';
@@ -74,6 +74,8 @@ export const GAIT = {
 };
 /** Hip height above the soles (m). */
 const HIP_Y = 22.5 * PX;
+/** The trunk's center of mass above the soles, standing (m). */
+const TRUNK_Y = 32 * PX;
 
 /** Figure center height (px) used as the spawn reference point. */
 const MID_Y = 27.25;
@@ -91,6 +93,37 @@ const JOINT_FRICTION: Record<string, number> = {
   head: 2, midTorso: 7, lowerTorso: 7, upperLeg: 5, lowerLeg: 3, foot: 0.3,
   upperArm: 1.6, lowerArm: 0.9, hand: 0.1,
 };
+
+/** Climbing: knees drawn up under the body; once risen, arms reaching forward onto the top. */
+const POSE_TUCK: Pose = {
+  ...POSE_STAND, midTorso: 0.25, lowerTorso: 0.2, upperLegF: 1.1, upperLegB: 0.9, lowerLegF: -2.35, lowerLegB: -2.25, footF: 0.35, footB: 0.35,
+};
+const POSE_CLIMB: Pose = { ...POSE_TUCK, upperArmF: 1.9, upperArmB: 1.6, lowerArmF: 0.35, lowerArmB: 0.5 };
+/** Letting themselves down off a ledge: knees a little bent for the landing, arms out. */
+const POSE_DROP: Pose = { ...POSE_STAND, upperLegF: 0.55, upperLegB: 0.25, lowerLegF: -0.8, lowerLegB: -0.6, footF: 0.2, footB: 0.2, upperArmF: 0.7, upperArmB: 0.45, lowerArmF: 0.5, lowerArmB: 0.4 };
+const CLIMB_POSES = { tuck: POSE_TUCK, reach: POSE_CLIMB, drop: POSE_DROP, stand: POSE_STAND };
+type ClimbPose = keyof typeof CLIMB_POSES;
+
+/**
+ * A climb: the trunk is carried along a path from (x0, y0) to (x1, y1) over
+ * `dur` seconds, the legs tucked up while they clear the edge. 'up' rises
+ * first and then moves on over the top; 'down' moves out over the edge and
+ * then drops; 'over' goes up, across and down again (something narrow).
+ */
+interface Climb {
+  kind: 'up' | 'down' | 'over';
+  t: number;
+  dur: number;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  /** How high the trunk goes above the start on the way over. */
+  peak: number;
+}
+
+/** Highest top (m above the floor under them) someone will climb onto, and deepest drop they'll climb down. */
+export const CLIMB = { up: 1.1, down: 1.3 };
 
 /** Aiming pose for an arm holding an item, and for a supporting arm. */
 const AIM = { upper: 1.42, lower: 0.06, hand: 0 };
@@ -227,6 +260,13 @@ export class Human extends Entity implements Holder {
   private blocker: Part | null = null;
   /** Following someone ahead: the speed to keep to (0: nobody in the way). */
   private pacing = 0;
+  /** Climbing up onto something, over it or down off a ledge (see climb()). */
+  private climbing: Climb | null = null;
+  /** Until they may climb again, and since they last finished a climb (s). */
+  private climbCool = 0;
+  private landT = 9;
+  /** Waiting for the cool-down to climb again (see think()). */
+  private climbWait = false;
 
   constructor(game: Game, def: ItemDef, variant: Variant, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -433,6 +473,7 @@ export class Human extends Entity implements Holder {
     this.state = s;
     this.stateT = 0;
     this.feetT = 0;
+    this.climbing = null;
     // getting up blends every joint from where it is now to the standing pose,
     // instead of snapping the limbs into place
     if (s === 'getup') {
@@ -478,7 +519,9 @@ export class Human extends Entity implements Holder {
     const conscious = str > 0.15;
     const f = this.f;
     const standing = this.state !== 'down' && conscious;
-    const pose = standing ? POSE_STAND : POSE_DOWN;
+    // climbing: tucked up until the feet are over where they're going, then reaching down for it
+    const climbPose = standing && this.climbing ? this.climbPose() : '';
+    const pose = climbPose ? CLIMB_POSES[climbPose] : standing ? POSE_STAND : POSE_DOWN;
     const writhe = !standing && conscious ? Math.min(0.9, this.pain * 0.9) : 0;
     // someone lying still stops tensing up: weak muscles pushing against a pile of
     // bodies never find a balance and keep the limbs creeping forever
@@ -490,8 +533,8 @@ export class Human extends Entity implements Holder {
     if (ik) for (const k in ik) ikSig += Math.round(ik[k as LimbKey]! * 40) + ',';
     // limp or relaxed joints only have friction: how strong they are doesn't matter
     const tone = standing || (conscious && !relaxed) ? Math.round(str * 50) : -1;
-    const stepping = standing && this.gaitAmt > 0;
-    const sig = `${standing}:${conscious}:${tone}:${Math.round(getupRamp * 20)}:${this.gripSig()}:${ikSig}:${relaxed}:${stepping}`;
+    const stepping = standing && this.gaitAmt > 0 && !this.climbing;
+    const sig = `${standing}:${conscious}:${tone}:${Math.round(getupRamp * 20)}:${this.gripSig()}:${ikSig}:${relaxed}:${stepping}:${climbPose}`;
     if (!force && !stepping && (writhe === 0 || relaxed) && sig === this.motorSig) return;
     this.motorSig = sig;
     for (const l of this.order) {
@@ -683,8 +726,14 @@ export class Human extends Entity implements Holder {
       const tilt = Math.abs(col.theta);
       // only standing for a while counts as having got up (not toppling off a pile again)
       if (this.state === 'stand' && this.stateT > 3) this.getupFails = this.retries = this.crawls = 0;
+      this.landT += dt;
       if (!this.legsWork()) this.setState('down');
-      else if (this.state === 'stand' && (tilt > 0.62 || this.airT > 0.35)) {
+      else if (this.climbing) {
+        // carried along by the climb with the feet off the ground: only a real
+        // tumble (knocked over on the way) ends it
+        this.airT = 0;
+        if (Math.abs(wrapAngle(this.L('upperTorso').part.a)) > 1.1) this.setState('down');
+      } else if (this.state === 'stand' && (tilt > (this.landT < 0.5 ? 0.9 : 0.62) || this.airT > (this.landT < 0.6 ? 0.6 : 0.35))) {
         if (this.stateT < 3) this.failGetup();
         else this.setState('down');
       } else if (this.state === 'getup' && this.flailing()) {
@@ -743,7 +792,9 @@ export class Human extends Entity implements Holder {
     }
 
     // ---- what to do on its feet
-    if (conscious && this.state === 'stand' && !this.held) this.think(dt);
+    this.climbCool -= dt;
+    if (conscious && this.state === 'stand' && !this.held && this.climbing) this.climb(dt);
+    else if (conscious && this.state === 'stand' && !this.held) this.think(dt);
     else {
       this.speed = 0;
       this.goalT -= dt;
@@ -760,7 +811,7 @@ export class Human extends Entity implements Holder {
     if (this.grips.length && this.state === 'stand' && conscious) this.aim(str, dt);
 
     // ---- balance
-    if ((this.state === 'stand' || this.state === 'getup') && conscious && col.grounded) {
+    if ((this.state === 'stand' || this.state === 'getup') && conscious && col.grounded && !this.climbing) {
       if (this.state === 'getup') {
         const ramp = clamp(this.stateT / 1.2, 0, 1);
         this.balance(col, 16 * str, 9 * str, 4 + 14 * ramp, dt);
@@ -784,6 +835,7 @@ export class Human extends Entity implements Holder {
     const look = this.lookT <= 0;
     if (look) {
       this.lookT = 0.1;
+      this.climbWait = false;
       const fire = this.grips.length ? null : this.game.fire.near(c.x, c.y, 2, this);
       if (fire) this.scare(fire.x, 2.5);
     }
@@ -815,6 +867,16 @@ export class Human extends Entity implements Holder {
         this.cornered = false;
       }
       speed = Math.sign(speed) * Math.min(Math.abs(speed), this.pacing);
+    } else if (speed && look && Math.sign(speed) === this.f && (this.blockedAhead() ? this.climbUp() : this.dropAhead() > 0.35 && this.climbDown())) {
+      // a box or a step in the way, or a ledge to get down off: climbing (see climb())
+      this.pacing = 0;
+      this.cornered = false;
+      return;
+    } else if (speed && this.climbCool > 0 && (look ? this.blockedAhead() || this.dropAhead() > 0.35 : this.climbWait)) {
+      // just climbed: find their feet a moment before going on (or up, or down)
+      this.climbWait = true;
+      this.speed = 0;
+      return;
     } else if (speed && (look ? this.blockedAhead() || this.dropAhead() > 0.35 : this.cornered)) {
       this.pacing = 0;
       // something in the way, or a drop: stop short of it (running scared, keep looking for a way)
@@ -882,6 +944,10 @@ export class Human extends Entity implements Holder {
 
   get canWalk(): boolean {
     return true;
+  }
+
+  get upright(): boolean {
+    return this.alive && this.state !== 'down';
   }
 
   /** Walking or running about. */
@@ -954,15 +1020,227 @@ export class Human extends Entity implements Holder {
 
   /** How far the floor falls away a step ahead (m; 0: it doesn't). */
   private dropAhead(): number {
-    if (!this.ok('footF')) return 0;
-    const ft = this.L('footF').part;
-    const world = this.game.physics.world;
-    const mine = (o: RAPIER.Collider) => this.game.physics.partOf(o)?.entity === this;
-    const y = ft.y + 0.3;
-    const under = world.castRay(new RAPIER.Ray({ x: ft.x, y }, { x: 0, y: -1 }), 1, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
-    if (!under) return 0;
-    const ahead = world.castRay(new RAPIER.Ray({ x: this.L('upperTorso').part.x + this.f * 0.45, y }, { x: 0, y: -1 }), 3, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
-    return (ahead ? ahead.timeOfImpact : 3) - under.timeOfImpact;
+    const g = this.groundUnder();
+    if (g === null) return 0;
+    const ahead = this.probe(this.L('upperTorso').part.x + this.f * 0.45, g + 0.3, 0, -1, 3);
+    return (ahead ? ahead.d : 3) - 0.3;
+  }
+
+  /**
+   * The height of what they're standing on: the highest ground under either foot
+   * (mid-stride the front one may be out over an edge already). Null: nothing.
+   */
+  private groundUnder(): number | null {
+    let best = -Infinity;
+    for (const k of ['footF', 'footB'] as LimbKey[]) {
+      if (!this.ok(k)) continue;
+      const p = this.L(k).part;
+      const h = this.probe(p.x, p.y + 0.3, 0, -1, 1);
+      if (h) best = Math.max(best, p.y + 0.3 - h.d);
+    }
+    return best > -Infinity ? best : null;
+  }
+
+  /** A ray from (x, y) in direction (dx, dy) that ignores this body (and what it holds): distance and what it hit, or null. */
+  private probe(x: number, y: number, dx: number, dy: number, len: number): { d: number; part: Part | undefined } | null {
+    const hit = this.game.physics.world.castRay(new RAPIER.Ray({ x, y }, { x: dx, y: dy }), len, true, undefined, undefined, undefined, undefined, (o) => {
+      const p = this.game.physics.partOf(o);
+      return !p || (p.entity !== this && !this.grips.some((g) => g.item === p.entity));
+    });
+    return hit ? { d: hit.timeOfImpact, part: this.game.physics.partOf(hit.collider) } : null;
+  }
+
+  /** The trunk's center of mass. */
+  private trunkCenter(): V2 {
+    let m = 0;
+    let x = 0;
+    let y = 0;
+    for (const k of ['upperTorso', 'midTorso', 'lowerTorso'] as LimbKey[]) {
+      const l = this.L(k);
+      if (l.gone || !l.attached) continue;
+      m += l.part.mass;
+      x += l.part.x * l.part.mass;
+      y += l.part.y * l.part.mass;
+    }
+    return m ? { x: x / m, y: y / m } : this.L('upperTorso').part;
+  }
+
+  /**
+   * Something low in the way (a box, a step, a brick; never a person or an animal,
+   * standing or lying): climbs up onto it if there's room to stand on top, or over
+   * it if it's narrow with floor on the far side. Returns whether they set off.
+   */
+  private climbUp(): boolean {
+    if (this.climbCool > 0 || this.blocker?.entity.canWalk || this.tethered() || !this.grounded(true)) return false;
+    const f = this.f;
+    const c = this.trunkCenter();
+    const floor = this.probe(c.x, c.y, 0, -1, 2);
+    if (!floor || floor.part?.entity.canWalk) return false;
+    const groundY = c.y - floor.d;
+    // the near side of it, just off the floor
+    const face = this.probe(c.x, groundY + 0.06, f, 0, 0.9);
+    if (!face || face.part?.entity.canWalk) return false;
+    // its top
+    const sky = groundY + CLIMB.up + 0.25;
+    const top = this.probe(c.x + f * (face.d + 0.1), sky, 0, -1, CLIMB.up + 0.25);
+    if (!top || top.part?.entity.canWalk) return false;
+    const topY = sky - top.d;
+    const dh = topY - groundY;
+    if (dh < 0.1 || dh > CLIMB.up) return false;
+    // nothing overhead on the way up
+    const head = this.ok('head') ? this.L('head').part : this.L('upperTorso').part;
+    if (this.probe(head.x, head.y, 0, 1, dh + 0.15)) return false;
+    // how wide the top is
+    let width = 0;
+    while (width < 0.8) {
+      const t = this.probe(c.x + f * (face.d + width + 0.04), topY + 0.2, 0, -1, 0.3);
+      if (!t || Math.abs(topY + 0.2 - t.d - topY) > 0.08) break;
+      width += 0.05;
+    }
+    if (width >= 0.3) {
+      // onto it: room to stand up there (nothing on top, no wall)
+      const x1 = face.d + Math.min(0.3, width - 0.12);
+      for (const h of [0.25, 0.8, 1.4]) if (this.probe(c.x, topY + h, f, 0, x1 + 0.2)) return false;
+      // (to full standing height up there, however crouched they set off: lower
+      // and the legs would straighten into the top)
+      this.climbing = { kind: 'up', t: 0, dur: 0.45 + dh * 0.95, x0: c.x, y0: c.y, x1: c.x + f * x1, y1: topY + TRUNK_Y + 0.03, peak: 0 };
+    } else {
+      // over it: something narrow, with floor at the same height on the far side and room to land
+      if (dh > 0.6) return false;
+      const x1 = face.d + width + 0.32;
+      const far = this.probe(c.x + f * x1, topY + 0.3, 0, -1, dh + 0.6);
+      if (!far || Math.abs(topY + 0.3 - far.d - groundY) > 0.12 || far.part?.entity.canWalk) return false;
+      for (const h of [dh + 0.25, dh + 0.8, dh + 1.4]) if (this.probe(c.x, groundY + h, f, 0, x1 + 0.2)) return false;
+      this.climbing = { kind: 'over', t: 0, dur: 0.6 + dh * 1.1, x0: c.x, y0: c.y, x1: c.x + f * x1, y1: c.y, peak: dh + 0.08 };
+    }
+    this.startClimb();
+    return true;
+  }
+
+  /**
+   * At a drop of up to CLIMB.down (the edge of a box they're on): lets
+   * themselves down onto the floor below, if there's room. Returns whether they set off.
+   */
+  private climbDown(): boolean {
+    if (this.climbCool > 0 || this.tethered()) return false;
+    const f = this.f;
+    const c = this.trunkCenter();
+    const groundY = this.groundUnder();
+    if (groundY === null) return false;
+    // where the edge is (already behind the trunk: from here)
+    let edge = -1;
+    for (let d = 0; d <= 0.6; d += 0.04) {
+      const h = this.probe(c.x + f * d, groundY + 0.2, 0, -1, 0.4);
+      if (!h) {
+        edge = d;
+        break;
+      }
+    }
+    if (edge < 0) return false;
+    const x1 = edge + 0.42;
+    const land = this.probe(c.x + f * x1, groundY + 0.2, 0, -1, CLIMB.down + 0.4);
+    if (!land || land.part?.entity.canWalk) return false;
+    const drop = land.d - 0.2;
+    if (drop < 0.25 || drop > CLIMB.down) return false;
+    // room down there to stand
+    for (const h of [0.25, 0.8, 1.4]) if (this.probe(c.x + f * edge, groundY - drop + h, f, 0, x1 - edge + 0.2)) return false;
+    // (standing tall down there: crouched, the legs would spring them back up off the floor)
+    this.climbing = { kind: 'down', t: 0, dur: 0.4 + drop * 0.45, x0: c.x, y0: c.y, x1: c.x + f * x1, y1: groundY - drop + TRUNK_Y + 0.02, peak: 0.04 };
+    this.startClimb();
+    return true;
+  }
+
+  private startClimb(): void {
+    this.speed = 0;
+    this.climbCool = 0.6;
+    this.updateMotors(true);
+    for (const l of this.order) if (!l.gone && !l.part.frozen) l.part.body.wakeUp();
+  }
+
+  /** Where the climb carries the trunk at progress s (0..1). */
+  private climbPath(k: Climb, s: number): V2 {
+    let along: number;
+    let rise: number;
+    if (k.kind === 'up') {
+      // up first, then over the top (the knees clear the edge before moving in)
+      along = smoothstep(0.45, 1, s);
+      rise = (k.y1 - k.y0) * smoothstep(0, 0.55, s);
+    } else if (k.kind === 'down') {
+      // out over the edge, then down
+      along = smoothstep(0, 0.55, s);
+      rise = (k.y1 - k.y0) * smoothstep(0.35, 1, s) + k.peak * Math.sin(Math.PI * clamp(s / 0.5, 0, 1));
+    } else {
+      along = smoothstep(0.2, 0.85, s);
+      rise = k.peak * Math.sin(Math.PI * smoothstep(0, 1, s));
+    }
+    return { x: k.x0 + (k.x1 - k.x0) * along, y: k.y0 + rise };
+  }
+
+  /**
+   * The pose for this moment of the climb: legs drawn up until the feet are over
+   * where they're going, the arms reaching out once the body has risen (swung
+   * out at once they'd shove the box away); going down, knees soft for the landing.
+   */
+  private climbPose(): ClimbPose {
+    const k = this.climbing!;
+    const s = k.t / k.dur;
+    if (k.kind === 'down') return s < 0.4 ? 'tuck' : s < 0.75 ? 'drop' : 'stand';
+    const tucked = k.kind === 'up' ? s < 0.82 : s > 0.08 && s < 0.7;
+    return !tucked ? 'stand' : s > 0.3 ? 'reach' : 'tuck';
+  }
+
+  /**
+   * Carries the body along the climb's path (the arms and legs doing the work
+   * are a pose: the whole body is moved, held up against gravity and kept
+   * upright), then sets them back down to walk on.
+   */
+  private climb(dt: number): void {
+    const k = this.climbing!;
+    this.speed = 0;
+    const was = this.climbPose();
+    k.t += dt;
+    const s = Math.min(1, k.t / k.dur);
+    const at = this.climbPath(k, s);
+    const next = this.climbPath(k, Math.min(1, (k.t + dt) / k.dur));
+    const c = this.trunkCenter();
+    // stuck (something in the way, or pulled back): give up and let them drop
+    if (Math.hypot(at.x - c.x, at.y - c.y) > 0.35 || k.t > k.dur + 0.6) {
+      this.endClimb();
+      return;
+    }
+    const vx = (next.x - at.x) / dt + (at.x - c.x) * 8;
+    const vy = (next.y - at.y) / dt + (at.y - c.y) * 8;
+    // kept upright: the whole body turned about its center as well as carried
+    // along (every part is driven to the same velocity, which would hold onto
+    // any lean it picked up, as the legs swing up at the start)
+    const live = this.order.filter((l) => !l.gone && l.attached && !l.part.frozen);
+    let m = 0;
+    let mx = 0;
+    let my = 0;
+    for (const l of live) {
+      m += l.part.mass;
+      mx += l.part.x * l.part.mass;
+      my += l.part.y * l.part.mass;
+    }
+    mx /= m;
+    my /= m;
+    const w = clamp(-wrapAngle(this.L('upperTorso').part.body.rotation()) * 8, -4, 4);
+    for (const l of live) {
+      const p = l.part;
+      const v = p.body.linvel();
+      const ax = clamp((vx - w * (p.y - my) - v.x) * 14, -30, 30);
+      const ay = clamp((vy + w * (p.x - mx) - v.y) * 14, -30, 30) - GRAVITY;
+      p.body.applyImpulse({ x: p.mass * ax * dt, y: p.mass * ay * dt }, true);
+    }
+    if (this.climbPose() !== was) this.updateMotors(true);
+    if (k.t >= k.dur) this.endClimb();
+  }
+
+  private endClimb(): void {
+    this.climbing = null;
+    this.landT = 0;
+    this.climbCool = 0.4;
+    this.updateMotors(true);
   }
 
   /** Horizontal speed of the torso, + forward. */
@@ -1017,7 +1295,7 @@ export class Human extends Entity implements Holder {
     // each leg carries the body one sweep per half stride
     const sweep = 2 * HIP_Y * Math.sin(GAIT.swing + (GAIT.runSwing - GAIT.swing) * run);
     this.stride = (this.stride + 2 * Math.PI * Math.max(0.8, this.pace / (2 * sweep)) * dt) % (2 * Math.PI);
-    if (!grounded || this.state !== 'stand') return;
+    if (!grounded || this.state !== 'stand' || this.climbing) return;
     // speed up toward the wanted speed (or slow to a stop), gently while the legs
     // are still getting into their stride: a body shoved ahead of its feet falls on its face
     const up = (GAIT.accel + (GAIT.runAccel - GAIT.accel) * run) * (0.3 + 0.7 * this.gaitAmt);
@@ -1322,8 +1600,9 @@ export class Human extends Entity implements Holder {
     const l = this.limbOf(info.part);
     if (!l || l.gone) return;
     const mEff = info.part.mass * (l.spec.cy > 24 ? 2.6 : 2.2);
-    // energy from this limb's own motion (falling onto something)...
-    const Eself = 0.5 * Math.min(mEff, info.otherMass) * info.selfSpeed * info.selfSpeed;
+    // energy from this limb's own motion (falling onto something; not their own
+    // feet set down climbing)...
+    const Eself = this.climbing ? 0 : 0.5 * Math.min(mEff, info.otherMass) * info.selfSpeed * info.selfSpeed;
     // ...plus energy delivered by the other object, which the rest of the body
     // backs up (a crate dropped on a head crushes it against the body)
     const backing = l.attached ? Math.max(mEff, this.totalMass() * 0.8) : mEff;
@@ -1992,7 +2271,12 @@ export class Human extends Entity implements Holder {
   /** Short status line (shown in tooltips/tests). */
   status(): string {
     const drugs = (Object.keys(this.drugs) as (keyof typeof this.drugs)[]).filter((k) => this.drugs[k] > 0).map((k) => ` · ${k}`).join('');
-    return `${this.alive ? (this.consciousness > 0.3 ? 'conscious' : 'unconscious') : 'dead'} · blood ${this.blood.toFixed(0)}%${drugs} · ${this.state}`;
+    return `${this.alive ? (this.consciousness > 0.3 ? 'conscious' : 'unconscious') : 'dead'} · blood ${this.blood.toFixed(0)}%${drugs} · ${this.state}${this.climbing ? ' · climbing' : ''}`;
+  }
+
+  /** Which way they're climbing right now (null: they aren't). */
+  get climbKind(): Climb['kind'] | null {
+    return this.climbing?.kind ?? null;
   }
 
   protected serializeExtra(): Record<string, unknown> {

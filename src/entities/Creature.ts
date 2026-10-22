@@ -283,9 +283,13 @@ export class Creature extends Entity {
   private fleeFrom = 0;
   /** Direction it last walked into something, to try the other way next. */
   private blocked = 0;
+  /** How long it has been trying to walk without getting anywhere, going by its smoothed speed. */
   private stuckT = 0;
+  private vxSmooth = 0;
   /** Running scared with something in the way. */
   private cornered = false;
+  /** Waiting to leap again at something it just came down from or bounced off. */
+  private leapWait = false;
   private turnT = 0;
   /** How long it has been unable to turn round to set off. */
   private turnWait = 0;
@@ -624,8 +628,11 @@ export class Creature extends Entity {
         const over = 1 + Math.abs(err);
         this.right(RIGHT.kp * str * r, RIGHT.kd * str, RIGHT.amax * r * over, 0, false, dt);
         this.lift(str * r * (Math.abs(err) > 1.4 ? 1.3 : 1), dt);
+      } else if (this.jumpT > 0 || (this.landT < 0.4 && Math.abs(err) > 0.25)) {
+        // in a leap, and coming down from one (front paws first, it would pitch
+        // over onto its nose)
+        this.right(RIGHT.kp, RIGHT.kd, RIGHT.amax, 0, false, dt);
       } else if (paws >= 2 || (paws && this.gaitAmt > 0)) this.right(STAND.kp * str, STAND.kd * str, STAND.amax, STAND.dead, true, dt);
-      else if (this.jumpT > 0) this.right(RIGHT.kp, RIGHT.kd, RIGHT.amax, 0, false, dt);
       else if (this.species.airRight && !paws) this.right(RIGHT.kp, RIGHT.kd, RIGHT.amax * 1.5, 0, false, dt);
     }
 
@@ -718,6 +725,7 @@ export class Creature extends Entity {
     const look = this.lookT <= 0;
     if (look) {
       this.lookT = 0.1;
+      this.leapWait = false;
       const fire = this.game.fire.near(c.x, c.y, 2.5, this);
       if (fire) this.scare(fire.x, 2.5);
       // a fox won't let anyone near it
@@ -762,6 +770,10 @@ export class Creature extends Entity {
       // up onto it
     } else if (drop.depth > 0.15 && drop.depth < 2.5 && this.hopDown(drop.edge)) {
       // down off a ledge
+    } else if (speed && this.species.jump && this.jumpCool > 0 && (look ? this.blockedAhead() && !this.blocker?.entity.upright : this.leapWait)) {
+      // just landed, or bounced off it: a moment before trying again
+      this.leapWait = true;
+      speed = 0;
     } else if (speed && drop.depth < 2.5 && (look ? this.blockedAhead() && this.blockerPace() > 0.3 : this.pacing > 0)) {
       // someone ahead going the same way: fall in behind them at their pace (until
       // it next looks, too)
@@ -780,9 +792,13 @@ export class Creature extends Entity {
       this.cornered = false;
       this.pacing = 0;
     }
-    // walked into something: give up and try elsewhere later
-    const vx = this.trunkVx();
-    this.stuckT = speed && vx < Math.abs(speed) * 0.25 ? this.stuckT + dt : 0;
+    // walked into something: give up and try elsewhere later (smoothed: the chest
+    // bobs about while the legs paddle on the spot)
+    this.vxSmooth += (this.trunkVx() - this.vxSmooth) * Math.min(1, dt / 0.25);
+    this.stuckT = speed && this.vxSmooth < Math.abs(speed) * 0.25 ? this.stuckT + dt : 0;
+    // caught on something too low for it to have seen: try leaping it (from right
+    // up against it), or at least a hop, first
+    if (this.stuckT > 0.8 && this.jumpT <= 0 && !this.leap(true)) this.scramble();
     if (this.stuckT > 2) {
       this.stuckT = 0;
       this.blocked = Math.sign(speed);
@@ -813,6 +829,10 @@ export class Creature extends Entity {
 
   get canWalk(): boolean {
     return true;
+  }
+
+  get upright(): boolean {
+    return this.alive && this.state !== 'down';
   }
 
   /** Walking or running about. */
@@ -947,10 +967,11 @@ export class Creature extends Entity {
   }
 
   /**
-   * Something low in the way that it can get up onto (a box, a step: not a person
-   * or an animal), with room on top: it leaps. Returns whether it did.
+   * Something low in the way that it can get up onto (a box, a step, someone lying
+   * down: not anyone on their feet), with room on top: it leaps. Returns whether it
+   * did. `close`: already right up against it (it springs from where it stands).
    */
-  private leap(): boolean {
+  private leap(close = false): boolean {
     const J = this.species.jump;
     if (!J || this.jumpCool > 0 || this.pawsDown() < 2 || this.tethered()) return false;
     const c = this.L('chest').part;
@@ -966,7 +987,8 @@ export class Creature extends Entity {
     const face = world.castRay(ahead, tall * 2.5 + 0.4, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
     if (!face) return false;
     const what = this.game.physics.partOf(face.collider);
-    if (what && (what.entity instanceof Human || what.entity instanceof Creature)) return false;
+    // over or onto someone lying on the floor, never onto anyone on their feet
+    if (what?.entity.upright) return false;
     // how high its top is
     const fx = c.x + this.f * (face.timeOfImpact + 0.12);
     const top = world.castRay(new RAPIER.Ray({ x: fx, y: groundY + J + tall + 0.3 }, { x: 0, y: -1 }), J + tall + 0.3, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
@@ -995,7 +1017,7 @@ export class Creature extends Entity {
     const g = -GRAVITY;
     const onto = width >= front + back + 0.25;
     const faceD = face.timeOfImpact;
-    const x1 = faceD - front - 0.08;
+    const x1 = close ? Math.max(0.15, faceD - front - 0.08) : faceD - front - 0.08;
     const x2 = onto ? faceD + back + 0.08 : faceD + width + back + 0.12;
     if (x1 < 0.05) return false;
     if (!onto) {
@@ -1088,6 +1110,30 @@ export class Creature extends Entity {
     }
     this.jumpT = 1e-3;
     this.jumpCool = 0.8;
+    this.updateMotors(true);
+    return true;
+  }
+
+  /**
+   * Walking on the spot, its paws caught on something too low for it to have
+   * seen (a shoe sticking up, a lip): a little hop forward over it.
+   */
+  private scramble(): boolean {
+    const J = this.species.jump;
+    if (!J || this.jumpCool > 0 || this.pawsDown() < 2 || this.tethered() || this.blockedAhead()) return false;
+    const c = this.L('chest').part;
+    const rise = Math.min(J, 0.25);
+    const roof = this.game.physics.world.castRay(new RAPIER.Ray({ x: c.x, y: c.y }, { x: 0, y: 1 }), rise + 0.2, true, undefined, undefined, undefined, undefined, (o) => this.game.physics.partOf(o)?.entity !== this);
+    if (roof) return false;
+    const vy = Math.sqrt(2 * -GRAVITY * rise);
+    const vx = 1.3 * this.f;
+    for (const l of this.order) {
+      if (l.gone || !l.attached || l.part.frozen) continue;
+      const v = l.part.body.linvel();
+      l.part.body.applyImpulse({ x: l.part.mass * (vx - v.x), y: l.part.mass * (vy - v.y) }, true);
+    }
+    this.jumpT = 1e-3;
+    this.jumpCool = 1.2;
     this.updateMotors(true);
     return true;
   }

@@ -23,7 +23,88 @@ interface LoopVoice {
   idle: number;
 }
 
-const MAX_VOICES = 40;
+/** Sounds playing at once. */
+export const MAX_VOICES = 40;
+/** Of any one sound at once (a burst of fire, a heap landing). */
+const PER_KEY = 6;
+
+const peaks = new WeakMap<AudioBuffer, number>();
+/** A recording's peak level (linear). */
+export function bufferPeak(buf: AudioBuffer): number {
+  let p = peaks.get(buf);
+  if (p === undefined) {
+    p = 0;
+    for (let c = 0; c < buf.numberOfChannels; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < d.length; i++) if (Math.abs(d[i]) > p) p = Math.abs(d[i]);
+    }
+    peaks.set(buf, p);
+  }
+  return p;
+}
+
+/**
+ * Who gets heard when many sounds want to play at once. One more of a sound than
+ * PER_KEY cuts the oldest of it short; with every voice taken, the quietest of
+ * what's still ringing (going by how much of it is left) makes way for a louder
+ * newcomer, or the newcomer is refused. (Long tails would otherwise hold every
+ * voice in a firefight and nothing new would get through.)
+ */
+export class Voices {
+  private live: { id: number; key: string; start: number; end: number; level: number }[] = [];
+  private next = 1;
+
+  /**
+   * A sound `key` at peak `level` starting at `t` and lasting `dur` s: its voice id
+   * and the voices to cut short for it, or null if it doesn't get one.
+   */
+  admit(key: string, t: number, dur: number, level: number): { id: number; cut: number[] } | null {
+    this.live = this.live.filter((v) => v.end > t);
+    const cut: number[] = [];
+    const same = this.live.filter((v) => v.key === key);
+    if (same.length >= PER_KEY) cut.push(same.reduce((a, b) => (a.start <= b.start ? a : b)).id);
+    if (this.live.length - cut.length >= MAX_VOICES) {
+      let quietest: number | null = null;
+      let least = Infinity;
+      for (const v of this.live) {
+        if (cut.includes(v.id)) continue;
+        const now = (v.level * (v.end - t)) / (v.end - v.start);
+        if (now < least) {
+          least = now;
+          quietest = v.id;
+        }
+      }
+      if (quietest === null || least >= level) return null;
+      cut.push(quietest);
+    }
+    if (cut.length) this.live = this.live.filter((v) => !cut.includes(v.id));
+    const id = this.next++;
+    this.live.push({ id, key, start: t, end: t + dur, level });
+    return { id, cut };
+  }
+
+  get count(): number {
+    return this.live.length;
+  }
+}
+
+/** One sound as it would be started (see Sound.tap). */
+export interface TappedSound {
+  key: string;
+  buf: AudioBuffer;
+  /** Seconds from now. */
+  delay: number;
+  gain: number;
+  pan: number;
+  rate: number;
+}
+
+/** Debug: takes the sounds the game makes instead of playing them (the mix check renders them offline). */
+export interface SoundTap {
+  play(s: TappedSound): void;
+  /** A held loop asked for again (see Sound.hold). */
+  hold(owner: object, key: string, buf: () => AudioBuffer | null, gain: number, pan: number, rate: number): void;
+}
 
 /**
  * Sample-based sound effects. Recordings (CC0, see public/sfx/CREDITS.md) are
@@ -39,17 +120,24 @@ export class Sound {
   private lastVariant = new Map<string, number>();
   private last = new Map<string, number[]>();
   private loops = new Map<object, Map<string, LoopVoice>>();
-  private voices = 0;
+  private voices = new Voices();
+  private playing = new Map<number, { src: AudioBufferSourceNode; gain: GainNode }>();
   volume = 0.7;
   muted = false;
   /** Screen-space pan source: returns -1..1 for a world x (beyond = off-screen). */
   panFor: (x: number) => number = () => 0;
   /** Simulation speed (sounds pitch down in slow motion). */
   rate = 1;
+  /** Debug: while set, sounds go here instead of being played. */
+  tap: SoundTap | null = null;
+  /** Milliseconds, for the per-kind rate limits (the mix check runs it on simulated time). */
+  clock: () => number = () => performance.now();
+  private loading: Promise<void> | null = null;
+  private manifestLoaded: Promise<void>;
 
   constructor() {
     const base = import.meta.env.BASE_URL;
-    fetch(`${base}sfx/manifest.json`)
+    this.manifestLoaded = fetch(`${base}sfx/manifest.json`)
       .then((r) => r.json())
       .then((m: Record<string, unknown>) => {
         for (const [k, v] of Object.entries(m)) if (Array.isArray(v) && k !== 'loops') this.manifest[k] = v as string[];
@@ -71,21 +159,46 @@ export class Sound {
     } catch {
       return;
     }
-    const ctx = this.ctx;
+    this.master = this.bus(this.ctx, this.muted ? 0 : this.volume);
+    if (Object.keys(this.manifest).length) void this.loadAll();
+  }
+
+  /**
+   * The master bus into `ctx`'s output: volume, a compressor that evens out the
+   * mix, then a limiter so a pile-up of loud sounds can't clip the output (see
+   * `npm run mixcheck`). Returns its input.
+   */
+  bus(ctx: BaseAudioContext, volume: number): GainNode {
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -10;
     comp.knee.value = 6;
     comp.ratio.value = 4;
     comp.attack.value = 0.003;
     comp.release.value = 0.25;
-    this.master = ctx.createGain();
-    this.master.gain.value = this.muted ? 0 : this.volume;
-    this.master.connect(comp);
-    comp.connect(ctx.destination);
-    if (Object.keys(this.manifest).length) void this.loadAll();
+    const limit = ctx.createDynamicsCompressor();
+    limit.threshold.value = -4;
+    limit.knee.value = 0;
+    limit.ratio.value = 20;
+    limit.attack.value = 0.001;
+    limit.release.value = 0.1;
+    const master = ctx.createGain();
+    master.gain.value = volume;
+    master.connect(comp).connect(limit).connect(ctx.destination);
+    return master;
   }
 
-  private async loadAll(): Promise<void> {
+  /** Debug: resolves once every sound is loaded (starting the audio if it hasn't been). */
+  async whenLoaded(): Promise<void> {
+    this.unlock();
+    await this.manifestLoaded;
+    if (this.ctx) await (this.loading ?? this.loadAll());
+  }
+
+  private loadAll(): Promise<void> {
+    return (this.loading = this.loadFiles());
+  }
+
+  private async loadFiles(): Promise<void> {
     const ctx = this.ctx!;
     const base = import.meta.env.BASE_URL;
     const files = [...new Set(Object.values(this.manifest).flat())].filter((f) => !this.buffers.has(f));
@@ -115,9 +228,19 @@ export class Sound {
     if (this.master) this.master.gain.value = m ? 0 : this.volume;
   }
 
+  /** Every sound key in the library. */
+  keys(): string[] {
+    return Object.keys(this.manifest);
+  }
+
+  /** Debug: forgets when each kind last played (around a switch of `clock`). */
+  resetLimits(): void {
+    this.last.clear();
+  }
+
   /** Limits how many instances of a sound kind can start within a window. */
   private allow(kind: string, max: number, windowMs = 60): boolean {
-    const now = performance.now();
+    const now = this.clock();
     let arr = this.last.get(kind);
     if (!arr) this.last.set(kind, (arr = []));
     while (arr.length && now - arr[0] > windowMs) arr.shift();
@@ -151,28 +274,40 @@ export class Sound {
   /** Plays one variant of a sound key. */
   play(key: string, o: PlayOpts = {}): void {
     const ctx = this.ctx;
-    if (!ctx || !this.master || this.muted || ctx.state !== 'running') return;
-    // when busy, only loud (important) sounds get a voice
-    if (this.voices >= MAX_VOICES && (o.gain ?? 1) < 0.8) return;
-    if (this.voices >= MAX_VOICES * 1.5) return;
+    if (!this.tap && (!ctx || !this.master || this.muted || ctx.state !== 'running')) return;
     const buf = this.pick(key);
     if (!buf) return;
     const { pan, att } = this.spatial(o.x);
     const gain = (o.gain ?? 1) * att * (0.9 + Math.random() * 0.2);
     if (gain < 0.01) return;
+    const vary = o.vary ?? 0.06;
+    const rate = (o.rate ?? 1) * (1 + (Math.random() * 2 - 1) * vary) * this.timeRate();
+    if (this.tap) {
+      this.tap.play({ key, buf, delay: o.delay ?? 0, gain, pan, rate });
+      return;
+    }
+    if (!ctx || !this.master) return;
     const t = ctx.currentTime + (o.delay ?? 0);
+    const v = this.voices.admit(key, t, buf.duration / rate, gain * bufferPeak(buf));
+    if (!v) return;
+    for (const id of v.cut) {
+      const c = this.playing.get(id);
+      if (!c) continue;
+      this.playing.delete(id);
+      c.gain.gain.setTargetAtTime(0, t, 0.015);
+      c.src.stop(t + 0.08);
+    }
     const src = ctx.createBufferSource();
     src.buffer = buf;
-    const vary = o.vary ?? 0.06;
-    src.playbackRate.value = (o.rate ?? 1) * (1 + (Math.random() * 2 - 1) * vary) * this.timeRate();
+    src.playbackRate.value = rate;
     const g = ctx.createGain();
     g.gain.value = gain;
     const p = ctx.createStereoPanner();
     p.pan.value = pan;
     src.connect(g).connect(p).connect(this.master);
-    this.voices++;
+    this.playing.set(v.id, { src, gain: g });
     src.onended = () => {
-      this.voices--;
+      this.playing.delete(v.id);
       src.disconnect();
       p.disconnect();
     };
@@ -185,11 +320,15 @@ export class Sound {
    */
   hold(owner: object, key: string, gain: number, x?: number, rate = 1): void {
     const ctx = this.ctx;
+    const { pan, att } = this.spatial(x);
+    if (this.tap) {
+      this.tap.hold(owner, key, () => this.pick(key), gain * att, pan, rate * this.timeRate());
+      return;
+    }
     if (!ctx || !this.master) return;
     let m = this.loops.get(owner);
     if (!m) this.loops.set(owner, (m = new Map()));
     let v = m.get(key);
-    const { pan, att } = this.spatial(x);
     if (!v) {
       const buf = this.pick(key);
       if (!buf) return;
@@ -247,12 +386,13 @@ export class Sound {
         this.play(['impact/wood_light', 'impact/wood_medium', 'impact/wood_heavy'][tier], { gain, x });
         break;
       case 'metal':
-        this.play(['impact/metal_light', 'impact/metal_medium', 'impact/metal_heavy'][tier], { gain: gain * 0.85, x });
+        this.play(['impact/metal_light', 'impact/metal_medium', 'impact/metal_heavy'][tier], { gain: gain * (tier === 2 ? 0.7 : 0.85), x });
         if (tier === 2) this.play('impact/plate_heavy', { gain: gain * 0.4, x });
         break;
       case 'flesh':
-        this.play(['impact/soft', 'impact/punch', 'impact/body_fall'][tier], { gain: gain * 1.1, x, rate: 0.95 });
-        if (tier === 2) this.play('impact/punch_heavy', { gain: gain * 0.5, x });
+        // (a body hitting the floor hard is a thud, not as loud as a gunshot)
+        this.play(['impact/soft', 'impact/punch', 'impact/body_fall'][tier], { gain: gain * (tier === 2 ? 0.7 : 1.1), x, rate: 0.95 });
+        if (tier === 2) this.play('impact/punch_heavy', { gain: gain * 0.3, x });
         break;
       case 'stone':
         this.play('impact/stone', { gain, x, rate: tier === 2 ? 0.85 : 1 });
@@ -291,7 +431,7 @@ export class Sound {
 
   casing(x?: number, big = false): void {
     if (!this.allow('casing', 3, 60)) return;
-    this.play('gun/casing', { gain: big ? 0.3 : 0.22, x, rate: big ? 0.8 : 1, vary: 0.12 });
+    this.play('gun/casing', { gain: big ? 0.5 : 0.45, x, rate: big ? 0.8 : 1, vary: 0.12 });
   }
 
   explosion(size: number, x?: number): void {
@@ -337,25 +477,25 @@ export class Sound {
   squish(strength: number, x?: number): void {
     if (!this.allow('squish', 3, 80)) return;
     const s = Math.min(1, strength);
-    this.play(s > 0.75 ? 'gore/splat' : 'gore/squish', { gain: 0.35 + s * 0.6, x });
+    this.play(s > 0.75 ? 'gore/splat' : 'gore/squish', { gain: 0.25 + s * 0.45, x });
   }
 
   gib(x?: number): void {
     if (!this.allow('gib', 2, 80)) return;
-    this.play('gore/gib', { gain: 0.8, x });
-    this.play('gore/splat', { gain: 0.6, x, delay: 0.04 });
+    this.play('gore/gib', { gain: 0.55, x });
+    this.play('gore/splat', { gain: 0.45, x, delay: 0.04 });
   }
 
   /** Bone fracture. */
   bone(x?: number): void {
     if (!this.allow('bone', 2, 80)) return;
-    this.play(Math.random() < 0.5 ? 'gore/bone_break' : 'gore/bone_crack', { gain: 0.8, x });
+    this.play(Math.random() < 0.5 ? 'gore/bone_break' : 'gore/bone_crack', { gain: 0.6, x });
   }
 
   /** A limb torn off. */
   tear(x?: number): void {
     if (!this.allow('tear', 2, 80)) return;
-    this.play('gore/tear', { gain: 0.8, x });
+    this.play('gore/tear', { gain: 0.6, x });
   }
 
   /** A rope or connection snapping. */
@@ -366,12 +506,12 @@ export class Sound {
 
   slash(x?: number): void {
     if (!this.allow('slash', 3, 60)) return;
-    this.play('gore/slice', { gain: 0.7, x });
+    this.play('gore/slice', { gain: 0.55, x });
   }
 
   stab(x?: number): void {
     if (!this.allow('stab', 3, 60)) return;
-    this.play('gore/stab', { gain: 0.8, x });
+    this.play('gore/stab', { gain: 0.6, x });
   }
 
   /** A fast swing through the air. */

@@ -78,6 +78,10 @@ export abstract class Entity {
   get canWalk(): boolean {
     return false;
   }
+  /** On its feet (a walker standing or getting up), as opposed to lying about like a thing. */
+  get upright(): boolean {
+    return false;
+  }
   postStep(_dt: number): void {}
   frame(_dt: number): void {}
   activate(): void {}

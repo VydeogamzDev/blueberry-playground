@@ -1081,21 +1081,22 @@ export function makeSelfTest(game: Game, controls: Controls) {
       loadFromString(game, saveToString(game));
       const back = game.entities.find((e) => e.def.id === 'human') as Human | undefined;
       if (!back?.wander) return 'wandering was lost on save/load';
-      // a crate in the way: stop short of it
+      // crates stacked too high to climb in the way: stop short of them
       kit.reset();
       const w = human(0);
       const crate = kit.spawn('crate', 3, 0.45);
+      kit.spawn('crate', 3, 1.35);
       kit.advance(1);
       w.goTo(6);
       kit.advance(6);
-      if (w.state !== 'stand') return `walked into a crate and fell (${w.status()})`;
-      if (torso(w).x > crate.parts[0].x - 0.4) return `walked into the crate (x ${torso(w).x.toFixed(2)})`;
-      if (Math.abs(crate.parts[0].x - 3) > 0.1) return 'shoved the crate along';
-      // the end of a raised beam: stop at the edge
+      if (w.state !== 'stand') return `walked into a stack of crates and fell (${w.status()})`;
+      if (torso(w).x > crate.parts[0].x - 0.4) return `walked into the crates (x ${torso(w).x.toFixed(2)})`;
+      if (Math.abs(crate.parts[0].x - 3) > 0.1) return 'shoved the crates along';
+      // the end of a beam raised higher than they'll climb down from: stop at the edge
       kit.reset();
-      const beam = kit.spawn('beam', 0, 1.2);
+      const beam = kit.spawn('beam', 0, 2.4);
       beam.setFrozen(true);
-      const top = 1.2 + (beam.parts[0].h * PX) / 2;
+      const top = 2.4 + (beam.parts[0].h * PX) / 2;
       const p = kit.spawn('human', -0.5, top + 0.9) as Human;
       kit.advance(1.5);
       p.goTo(4);
@@ -1184,6 +1185,97 @@ export function makeSelfTest(game: Game, controls: Controls) {
       kit.advance(5);
       if (chest(d).x > 2) return 'dog got past a crate taller than it can jump';
       if (d.state !== 'stand') return `dog fell at a crate it couldn't jump (${d.status()})`;
+      return true;
+    }],
+    ['extra: people climb up onto boxes and down the far side, and stop at people', () => {
+      // (each in a lane of its own, all at once; started a little apart, as the
+      // walk reaches the box at a different point in the stride)
+      const torso = (h: Human) => h.limbs.get('upperTorso')!.part;
+      type Run = { what: string; at: number; climbs: boolean };
+      const runs: Run[] = [
+        { what: 'crate', at: 1.8, climbs: true }, { what: 'crate', at: 2.2, climbs: true }, { what: 'crate', at: 2.6, climbs: true },
+        { what: 'metal-box', at: 2.2, climbs: true }, { what: 'brick', at: 2.2, climbs: true },
+        { what: 'person', at: 2.5, climbs: false }, { what: 'body', at: 2.5, climbs: false },
+      ];
+      for (const shift of [0, 0.21]) {
+        kit.reset();
+        const lanes = runs.map((_, i) => -60 + i * 16 + shift);
+        const things = runs.map((r, i) => {
+          const x = lanes[i] + r.at;
+          if (r.what === 'person') return kit.spawn('human', x, 0.9);
+          if (r.what === 'body') {
+            const b = kit.spawn('human', x, 0.3, { angle: Math.PI / 2 }) as Human;
+            b.limp = true;
+            return b;
+          }
+          return kit.spawn(r.what, x, r.what === 'brick' ? 0.1 : r.what === 'crate' ? 0.45 : 0.5);
+        });
+        const people = lanes.map((x) => human(x));
+        kit.advance(1.5);
+        const x0 = things.map((t) => t.parts[0].x);
+        const hp0 = people.map((h) => h.parts.reduce((a, p) => a + p.hp, 0));
+        people.forEach((h, i) => h.goTo(lanes[i] + 5));
+        const seen = people.map(() => new Set<string>());
+        const falls = people.map(() => 0);
+        const was = people.map((h) => h.state);
+        game.advance(10, () => people.forEach((h, i) => {
+          if (h.climbKind) seen[i].add(h.climbKind);
+          if (was[i] === 'stand' && h.state !== 'stand') falls[i]++;
+          was[i] = h.state;
+        }));
+        for (let i = 0; i < runs.length; i++) {
+          const { what, at, climbs } = runs[i];
+          const h = people[i];
+          const x = torso(h).x - lanes[i];
+          const where = `a ${what} ${at} m off (start +${shift})`;
+          if (falls[i] || h.state !== 'stand') return `fell at ${where}: ${h.status()}, ${[...seen[i]].join('/')}`;
+          const hurt = hp0[i] - h.parts.reduce((a, p) => a + p.hp, 0);
+          if (hurt > 1) return `hurt themselves (${hurt.toFixed(0)} hp) climbing ${where}`;
+          if (climbs) {
+            if (!seen[i].has('up') && !seen[i].has('over')) return `never climbed ${where}`;
+            if (Math.abs(x - 5) > 0.5) return `sent past ${where} to 5 m, got to ${x.toFixed(2)} (${[...seen[i]].join('/')})`;
+            if (what !== 'brick' && !seen[i].has('down')) return `got off ${where} without climbing down`;
+            if (Math.abs(things[i].parts[0].x - x0[i]) > 0.3) return `shoved ${where} ${(things[i].parts[0].x - x0[i]).toFixed(2)} m`;
+          } else {
+            if (seen[i].size) return `climbed ${where}`;
+            if (x > at - 0.3) return `walked into ${where} (x ${x.toFixed(2)})`;
+            if (Math.abs(things[i].parts[0].x - x0[i]) > 0.15) return `shoved ${where} along`;
+          }
+        }
+      }
+      return true;
+    }],
+    ['extra: animals get over someone lying on the floor', () => {
+      const chest = (a: Creature) => a.limbs.get('chest')!.part;
+      const kinds = ['dog', 'cat', 'fox'];
+      for (const at of [1.6, 2.2, 2.8]) {
+        kit.reset();
+        const lanes = kinds.map((_, i) => -50 + i * 30);
+        const bodies = lanes.map((x) => {
+          const b = kit.spawn('human', x + at, 0.3, { angle: Math.PI / 2 }) as Human;
+          b.limp = true;
+          return b;
+        });
+        kit.advance(2);
+        const animals = kinds.map((k, i) => kit.spawn(k, lanes[i] - 0.5, 0.5) as Creature);
+        kit.advance(1);
+        const b0 = bodies.map((b) => b.limbs.get('midTorso')!.part.x);
+        animals.forEach((a, i) => a.goTo(lanes[i] + 5.5));
+        const falls = animals.map(() => 0);
+        const was = animals.map((a) => a.state);
+        game.advance(9, () => animals.forEach((a, i) => {
+          if (was[i] === 'stand' && a.state !== 'stand') falls[i]++;
+          was[i] = a.state;
+        }));
+        for (let i = 0; i < kinds.length; i++) {
+          const a = animals[i];
+          const x = chest(a).x - lanes[i];
+          if (falls[i]) return `${kinds[i]} fell getting over a body ${at} m off (${a.status()})`;
+          if (x < 4.5) return `${kinds[i]} sent past a body ${at} m off got to ${x.toFixed(2)}`;
+          const moved = bodies[i].limbs.get('midTorso')!.part.x - b0[i];
+          if (Math.abs(moved) > 0.4) return `${kinds[i]} shoved a body ${moved.toFixed(2)} m getting over it`;
+        }
+      }
       return true;
     }],
     ['extra: someone standing on or beside a lying body leaves it where it is', () => {
