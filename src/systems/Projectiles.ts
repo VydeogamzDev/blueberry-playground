@@ -3,6 +3,9 @@ import { RAPIER } from '../engine/Physics';
 import { GROUP, PX, WORLD, groups } from '../engine/constants';
 import type { Game } from '../world/Game';
 import type { Part } from '../world/Part';
+import { LineBatch } from './Connections';
+import { PK } from './Particles';
+import type { V2 } from '../engine/math';
 
 export interface BulletOpts {
   /** Kinetic energy budget used for penetration (J-ish). */
@@ -37,6 +40,27 @@ interface Bullet {
 const BULLET_GROUPS = groups(GROUP.DEBRIS, GROUP.STATIC | GROUP.DYNAMIC);
 const MAX_TRACERS = 512;
 
+export interface LaserOpts {
+  /** Burn damage to the first thing hit (less for each one it passes through). */
+  damage: number;
+  color: number;
+  ignore?: RAPIER.RigidBody | null;
+  range?: number;
+}
+
+interface Beam {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  w: number;
+  color: number;
+  /** Game time the beam disappears; -1 = this frame only. */
+  until: number;
+  life: number;
+  dash: number;
+}
+
 export class Projectiles {
   private game: Game;
   private bullets: Bullet[] = [];
@@ -44,6 +68,8 @@ export class Projectiles {
   private lineGeo = new THREE.BufferGeometry();
   private linePos = new Float32Array(MAX_TRACERS * 6);
   private lineCol = new Float32Array(MAX_TRACERS * 8);
+  private beams: Beam[] = [];
+  private beamBatch = new LineBatch(3000, 46.5);
 
   constructor(game: Game) {
     this.game = game;
@@ -55,6 +81,90 @@ export class Projectiles {
     lines.position.z = 47;
     lines.renderOrder = 30;
     game.renderer.scene.add(lines);
+    this.beamBatch.mesh.material = new THREE.MeshBasicMaterial({
+      vertexColors: true, side: THREE.DoubleSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    this.beamBatch.mesh.renderOrder = 29;
+    game.renderer.scene.add(this.beamBatch.mesh);
+  }
+
+  /**
+   * Draws a glowing beam: for `life` seconds of game time (fading), or for this
+   * frame only when life is 0. `dash` > 0 draws it dashed.
+   */
+  drawBeam(x0: number, y0: number, x1: number, y1: number, w: number, color: number, life = 0, dash = 0): void {
+    this.beams.push({ x0, y0, x1, y1, w, color, life, dash, until: life > 0 ? this.game.time + life : -1 });
+  }
+
+  /**
+   * An instant energy beam: burns what it hits, passes through soft things (losing
+   * strength) and stops at metal, stone and walls. Returns where it ended.
+   */
+  laser(x: number, y: number, dx: number, dy: number, o: LaserOpts): V2 {
+    const world = this.game.physics.world;
+    const g = this.game;
+    const l = Math.hypot(dx, dy) || 1;
+    dx /= l;
+    dy /= l;
+    let ox = x;
+    let oy = y;
+    let remaining = o.range ?? 60;
+    let dmg = o.damage;
+    let ign = o.ignore && o.ignore.isValid() ? o.ignore : undefined;
+    let end = { x: x + dx * remaining, y: y + dy * remaining };
+    for (let hits = 0; hits < 6; hits++) {
+      this.ray.origin = { x: ox, y: oy };
+      this.ray.dir = { x: dx, y: dy };
+      const hit = world.castRayAndGetNormal(this.ray, remaining, true, undefined, BULLET_GROUPS, undefined, ign);
+      if (!hit) {
+        end = { x: ox + dx * remaining, y: oy + dy * remaining };
+        break;
+      }
+      const hx = ox + dx * hit.timeOfImpact;
+      const hy = oy + dy * hit.timeOfImpact;
+      const nx = hit.normal.x;
+      const ny = hit.normal.y;
+      end = { x: hx, y: hy };
+      const part = g.physics.partOf(hit.collider);
+      g.particles.sparks(hx, hy, nx, ny, 4, 3);
+      for (let i = 0; i < 3; i++) {
+        g.particles.emit(PK.Spark, hx, hy, {
+          vx: nx * (1 + Math.random() * 2) + (Math.random() - 0.5) * 2, vy: ny * (1 + Math.random() * 2) + Math.random() * 1.5,
+          life: 0.1 + Math.random() * 0.15, color: 0xffe0d0, color1: o.color, alpha1: 0, gravity: 0.3, drag: 3,
+        });
+      }
+      if (Math.random() < 0.5) g.particles.smoke(hx + nx * 0.05, hy + ny * 0.05, 1, 0.12);
+      if (!part) {
+        g.stains.add(hx - nx * PX * 0.5, hy - ny * PX * 0.5, 0.1, 0.1, 0.1, 1);
+        break;
+      }
+      // burn: damage, char and scorch, and sometimes set it alight
+      part.entity.damage(part, dmg, 'laser', { x: hx, y: hy }, { x: dx, y: dy });
+      if (part.destroyed) break;
+      part.charred = Math.min(1, part.charred + 0.08);
+      part.refreshTint();
+      part.paintAt(hx - nx * PX * 0.5, hy - ny * PX * 0.5, 0x1f1d1b, 0);
+      if (part.mat.flammability > 0 && Math.random() < 0.08 + part.mat.flammability * 0.25) g.fire.ignite(part, 0.35);
+      if (!part.frozen) part.body.applyImpulseAtPoint({ x: dx * 0.6, y: dy * 0.6 }, { x: hx, y: hy }, true);
+      if (part.mat.sparks) break;
+      // through it: find the exit and carry on, weaker
+      const far = 4;
+      this.ray.origin = { x: hx + dx * far, y: hy + dy * far };
+      this.ray.dir = { x: -dx, y: -dy };
+      const back = hit.collider.castRay(this.ray, far, true);
+      const thick = back >= 0 ? Math.max(PX, far - back) : PX * 4;
+      ox = hx + dx * (thick + 0.003);
+      oy = hy + dy * (thick + 0.003);
+      remaining -= hit.timeOfImpact + thick;
+      dmg *= 0.6;
+      ign = part.body;
+      if (remaining <= 0) break;
+    }
+    // glow: a wide dim beam with a bright core, and light where it hits
+    this.drawBeam(x, y, end.x, end.y, PX * 3, o.color, 0.1);
+    this.drawBeam(x, y, end.x, end.y, PX * 1.2, 0xfff0f0, 0.08);
+    g.renderer.addLight(end.x, end.y, 1.6, 0.6, o.color, 0.1);
+    return end;
   }
 
   get count(): number {
@@ -222,6 +332,27 @@ export class Projectiles {
   }
 
   frame(): void {
+    const B = this.beamBatch;
+    const t = this.game.time;
+    B.begin();
+    for (const b of this.beams) {
+      const k = b.until < 0 ? 1 : Math.max(0, (b.until - t) / b.life);
+      const r = Math.round(((b.color >> 16) & 255) * k);
+      const gg = Math.round(((b.color >> 8) & 255) * k);
+      const bb = Math.round((b.color & 255) * k);
+      const col = (r << 16) | (gg << 8) | bb;
+      if (b.dash > 0) {
+        const len = Math.hypot(b.x1 - b.x0, b.y1 - b.y0);
+        const n = Math.floor(len / b.dash);
+        for (let i = 0; i < n; i += 2) {
+          const t0 = (i * b.dash) / len;
+          const t1 = Math.min(1, ((i + 1) * b.dash) / len);
+          B.seg(b.x0 + (b.x1 - b.x0) * t0, b.y0 + (b.y1 - b.y0) * t0, b.x0 + (b.x1 - b.x0) * t1, b.y0 + (b.y1 - b.y0) * t1, b.w, col);
+        }
+      } else B.seg(b.x0, b.y0, b.x1, b.y1, b.w, col);
+    }
+    B.end();
+    this.beams = this.beams.filter((b) => b.until >= t);
     let n = 0;
     for (const b of this.bullets) {
       if (!b.tracer || n >= MAX_TRACERS) continue;
@@ -245,6 +376,7 @@ export class Projectiles {
   }
 
   clear(): void {
+    this.beams.length = 0;
     this.bullets.length = 0;
   }
 }

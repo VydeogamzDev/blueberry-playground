@@ -134,6 +134,7 @@ export class LightBulb extends Prop {
   constructor(game: Game, def: ItemDef, cfg: PropConfig, artOn: () => PixelArt, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
     this.activatable = true;
+    this.usesPower = true;
     this.artOn = artOn;
     this.artOff = cfg.art;
     const mat = new THREE.MeshBasicMaterial({ map: glowTexture(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -197,6 +198,7 @@ export class Thruster extends Prop {
   constructor(game: Game, def: ItemDef, cfg: PropConfig, force: number, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
     this.activatable = true;
+    this.usesPower = true;
     this.force = force;
   }
 
@@ -262,6 +264,7 @@ export class Motor extends Entity {
     super(game, def, opts.flip ?? false);
     this.cfg = cfg;
     this.activatable = true;
+    this.usesPower = true;
     this.attachIgnoresBody = true;
     const ang = opts.angle ?? 0;
     this.housing = this.addPart({

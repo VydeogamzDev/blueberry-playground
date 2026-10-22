@@ -1,6 +1,6 @@
 import type { ImpactSound } from '../world/Materials';
 
-export type GunSound = 'pistol' | 'revolver' | 'smg' | 'rifle' | 'shotgun' | 'sniper' | 'minigun';
+export type GunSound = 'pistol' | 'revolver' | 'smg' | 'rifle' | 'shotgun' | 'sniper' | 'minigun' | 'laser';
 
 interface PlayOpts {
   /** Linear gain (before the master volume). */
@@ -282,6 +282,10 @@ export class Sound {
         this.play('gun/pump', { gain: 0.35, x, delay: 0.35 });
         break;
       case 'sniper': this.play('gun/sniper', { gain: 1, x, vary: 0.03 }); break;
+      case 'laser':
+        this.play('machine/zap', { gain: 0.75, x, rate: 1.7, vary: 0.05 });
+        this.play('machine/spark', { gain: 0.3, x, rate: 1.4 });
+        break;
     }
   }
 

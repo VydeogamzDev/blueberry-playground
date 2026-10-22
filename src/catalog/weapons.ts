@@ -5,12 +5,16 @@ import { PixelArt as Art } from '../art/PixelArt';
 import { MAT, type PhysMaterial } from '../world/Materials';
 import { PX } from '../engine/constants';
 import * as I from '../art/items';
+import * as M from '../art/machines';
 import { barrelArt } from '../art/props';
 import { Item, artRect, densityFor, type HoldSpec } from '../entities/Item';
 import { Firearm, type GunSpec } from '../entities/Firearm';
 import { Blade, type BladeSpec } from '../entities/Melee';
 import { Explosive, type BlastSpec } from '../entities/Explosive';
 import { Battery, Button, LightBulb, Motor, Thruster } from '../entities/Machines';
+import { Syringe, type Drug } from '../entities/Syringe';
+import { Switch, MotionSensor, Timer, LogicGate, Piston } from '../entities/Devices';
+import { Car } from '../entities/Car';
 import type { ShapeSpec } from '../world/Part';
 import type { Entity } from '../world/Entity';
 import type { Game } from '../world/Game';
@@ -95,6 +99,12 @@ const GUNS: GunDef[] = [
     rects: [[1, 0, 29, 5], [4, 5, 2, 2], [11, 5, 4, 2]], mass: 14, hold: { grip: [5, 5], grip2: [12, 5] },
     gun: { sound: 'minigun', muzzle: [30, 2], eject: [9, 4], auto: true, rate: 30, spinUp: 0.6, speed: 700, energy: 1000, damage: 24, spread: 0.06, recoil: 0.9, flash: 0.22 },
     tags: ['gun', 'gatling', 'automatic'],
+  },
+  {
+    id: 'laser-rifle', name: 'Laser Rifle', desc: 'Energy weapon. An instant beam that burns through flesh and wood and sets things alight.', art: M.laserRifleArt, w: 32, h: 9,
+    rects: [[0, 1, 30, 4], [8, 5, 3, 4], [16, 5, 3, 2]], mass: 3.2, hold: { grip: [9, 6], grip2: [17, 5] },
+    gun: { sound: 'laser', muzzle: [32, 2], auto: false, rate: 4, speed: 0, energy: 0, damage: 34, spread: 0, recoil: 0.3, flash: 0.14, laser: 0xff3b30 },
+    tags: ['energy', 'beam', 'laser', 'sci-fi'],
   },
 ];
 
@@ -257,6 +267,28 @@ export function registerExplosives(): void {
   }
 }
 
+// ------------------------------------------------------------------ medical
+
+const SYRINGES: { drug: Drug; name: string; desc: string; tags: string[] }[] = [
+  { drug: 'healing', name: 'Healing Syringe', desc: 'Stab it into someone: heals wounds, burns and broken bones, restores blood and cures poison.', tags: ['heal', 'medkit', 'health'] },
+  { drug: 'adrenaline', name: 'Adrenaline Syringe', desc: 'Kills pain and shock, wakes people up and gets them back on their feet fast.', tags: ['stim', 'wake', 'epinephrine'] },
+  { drug: 'knockout', name: 'Knockout Syringe', desc: 'Sedative. Puts a person to sleep for half a minute.', tags: ['sedative', 'sleep', 'tranquilizer'] },
+  { drug: 'life', name: 'Life Syringe', desc: 'Brings the dead back to life, as long as they still have a head.', tags: ['revive', 'resurrect'] },
+  { drug: 'poison', name: 'Poison Syringe', desc: 'Slowly drains the life out of whoever it is injected into.', tags: ['toxin', 'kill', 'venom'] },
+];
+
+export function registerMedical(): void {
+  const empty = lazyArt(() => I.syringeArt(null));
+  const shapes = rects(20, 7, [[0, 1, 15, 5], [15, 2, 2, 3], [17, 3, 3, 1]], 0.3);
+  const density = densityFor(0.08, shapes);
+  for (const s of SYRINGES) {
+    item(`syringe-${s.drug}`, s.name, 'Medical', s.desc, () => I.syringeArt(I.DRUG_RAMPS[s.drug]), (game, def, art, x, y, opts) => {
+      const blade: BladeSpec = { blade: [15, 19], tipLen: 3, edge: 'none', sharpness: 0, stab: true, maxDepth: 0.08, grip: 140, stabSpeed: 1.4, stabDamage: 0.08 };
+      return new Syringe(game, def, { art, material: MAT.plastic, shapes, density, angularDamping: 0.3, ccd: true }, { grip: [10, 3] }, blade, s.drug, empty, x, y, opts);
+    }, ['syringe', 'needle', 'drug', ...s.tags]);
+  }
+}
+
 export function registerMachinery(): void {
   item('battery', 'Battery', 'Machinery', 'Powers everything wired to it. Activate to switch on/off.', I.batteryArt, (game, def, art, x, y, opts) => {
     const shapes = rects(10, 16, [[0, 2, 10, 14], [3, 0, 4, 2]]);
@@ -284,6 +316,52 @@ export function registerMachinery(): void {
     new Motor(game, def, { housing: rotor, rotor: wheel, rotorShape: { kind: 'ball', r: 10 }, rotorMaterial: MAT.rubber, rotorDensity: 60, speed: 14, torque: 60, hubOnTop: true }, x, y, opts),
   ['wheel', 'car', 'drive']);
 }
+
+export function registerDevices(): void {
+  const on = lazyArt(() => M.switchArt(true));
+  item('switch', 'Switch', 'Machinery', 'A lever switch. Power only flows through it while it is on. A pulse flips it.', () => M.switchArt(false), (game, def, art, x, y, opts) => {
+    const shapes = rects(14, 12, [[0, 6, 14, 6], [5, 4, 4, 2]]);
+    return new Switch(game, def, { art, material: MAT.metal, shapes, density: densityFor(1, shapes) }, on, x, y, opts);
+  }, ['lever', 'toggle', 'electric']);
+  const seen = lazyArt(() => M.sensorArt(true));
+  item('sensor', 'Motion Sensor', 'Machinery', 'A tripwire beam. Powers its wires and sends a pulse when something crosses it.', () => M.sensorArt(false), (game, def, art, x, y, opts) => {
+    const shapes = rects(12, 10, [[0, 1, 12, 8]]);
+    return new MotionSensor(game, def, { art, material: MAT.plastic, shapes, density: densityFor(0.6, shapes) }, seen, x, y, opts);
+  }, ['detector', 'tripwire', 'laser', 'trigger']);
+  const tick = lazyArt(() => M.timerArt(true));
+  item('timer', 'Timer', 'Machinery', 'Pulses its output (right side) every interval while on, or while its input (left side) is powered.', () => M.timerArt(false), (game, def, art, x, y, opts) => {
+    const shapes = rects(14, 12, [[0, 0, 14, 12]]);
+    return new Timer(game, def, { art, material: MAT.metal, shapes, density: densityFor(0.8, shapes) }, tick, x, y, opts);
+  }, ['clock', 'pulse', 'repeat', 'delay']);
+  const GATES: [GateKindId, string, string][] = [
+    ['and', 'AND Gate', 'Output (right) is on when every input (left) is powered.'],
+    ['or', 'OR Gate', 'Output (right) is on when any input (left) is powered.'],
+    ['xor', 'XOR Gate', 'Output (right) is on when exactly one input (left) is powered.'],
+    ['not', 'NOT Gate', 'Output (right) is on while its input (left) is not powered.'],
+  ];
+  for (const [kind, name, desc] of GATES) {
+    const art = (out: boolean) => M.gateArt(kind, out);
+    const lit = lazyArt(() => art(true));
+    const dark = lazyArt(() => art(false));
+    item(`gate-${kind}`, name, 'Machinery', desc + ' Wire inputs to the left half, outputs to the right half.', dark, (game, def, a, x, y, opts) => {
+      const shapes = rects(16, 12, [[0, 0, 16, 12]]);
+      return new LogicGate(game, def, { art: a, material: MAT.plastic, shapes, density: densityFor(0.4, shapes) }, kind, (o) => (o ? lit() : dark()), x, y, opts);
+    }, ['logic', 'gate', kind]);
+  }
+  const base = lazyArt(M.pistonBaseArt);
+  const rod = lazyArt(M.pistonRodArt);
+  item('piston', 'Piston', 'Machinery', 'Pushes its plate out 1 m while on or powered. Weld things to the plate or the cylinder.', M.pistonBaseArt, (game, def, _art, x, y, opts) =>
+    new Piston(game, def, { base, rod, stroke: 1, force: 4000 }, x, y, opts), ['pusher', 'hydraulic', 'actuator']);
+}
+
+export function registerVehicles(): void {
+  const body = lazyArt(M.carBodyArt);
+  const wheel = lazyArt(M.carWheelArt);
+  item('car', 'Car', 'Vehicles', 'A small hatchback. Activate to drive (or wire it to power); reverse from its menu.', M.carBodyArt, (game, def, _art, x, y, opts) =>
+    new Car(game, def, { body, wheel, axles: [[15, 22], [59, 22]], wheelR: 8, speed: 22, torque: 170 }, x, y, opts), ['vehicle', 'auto', 'drive']);
+}
+
+type GateKindId = 'and' | 'or' | 'xor' | 'not';
 
 export function registerTools(): void {
   for (const t of TOOLS) {

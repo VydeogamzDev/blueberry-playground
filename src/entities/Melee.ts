@@ -22,6 +22,10 @@ export interface BladeSpec {
   maxDepth: number;
   /** Friction force holding a lodged blade (N). */
   grip: number;
+  /** Point speed needed to stab in (m/s); needles go in easily. */
+  stabSpeed?: number;
+  /** Stab damage scale (needles barely hurt). */
+  stabDamage?: number;
 }
 
 /** Materials a blade can sink into. */
@@ -85,9 +89,10 @@ export class Blade extends Item {
     const soft = SOFT.has(o.mat.name);
 
     // ---- stab with the point
-    if (this.blade.stab && ix >= b1 - this.blade.tipLen && along > STAB_SPEED && along > speed * 0.72) {
+    const stabSpeed = this.blade.stabSpeed ?? STAB_SPEED;
+    if (this.blade.stab && ix >= b1 - this.blade.tipLen && along > stabSpeed && along > speed * 0.72) {
       const massF = Math.sqrt(Math.min(4, this.totalMass() + (this.holder ? 2 : 0)) / 0.5);
-      const dmg = (along - STAB_SPEED * 0.6) * 5.5 * massF;
+      const dmg = (along - stabSpeed * 0.6) * 5.5 * massF * (this.blade.stabDamage ?? 1);
       o.entity.damage(o, dmg, 'stab', pt, fwd);
       if (soft) {
         this.game.sound.stab(pt.x);

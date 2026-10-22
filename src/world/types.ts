@@ -3,7 +3,7 @@ import type { Game } from './Game';
 import type { Entity } from './Entity';
 import type { Part } from './Part';
 
-export type Category = 'Characters' | 'Objects' | 'Weapons' | 'Melee' | 'Explosives' | 'Machinery' | 'Tools';
+export type Category = 'Characters' | 'Objects' | 'Weapons' | 'Melee' | 'Explosives' | 'Medical' | 'Machinery' | 'Vehicles' | 'Tools';
 
 export const CATEGORIES: { id: Category; icon: string; label: string }[] = [
   { id: 'Characters', icon: 'human', label: 'Characters' },
@@ -11,7 +11,9 @@ export const CATEGORIES: { id: Category; icon: string; label: string }[] = [
   { id: 'Weapons', icon: 'gun', label: 'Firearms' },
   { id: 'Melee', icon: 'sword', label: 'Melee' },
   { id: 'Explosives', icon: 'bomb', label: 'Explosives' },
+  { id: 'Medical', icon: 'syringe', label: 'Medical' },
   { id: 'Machinery', icon: 'gear', label: 'Machinery' },
+  { id: 'Vehicles', icon: 'car', label: 'Vehicles' },
   { id: 'Tools', icon: 'wrench', label: 'Tools' },
 ];
 
@@ -67,7 +69,7 @@ export interface ImpactInfo {
   otherSpeed: number;
 }
 
-export type DamageKind = 'blunt' | 'bullet' | 'cut' | 'stab' | 'explosion' | 'fire' | 'crush' | 'shock';
+export type DamageKind = 'blunt' | 'bullet' | 'cut' | 'stab' | 'explosion' | 'fire' | 'crush' | 'shock' | 'laser';
 
 export interface BulletHit {
   part: Part;

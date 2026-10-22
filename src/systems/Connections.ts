@@ -9,6 +9,19 @@ import { KHAKI, RED, ORANGE, STEEL, STEEL_LT, BRASS, GUNMETAL, type Ramp } from 
 
 export type ConnKind = 'rope' | 'weld' | 'spring' | 'hinge' | 'pin' | 'wire';
 
+/**
+ * How a device uses a wire: 'in' only listens (gate inputs), 'out' only drives
+ * (gate outputs, sensors), 'both' conducts like a plain wire.
+ */
+export type WireRole = 'in' | 'out' | 'both';
+
+interface WiredDevice {
+  wireRole?(c: Connection): WireRole;
+  onPulse?(c: Connection): void;
+  isPowerSource?(): boolean;
+  conducts?(): boolean;
+}
+
 export interface Connection {
   id: number;
   kind: ConnKind;
@@ -107,6 +120,8 @@ export class Connections {
   preview: { x0: number; y0: number; x1: number; y1: number; kind: ConnKind } | null = null;
   showWires = true;
   private powered = new Set<Entity>();
+  /** Wires that bring power into a device's input side. */
+  private liveInputs = new Set<Connection>();
 
   constructor(game: Game) {
     this.game = game;
@@ -243,6 +258,26 @@ export class Connections {
 
   // ---- electrical ---------------------------------------------------------
 
+  roleOf(e: Entity, c: Connection): WireRole {
+    return (e as Entity & WiredDevice).wireRole?.(c) ?? 'both';
+  }
+
+  /** Wires touching `e` with the entity at their other end. */
+  wiresOf(e: Entity): { c: Connection; n: Entity }[] {
+    const out: { c: Connection; n: Entity }[] = [];
+    for (const c of this.list) {
+      if (c.kind !== 'wire' || !c.b) continue;
+      if (c.a.entity === e && c.b.entity !== e) out.push({ c, n: c.b.entity });
+      else if (c.b.entity === e && c.a.entity !== e) out.push({ c, n: c.a.entity });
+    }
+    return out;
+  }
+
+  /** Whether this input wire currently carries power into its device. */
+  inputLive(c: Connection): boolean {
+    return this.liveInputs.has(c);
+  }
+
   wiredNeighbours(e: Entity): Entity[] {
     const out: Entity[] = [];
     for (const c of this.list) {
@@ -253,9 +288,18 @@ export class Connections {
     return out;
   }
 
-  /** Sends a one-shot activation pulse to everything wired to `from`. */
-  pulse(from: Entity): void {
-    for (const n of this.wiredNeighbours(from)) n.activate();
+  /**
+   * Sends a one-shot activation pulse to everything wired to `from` (respecting
+   * input/output sides: a gate only sends from its output and only hears on its inputs).
+   */
+  pulse(from: Entity, fromPower = false): void {
+    for (const { c, n } of this.wiresOf(from)) {
+      if (this.roleOf(from, c) === 'in' || this.roleOf(n, c) === 'out') continue;
+      if (fromPower && n.usesPower) continue;
+      const d = n as Entity & WiredDevice;
+      if (d.onPulse) d.onPulse(c);
+      else n.activate();
+    }
   }
 
   /** Flood-fills power from active sources through wires. */
@@ -269,17 +313,23 @@ export class Connections {
         queue.push(e);
       }
     }
+    const inputs = new Set<Connection>();
     while (queue.length) {
       const e = queue.pop()!;
-      const conducts = e as Entity & { conducts?: () => boolean };
-      if (conducts.conducts && !conducts.conducts() && !(e as Entity & { isPowerSource?: () => boolean }).isPowerSource?.()) continue;
-      for (const n of this.wiredNeighbours(e)) {
+      const d = e as Entity & WiredDevice;
+      if (d.conducts && !d.conducts() && !d.isPowerSource?.()) continue;
+      for (const { c, n } of this.wiresOf(e)) {
+        if (this.roleOf(e, c) === 'in') continue;
+        const rn = this.roleOf(n, c);
+        if (rn === 'in') inputs.add(c);
+        if (rn !== 'both') continue;
         if (!next.has(n)) {
           next.add(n);
           queue.push(n);
         }
       }
     }
+    this.liveInputs = inputs;
     for (const e of this.powered) if (!next.has(e) && !e.destroyed) e.setPowered(false);
     for (const e of next) if (!this.powered.has(e)) e.setPowered(true);
     this.powered = next;

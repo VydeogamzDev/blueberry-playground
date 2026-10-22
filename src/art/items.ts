@@ -1,7 +1,7 @@
 import { PixelArt, type Color } from './PixelArt';
 import {
   finish, draw, GUNMETAL, POLYMER, WOOD, WOOD_DARK, WOOD_PALE, OLIVE, STEEL, STEEL_LT, BRASS, COPPER, RED, KHAKI,
-  YELLOW, ORANGE, GLASS, WHITE, RUBBER, LAMP, LED_RED, LED_GREEN, step,
+  YELLOW, ORANGE, GLASS, WHITE, RUBBER, LAMP, LED_RED, LED_GREEN, step, ramp, type Ramp,
 } from './palette';
 
 // ------------------------------------------------------------------ firearms
@@ -379,4 +379,41 @@ export function toolIcon(kind: string): PixelArt {
         { r: step(RED[3], 0) },
       );
   }
+}
+
+// ------------------------------------------------------------------ medical
+
+/** Syringe liquids. */
+export const DRUG_RAMPS = {
+  healing: ramp('#4fbf5a'),
+  adrenaline: ramp('#e09a2e'),
+  knockout: ramp('#5a72d8'),
+  life: ramp('#e0577e'),
+  poison: ramp('#8f4fc4'),
+} as const;
+
+/** A syringe pointing right (needle tip at the right edge); null liquid = empty. */
+export function syringeArt(liquid: Ramp | null): PixelArt {
+  const a = draw(20, 7, [
+    '.....W..............',
+    'R....WGGGGGGGGG.....',
+    'R....WrLLLLLLLLHH...',
+    'RPPPPWrLLLLLLLLHHNNN',
+    'R....WrLLLLLLLLHH...',
+    'R....WGGGGGGGGG.....',
+    '.....W..............',
+  ], {
+    R: RUBBER[2], P: STEEL_LT[2], W: WHITE[1], G: GLASS[2], r: RUBBER[1], H: WHITE[2], N: STEEL_LT[3],
+    L: liquid ? liquid[2] : GLASS[3],
+  });
+  finish(a, { shadow: false });
+  // liquid highlight and graduation marks
+  if (liquid) for (let x = 8; x <= 14; x++) a.set(x, 2, liquid[3]);
+  else for (let x = 8; x <= 14; x++) a.set(x, 2, GLASS[4]);
+  for (const x of [9, 11, 13]) a.set(x, 1, GLASS[4]);
+  // one-pixel parts would be all outline: paint the rod and needle in metal
+  for (let x = 1; x <= 4; x++) a.set(x, 3, STEEL_LT[2]);
+  for (let y = 1; y <= 5; y++) a.set(0, y, RUBBER[y === 1 ? 3 : 2]);
+  a.set(17, 3, STEEL_LT[2]).set(18, 3, STEEL_LT[3]).set(19, 3, STEEL_LT[4]);
+  return a;
 }

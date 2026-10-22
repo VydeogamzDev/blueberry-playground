@@ -4,7 +4,11 @@ import type { Human } from '../entities/Human';
 import type { Firearm } from '../entities/Firearm';
 import type { Explosive } from '../entities/Explosive';
 import type { Blade } from '../entities/Melee';
-import type { Motor } from '../entities/Machines';
+import type { Motor, LightBulb } from '../entities/Machines';
+import type { Switch, MotionSensor, Timer, Piston } from '../entities/Devices';
+import type { Car } from '../entities/Car';
+import type { Syringe } from '../entities/Syringe';
+import type { Entity } from '../world/Entity';
 import { getItem } from '../catalog/items';
 import { makeTestKit } from './testkit';
 import { saveToString, loadFromString } from '../world/SaveLoad';
@@ -237,7 +241,7 @@ export function makeSelfTest(game: Game, controls: Controls) {
       kit.advance(0.01);
       k.setVelocity(9, 0, 0);
       kit.advance(0.4);
-      if (!k.lodge) return 'knife did not lodge';
+      if (!k.lodge) return `knife did not lodge (knife at ${k.main.x.toFixed(2)}, ${k.main.y.toFixed(2)}; ${b.status()})`;
       const json = saveToString(game);
       loadFromString(game, json);
       kit.advance(0.5);
@@ -427,11 +431,185 @@ export function makeSelfTest(game: Game, controls: Controls) {
       }
       return true;
     }],
+    ['extra: syringes: heal, knock out, wake up, revive, poison', () => {
+      // jab it into the torso across the spine (from above if they are lying down)
+      const shoot = (h: Human, id: string): Syringe => {
+        const t = h.limbs.get('midTorso')!.part;
+        let dx = Math.cos(t.a);
+        let dy = Math.sin(t.a);
+        if (dy > 0) {
+          dx = -dx;
+          dy = -dy;
+        }
+        const s = kit.spawn(id, t.x - dx * 0.9, t.y - dy * 0.9, { angle: Math.atan2(dy, dx) }) as Syringe;
+        kit.advance(0.01);
+        s.setVelocity(dx * 6, dy * 6, 0);
+        kit.advance(0.4);
+        return s;
+      };
+      // healing: a broken, bleeding, poisoned person is mended
+      kit.reset();
+      let h = human(0);
+      kit.advance(1);
+      const leg = h.limbs.get('lowerLegF')!;
+      leg.broken = true;
+      leg.part.hp *= 0.4;
+      h.blood = 70;
+      h.drugs.poison = 30;
+      const s = shoot(h, 'syringe-healing');
+      kit.advance(1.5);
+      if (s.fill > 0) return `healing syringe did not inject (${s.fill.toFixed(2)} left)`;
+      if (leg.broken || leg.part.hp < leg.part.maxHp * 0.95 || h.blood < 99 || h.drugs.poison > 0) return `not healed (${h.status()})`;
+      // knockout, then adrenaline wakes them and they get up
+      kit.reset();
+      h = human(0);
+      kit.advance(1);
+      shoot(h, 'syringe-knockout');
+      kit.advance(2);
+      if (h.consciousness > 0.2 || !h.status().endsWith('down')) return `knockout failed (${h.status()})`;
+      shoot(h, 'syringe-adrenaline');
+      kit.advance(6);
+      if (h.consciousness < 0.8 || !h.status().endsWith('stand')) return `adrenaline did not wake them (${h.status()})`;
+      // life brings back the dead
+      kit.reset();
+      h = human(0);
+      kit.advance(1);
+      h.die();
+      kit.advance(1);
+      shoot(h, 'syringe-life');
+      kit.advance(1.5);
+      if (!h.alive) return 'life syringe did not revive';
+      // poison kills slowly
+      kit.reset();
+      h = human(0);
+      kit.advance(1);
+      shoot(h, 'syringe-poison');
+      kit.advance(10);
+      if (!h.alive) return 'poison killed too fast';
+      kit.advance(25);
+      if (h.alive) return `poison did not kill (${h.status()})`;
+      return true;
+    }],
+    ['extra: laser rifle burns through people, stops at metal', () => {
+      kit.reset();
+      const h = human(0);
+      const crate = kit.spawn('crate', 1.3, 0.5)!;
+      const steel = kit.spawn('metal-box', 3, 0.4)!;
+      const g = kit.spawn('laser-rifle', -3, 1.3) as Firearm;
+      kit.advance(0.6);
+      const t = h.limbs.get('midTorso')!.part;
+      const hp0 = t.hp;
+      g.main.teleport(-3, t.y, 0);
+      kit.advance(0.02);
+      g.fire();
+      kit.advance(0.05);
+      if (t.hp > hp0 - 10) return `torso barely hurt (${(hp0 - t.hp).toFixed(1)})`;
+      if (h.blood < 99.5) return 'laser wound bled (should be cauterised)';
+      // through the legs and on into the crate behind
+      game.projectiles.laser(-3, 0.5, 1, 0, { damage: 34, color: 0xff3b30 });
+      if (crate.parts[0].charred <= 0) return 'beam did not pass through to the crate';
+      const end = game.projectiles.laser(-3, 0.35, 1, 0, { damage: 34, color: 0xff3b30 });
+      if (Math.abs(end.x - (steel.parts[0].x - 0.34)) > 0.2) return `beam not stopped by the metal box (ended at x ${end.x.toFixed(2)})`;
+      return true;
+    }],
+    ['extra: switch, motion sensor and timer', () => {
+      const wire = (a: Entity, b: Entity, la = 0, lb = 0) =>
+        game.connections.create('wire', a.parts[0], a.parts[0].localToWorld(la, 0), b.parts[0], b.parts[0].localToWorld(lb, 0));
+      kit.reset();
+      const bat = kit.spawn('battery', -3, 0.4)!;
+      const sw = kit.spawn('switch', -1.5, 0.3) as Switch;
+      const lamp = kit.spawn('light', 0, 0.3) as LightBulb;
+      kit.advance(0.3);
+      wire(bat, sw);
+      wire(sw, lamp);
+      kit.advance(0.1);
+      if (lamp.powered) return 'lamp powered through an open switch';
+      sw.activate();
+      kit.advance(0.1);
+      if (!lamp.powered) return 'closed switch did not pass power';
+      // a tripwire fires a wired pistol when a brick falls through its beam
+      kit.reset();
+      const sen = kit.spawn('sensor', -2, 0.25) as MotionSensor;
+      const gun = kit.spawn('pistol', -2, 1.5) as Firearm;
+      kit.advance(0.3);
+      wire(sen, gun);
+      kit.advance(0.2);
+      if (gun.shots) return 'sensor fired with nothing in front';
+      kit.spawn('brick', 0, 3);
+      kit.advance(1.5);
+      if (!gun.shots) return 'sensor did not fire the gun';
+      // a timer fires a gun every half second
+      kit.reset();
+      const tm = kit.spawn('timer', -1, 0.3) as Timer;
+      const g2 = kit.spawn('pistol', 1, 0.3) as Firearm;
+      kit.advance(0.3);
+      wire(tm, g2, 6 / 32, 0);
+      tm.interval = 0.5;
+      tm.activate();
+      kit.advance(2.6);
+      if (g2.shots < 4 || g2.shots > 6) return `timer fired ${g2.shots} times in 2.6 s`;
+      return true;
+    }],
+    ['extra: logic gates: AND, OR, XOR, NOT truth tables', () => {
+      const L = 6 / 32;
+      const wire = (a: Entity, b: Entity, la = 0, lb = 0) =>
+        game.connections.create('wire', a.parts[0], a.parts[0].localToWorld(la, 0), b.parts[0], b.parts[0].localToWorld(lb, 0));
+      const want: Record<string, string> = { and: '0001', or: '0111', xor: '0110', not: '1100' };
+      for (const kind of Object.keys(want)) {
+        kit.reset();
+        const bat = kit.spawn('battery', -3, 0.4)!;
+        const s1 = kit.spawn('switch', -1.5, 0.3) as Switch;
+        const s2 = kit.spawn('switch', -1.5, 1.2) as Switch;
+        const g = kit.spawn('gate-' + kind, 0, 0.3)!;
+        const lamp = kit.spawn('light', 1.5, 0.3) as LightBulb;
+        kit.advance(0.3);
+        wire(bat, s1);
+        wire(bat, s2);
+        wire(s1, g, 0, -L);
+        if (kind !== 'not') wire(s2, g, 0, -L);
+        wire(g, lamp, L, 0);
+        let got = '';
+        for (const [a, b] of [[0, 0], [0, 1], [1, 0], [1, 1]]) {
+          if (s1.on !== !!a) s1.activate();
+          if (s2.on !== !!b) s2.activate();
+          kit.advance(0.1);
+          got += lamp.powered ? '1' : '0';
+        }
+        if (got !== want[kind]) return `${kind}: got ${got}, want ${want[kind]}`;
+      }
+      return true;
+    }],
+    ['extra: piston pushes, car drives', () => {
+      kit.reset();
+      const p = kit.spawn('piston', -1, 0.3) as Piston;
+      const crate = kit.spawn('crate', 0.9, 0.5)!;
+      kit.advance(0.5);
+      p.base.setFrozen(true);
+      const x0 = crate.parts[0].x;
+      p.activate();
+      kit.advance(1.5);
+      if (p.extension < 0.9) return `piston extended ${p.extension.toFixed(2)} m`;
+      if (crate.parts[0].x - x0 < 0.25) return 'piston did not push the crate';
+      p.activate();
+      kit.advance(1.5);
+      if (p.extension > 0.1) return 'piston did not retract';
+      kit.reset();
+      const car = kit.spawn('car', -6, 0.6) as Car;
+      kit.advance(0.8);
+      const cx = car.body.x;
+      car.activate();
+      kit.advance(3);
+      if (car.body.x - cx < 8) return `car only drove ${(car.body.x - cx).toFixed(1)} m in 3 s`;
+      if (Math.abs(car.body.a) > 0.5) return 'car tipped over';
+      return true;
+    }],
   ];
 
-  return async (): Promise<Result[]> => {
+  /** Runs every test, or only those whose name contains `filter`. */
+  return async (filter?: string): Promise<Result[]> => {
     const results: Result[] = [];
     for (const [name, fn] of tests) {
+      if (filter && !name.includes(filter)) continue;
       const t0 = performance.now();
       let r: string | true;
       try {

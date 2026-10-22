@@ -21,6 +21,11 @@ export abstract class Entity {
   activeHeld = false;
   /** Receiving electrical power. */
   powered = false;
+  /**
+   * Reacts to being powered (lights, motors...). Pulses sent by powered logic
+   * (gates, sensors, timers) skip these, since the power already drives them.
+   */
+  usesPower = false;
   /** Can receive activation from the player / wires. */
   activatable = false;
 

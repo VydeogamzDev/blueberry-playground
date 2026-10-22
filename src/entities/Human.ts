@@ -8,6 +8,7 @@ import { MAT, type PhysMaterial } from '../world/Materials';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
 import { limbArt, faceColors, EYE, MOUTH, HUMAN_SKIN, type BodyKind, type LimbKey, type Skin } from '../art/human';
 import type { Item, Holder } from './Item';
+import type { Drug } from './Syringe';
 
 interface LimbSpec {
   key: LimbKey;
@@ -253,6 +254,70 @@ export class Human extends Entity implements Holder {
     return clamp(this.consciousness * (1 - this.shock * 0.6), 0, 1);
   }
 
+  // ---------------------------------------------------------------- drugs
+
+  /** Seconds left of each drug's effect. */
+  readonly drugs = { adrenaline: 0, knockout: 0, poison: 0 };
+  private mendDose = 0;
+  private lifeDose = 0;
+
+  /** A syringe pushing `dose` (fraction of a full syringe) into the bloodstream. */
+  inject(drug: Drug, dose: number): void {
+    if (!this.variant.bleeds) return;
+    switch (drug) {
+      case 'healing':
+        this.mend(dose);
+        break;
+      case 'life':
+        if (this.alive) this.mend(dose * 0.6);
+        else {
+          this.lifeDose += dose;
+          // brings the dead back if there is still a head on the body
+          const head = this.L('head');
+          if (this.lifeDose >= 0.5 && !head.gone && head.attached) {
+            this.lifeDose = 0;
+            this.heal();
+          }
+        }
+        break;
+      case 'adrenaline':
+        this.drugs.adrenaline = Math.min(90, this.drugs.adrenaline + dose * 45);
+        this.drugs.knockout = Math.max(0, this.drugs.knockout - dose * 90);
+        break;
+      case 'knockout':
+        this.drugs.knockout = Math.min(120, this.drugs.knockout + dose * 30);
+        break;
+      case 'poison':
+        this.drugs.poison = Math.min(120, this.drugs.poison + dose * 40);
+        break;
+    }
+  }
+
+  /** Healing over the injection: tissue, blood, burns; bones and wounds at the end. */
+  private mend(dose: number): void {
+    if (!this.alive) return;
+    this.blood = Math.min(100, this.blood + dose * 60);
+    this.pain = Math.max(0, this.pain - dose * 2);
+    this.drugs.poison = 0;
+    this.mendDose += dose;
+    for (const l of this.order) {
+      if (l.gone) continue;
+      const p = l.part;
+      p.hp = Math.min(p.maxHp, p.hp + p.maxHp * dose * 1.5);
+      if (p.burning > 0) this.game.fire.extinguish(p);
+      p.charred = Math.max(0, p.charred - dose * 1.5);
+      p.refreshTint();
+      if (this.mendDose >= 0.6) {
+        l.wounds.length = 0;
+        l.broken = false;
+      }
+    }
+    if (this.mendDose >= 0.6) {
+      this.mendDose = 0;
+      this.updateMotors(true);
+    }
+  }
+
   private legsWork(): boolean {
     for (const k of ['upperLegF', 'lowerLegF', 'upperLegB', 'lowerLegB'] as LimbKey[]) {
       const l = this.L(k);
@@ -263,6 +328,7 @@ export class Human extends Entity implements Holder {
 
   private setState(s: State): void {
     if (this.state === s) return;
+    const wasUp = this.state === 'stand' || this.state === 'getup';
     this.state = s;
     this.stateT = 0;
     // getting up blends every joint from where it is now to the standing pose,
@@ -275,6 +341,24 @@ export class Human extends Entity implements Holder {
     } else this.blendFrom = null;
     this.applyDamping();
     this.updateMotors(true);
+    // a person who stood still has fallen asleep: wake them so the change shows
+    // (otherwise someone knocked out while standing stays frozen upright)
+    for (const l of this.order) if (!l.gone && !l.part.frozen) l.part.body.wakeUp();
+    if (s === 'down' && wasUp && this.strength() < 0.3) this.buckle();
+  }
+
+  /** Passing out on your feet: the knees give and the upper body pitches forward. */
+  private buckle(): void {
+    const f = this.f;
+    const push = (k: LimbKey, vx: number) => {
+      const l = this.L(k);
+      if (!l.gone && l.attached && !l.part.frozen) l.part.body.applyImpulse({ x: l.part.mass * vx * f, y: 0 }, true);
+    };
+    push('upperTorso', 0.9);
+    push('head', 0.9);
+    push('lowerTorso', -0.5);
+    push('lowerLegF', 0.6);
+    push('lowerLegB', 0.6);
   }
 
   /** Standing muscles hold posture firmly; a fallen body moves freely. */
@@ -522,11 +606,16 @@ export class Human extends Entity implements Holder {
       const tau = -I * alpha;
       // a body at rest inside the deadband is left alone so it can fall asleep
       if (Math.abs(tau) < 1.5) return;
+      // a sleeping body is only woken for a real push: small corrections must not be
+      // applied to it either, or the velocity piles up unsolved and is released
+      // all at once when something wakes it
+      const wake = Math.abs(tau) > 20;
       // distribute over the torso, where the "core" muscles act
       const share: [LimbKey, number][] = [['upperTorso', 0.4], ['midTorso', 0.3], ['lowerTorso', 0.3]];
       for (const [k, w] of share) {
         const l = this.L(k);
-        if (!l.gone && l.attached && !l.part.frozen) l.part.body.applyTorqueImpulse(tau * w * dt, Math.abs(tau) > 20);
+        if (l.gone || !l.attached || l.part.frozen || (!wake && l.part.body.isSleeping())) continue;
+        l.part.body.applyTorqueImpulse(tau * w * dt, wake);
       }
       return;
     }
@@ -564,16 +653,29 @@ export class Human extends Entity implements Holder {
 
     // ---- vitals
     this.pain = Math.max(0, this.pain - dt * 0.05);
+    const d = this.drugs;
+    d.adrenaline = Math.max(0, d.adrenaline - dt);
+    d.knockout = Math.max(0, d.knockout - dt);
+    d.poison = Math.max(0, d.poison - dt);
     if (this.alive) {
+      if (d.adrenaline > 0) {
+        // no pain, no shock, and a fast recovery
+        this.pain = 0;
+        this.shock = 0;
+      }
+      // poison drains the blood from the inside
+      if (d.poison > 0) this.blood -= dt * 2.4;
       const head = this.L('head');
       const headF = head.gone ? 0 : head.part.hp / head.part.maxHp;
       let target = 1;
       if (headF < 0.5) target = Math.min(target, headF * 1.2);
       if (this.blood < 65) target = Math.min(target, (this.blood - 40) / 25);
       if (this.pain > 0.9) target = Math.min(target, 0.4);
+      if (d.knockout > 0) target = Math.min(target, 0.05);
       target = clamp(target, 0, 1);
-      // consciousness drops fast, recovers slowly
-      this.consciousness += (target - this.consciousness) * (target < this.consciousness ? 0.2 : 0.004);
+      // consciousness drops fast, recovers slowly (quickly on adrenaline)
+      const up = d.adrenaline > 0 ? 0.03 : 0.004;
+      this.consciousness += (target - this.consciousness) * (target < this.consciousness ? 0.2 : up);
       this.shock = Math.max(0, this.shock - dt * 0.01);
       if (this.consciousness < 0.15 && this.state !== 'down') this.setState('down');
       this.checkDeath();
@@ -730,6 +832,12 @@ export class Human extends Entity implements Holder {
         const w = part.pixelToWorld(Math.floor(Math.random() * part.w), Math.floor(Math.random() * part.h));
         part.paintAt(w.x, w.y, 0x2a1d17, 0, 0.25);
       }
+      return;
+    }
+    if (kind === 'laser') {
+      // a burnt hole: full trauma, but cauterised (no bleeding)
+      if (point && this.variant.kind === 'human') part.paintAt(point.x, point.y, 0x2a1d17, 1, 0.85);
+      this.injure(l, amt, kind, point, dir);
       return;
     }
     if (kind === 'explosion') {
@@ -974,6 +1082,7 @@ export class Human extends Entity implements Holder {
   // ---------------------------------------------------------------- UI / state
 
   heal(): void {
+    this.drugs.adrenaline = this.drugs.knockout = this.drugs.poison = 0;
     this.alive = true;
     this.consciousness = 1;
     this.blood = 100;
@@ -1293,7 +1402,8 @@ export class Human extends Entity implements Holder {
 
   /** Short status line (shown in tooltips/tests). */
   status(): string {
-    return `${this.alive ? (this.consciousness > 0.3 ? 'conscious' : 'unconscious') : 'dead'} · blood ${this.blood.toFixed(0)}% · ${this.state}`;
+    const drugs = (Object.keys(this.drugs) as (keyof typeof this.drugs)[]).filter((k) => this.drugs[k] > 0).map((k) => ` · ${k}`).join('');
+    return `${this.alive ? (this.consciousness > 0.3 ? 'conscious' : 'unconscious') : 'dead'} · blood ${this.blood.toFixed(0)}%${drugs} · ${this.state}`;
   }
 
   protected serializeExtra(): Record<string, unknown> {
@@ -1305,6 +1415,7 @@ export class Human extends Entity implements Holder {
       severed: this.order.filter((l) => l.severed && !l.gone).map((l) => l.spec.key),
       broken: this.order.filter((l) => l.broken).map((l) => l.spec.key),
       standing: this.state === 'stand',
+      drugs: { ...this.drugs },
     };
   }
 
@@ -1331,6 +1442,7 @@ export class Human extends Entity implements Holder {
     this.blood = (x.blood as number) ?? 100;
     this.consciousness = (x.consciousness as number) ?? 1;
     this.limp = !!x.limp;
+    Object.assign(this.drugs, (x.drugs as Partial<typeof this.drugs>) ?? {});
     for (const k of (x.severed as LimbKey[]) ?? []) {
       const l = this.limbs.get(k);
       if (l && !l.gone) this.sever(l, 'cut');

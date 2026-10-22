@@ -34,6 +34,8 @@ export interface GunSpec {
   shellColor?: number;
   /** Seconds the barrel takes to spin up (miniguns). */
   spinUp?: number;
+  /** Energy weapon: fires an instant beam of this color instead of bullets. */
+  laser?: number;
 }
 
 /** A gun: fires hitscan-style raycast bullets from its muzzle when activated. */
@@ -80,6 +82,14 @@ export class Firearm extends Item {
     const m = p.pixelToWorld(g.muzzle[0], g.muzzle[1]);
     const fwd = this.forward();
     const up = { x: -fwd.y * p.flip, y: fwd.x * p.flip };
+    if (g.laser !== undefined) {
+      game.projectiles.laser(m.x, m.y, fwd.x, fwd.y, { damage: g.damage, color: g.laser, ignore: p.body });
+      if (!p.frozen) p.body.applyImpulseAtPoint({ x: -fwd.x * g.recoil, y: -fwd.y * g.recoil }, m, true);
+      game.particles.flash(m.x, m.y, g.flash, g.laser, 0.06);
+      game.renderer.addLight(m.x, m.y, 1.5, 0.5, g.laser, 0.08);
+      game.sound.gunshot(g.sound, m.x);
+      return;
+    }
     const n = g.pellets ?? 1;
     for (let i = 0; i < n; i++) {
       const a = (Math.random() - 0.5) * g.spread;
