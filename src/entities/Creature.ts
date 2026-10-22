@@ -314,7 +314,9 @@ export class Creature extends Entity {
     const ramp = this.state === 'getup' ? clamp(this.stateT / 1.0, 0.15, 1) : 1;
     const wagging = this.wag > 0 && standing;
     const folding = this.foldT > 0 && !conscious;
-    const sig = `${standing}:${Math.round(str * 50)}:${Math.round(ramp * 20)}:${folding}`;
+    // lying still it relaxes (see Human.updateMotors)
+    const relaxed = !standing && conscious && this.pain < 0.35 && this.stateT > 4;
+    const sig = `${standing}:${Math.round(str * 50)}:${Math.round(ramp * 20)}:${folding}:${relaxed}`;
     if (!force && !wagging && sig === this.motorSig) return;
     this.motorSig = wagging ? '' : sig;
     for (const l of this.order) {
@@ -332,7 +334,7 @@ export class Creature extends Entity {
         // going limp where it stands: the legs give way
         j.setMotorMaxForce(1e6);
         j.configureMotorPosition(target, K * 0.12, K * 0.0005 + 0.02);
-      } else if (!conscious || K <= 0) {
+      } else if (!conscious || K <= 0 || relaxed) {
         const fr = this.species.friction * (l.spec.muscle / 1500 + 0.1) * (this.alive ? 1 : 0.7) * (l.broken ? 0.2 : 1);
         j.configureMotorVelocity(0, fr * 30);
         j.setMotorMaxForce(fr);

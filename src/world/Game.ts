@@ -14,7 +14,7 @@ import { Puddles } from '../systems/Puddles';
 import type { Entity } from './Entity';
 import type { Part } from './Part';
 import type { ItemDef, SpawnOptions } from './types';
-import { settle, restCheck, REST_CHECK } from '../systems/Settle';
+import { settle, restCheck, wakeSettled, REST_CHECK } from '../systems/Settle';
 
 export interface GameHooks {
   onEntitiesChanged?: () => void;
@@ -51,6 +51,8 @@ export class Game {
   time = 0;
   private acc = 0;
   private restTick = -1;
+  /** Groups of parts put to sleep together by settle(). */
+  readonly slept: Part[][] = [];
   private lastTime = 0;
 
   /** Called once per physics step before entity logic (drag forces, tools). */
@@ -189,6 +191,7 @@ export class Game {
 
   clearAll(): void {
     for (const e of [...this.entities]) this.removeNow(e);
+    this.slept.length = 0;
     this.projectiles.clear();
     this.particles.clear();
     this.connections.clearAll();
@@ -335,6 +338,7 @@ export class Game {
     for (const h of this.preStepHandlers) h(dt);
     for (const e of this.entities) if (!e.destroyed) e.preStep(dt);
     this.connections.preStep(dt);
+    wakeSettled(this);
     this.physics.step();
     this.impacts.process();
     this.projectiles.step(dt);

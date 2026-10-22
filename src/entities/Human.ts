@@ -390,12 +390,15 @@ export class Human extends Entity implements Holder {
     const standing = this.state !== 'down' && conscious;
     const pose = standing ? POSE_STAND : POSE_DOWN;
     const writhe = !standing && conscious ? Math.min(0.9, this.pain * 0.9) : 0;
+    // someone lying still stops tensing up: weak muscles pushing against a pile of
+    // bodies never find a balance and keep the limbs creeping forever
+    const relaxed = !standing && conscious && writhe < 0.05 && !this.grips.length && this.stateT > 4;
     // re-sending identical motor targets would keep the bodies awake (and drifting)
     const getupRamp = this.state === 'getup' ? clamp(this.stateT / 1.2, 0.12, 1) : 1;
     const ik = standing ? this.holdIK() : null;
     let ikSig = '';
     if (ik) for (const k in ik) ikSig += Math.round(ik[k as LimbKey]! * 40) + ',';
-    const sig = `${standing}:${Math.round(str * 50)}:${Math.round(getupRamp * 20)}:${this.gripSig()}:${ikSig}`;
+    const sig = `${standing}:${Math.round(str * 50)}:${Math.round(getupRamp * 20)}:${this.gripSig()}:${ikSig}:${relaxed}`;
     if (!force && writhe === 0 && sig === this.motorSig) return;
     this.motorSig = sig;
     for (const l of this.order) {
@@ -424,7 +427,7 @@ export class Human extends Entity implements Holder {
         target += Math.sin(this.t * (1.5 + l.phase * 0.2) + l.phase) * writhe * 0.55 * f;
       }
       const K = l.spec.muscle * boost * (l.broken ? 0.05 : 1) * (l.attached ? 1 : 0);
-      if (!conscious || K <= 0) {
+      if (!conscious || K <= 0 || relaxed) {
         // limp: dry joint friction. Limbs still flop under their own weight, but
         // small sustained loads (a pile of bodies) no longer make them creep forever.
         const fr = (JOINT_FRICTION[l.spec.key.replace(/[FB]$/, '')] ?? 1) * (this.alive ? 1 : 0.7) * (l.broken ? 0.2 : 1);

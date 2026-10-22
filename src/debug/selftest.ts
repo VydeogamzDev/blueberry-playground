@@ -885,6 +885,41 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (d3.parts.reduce((n, p) => n + (p.destroyed ? 0 : p.hp), 0) >= before) return 'grenade did not hurt the dog';
       return true;
     }],
+    ['extra: conscious people and dogs lying in a pile stop squirming', () => {
+      kit.reset();
+      const all: Entity[] = [];
+      for (let i = 0; i < 5; i++) all.push(kit.spawn('human', (i % 2) * 0.35, 0.25 + i * 0.35, { angle: (Math.PI / 2) * (i % 2 ? 1 : -1) }));
+      for (let i = 0; i < 2; i++) all.push(kit.spawn('dog', 0.2 + i * 0.1, 2.4 + i * 0.6, { angle: Math.PI / 2 }));
+      const parts = () => game.entities.flatMap((e) => e.parts).filter((p) => !p.destroyed);
+      let t = 0;
+      while (t < 45 && parts().some((p) => !p.body.isSleeping())) {
+        kit.advance(1);
+        t++;
+      }
+      const awake = parts().filter((p) => !p.body.isSleeping()).length;
+      if (awake) return `${awake} bodies still moving after 45 s`;
+      const out = all.filter((e) => (e as Human).consciousness < 0.3).length;
+      if (out) return `${out} knocked out by the fall: the test needs them awake`;
+      return true;
+    }],
+    ['extra: a pile of people lying for a minute: no launches when parts of it wake', () => {
+      // people in a settled pile wake up one at a time (to get up, or when shoved);
+      // the rest of their sleeping group must wake with them, not gather speed
+      for (const run of [0, 1]) {
+        kit.reset();
+        const hs: Human[] = [];
+        for (let i = 0; i < 8; i++) hs.push(kit.spawn('human', -3 + (i % 4) * 0.5 + 0.017 * run, 1 + Math.floor(i / 4) * 2.2, { angle: i * 0.7 }) as Human);
+        kit.advance(2);
+        let peak = 0;
+        game.advance(48, (i) => {
+          if (i % 2 === 0) peak = Math.max(peak, kit.maxSpeed());
+        });
+        if (peak > 20) return `run ${run}: launch at ${peak.toFixed(1)} m/s`;
+        const dead = hs.filter((h) => !h.alive).length;
+        if (dead) return `run ${run}: ${dead} died lying in the pile`;
+      }
+      return true;
+    }],
     ['extra: a heap of people and props falls asleep, and wakes when disturbed', () => {
       kit.reset();
       for (let i = 0; i < 4; i++) human(-1.5 + i);
