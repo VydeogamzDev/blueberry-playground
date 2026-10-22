@@ -698,14 +698,14 @@ export class Controls {
   duplicate(list: Entity[]): void {
     if (!list.length) return;
     this.history.record('Duplicate');
-    const made = instantiate(this.game, capture(this.game, this.withAttached(list), true), { dx: 0.6, dy: 0.3 });
+    const made = instantiate(this.game, capture(this.game, this.withAttached(list)), { dx: 0.6, dy: 0.3 });
     this.selection = new Set(made);
     this.refreshOutlines();
   }
 
   copy(list: Entity[]): void {
     if (!list.length) return;
-    this.clipboard = capture(this.game, this.withAttached(list), true);
+    this.clipboard = capture(this.game, this.withAttached(list));
     this.ui.toast(`Copied ${list.length} object${list.length > 1 ? 's' : ''}`);
   }
 

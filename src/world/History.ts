@@ -65,7 +65,7 @@ export class History {
 
   private capture(label: string): Entry {
     const g = this.game;
-    return { label, snap: capture(g, g.entities, true), stains: g.stains.capture(), puddles: g.puddles.capture() };
+    return { label, snap: capture(g, g.entities), stains: g.stains.capture(), puddles: g.puddles.capture() };
   }
 
   private restore(e: Entry): void {

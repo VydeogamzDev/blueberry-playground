@@ -95,8 +95,8 @@ export interface PartState {
   burn?: number;
   char?: number;
   oil?: number;
-  /** The sprite as painted by wounds and scorching, when it is (undo history only: not JSON). */
-  paint?: Uint8Array;
+  /** What wounds and scorching painted on the sprite, when anything (see Part.paintData()). */
+  paint?: string;
 }
 
 export interface EntityState {

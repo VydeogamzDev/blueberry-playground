@@ -876,7 +876,7 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (game.entities[0].parts[0].frozen) return 'undoing the freeze left it frozen';
       return true;
     }],
-    ['extra: undo brings back wounds, fire, stains and puddles', () => {
+    ['extra: undo, and saving and loading, bring back wounds, fire, stains and puddles', () => {
       kit.reset();
       const h = human(0);
       const crate = kit.spawn('crate', 3, 0.45);
@@ -895,7 +895,8 @@ export function makeSelfTest(game: Game, controls: Controls) {
       const scene = () => {
         const c = game.entities.find((e) => e.def.id === 'crate')!.parts[0];
         const man = game.entities.find((e) => e.def.id === 'human');
-        return { wounds: man ? painted(man) : 0, burning: c.burning, charred: c.charred, oil: c.oil, stains: game.stains.capture().n, puddle: game.puddles.total };
+        const paint = man ? man.parts.map((p) => (p.destroyed ? '' : p.paintData() ?? '')).join('|') : '';
+        return { wounds: man ? painted(man) : 0, paint, burning: c.burning, charred: c.charred, oil: c.oil, stains: game.stains.capture().n, puddle: game.puddles.total };
       };
       const before = scene();
       if (!before.wounds || !before.stains || before.burning < 0.1 || before.charred <= 0 || before.puddle < 20) return `no scene to undo to: ${JSON.stringify(before)}`;
@@ -903,11 +904,16 @@ export function makeSelfTest(game: Game, controls: Controls) {
       game.resetEnvironment();
       kit.spawn('crate', 3, 0.45);
       controls.undo();
-      const after = scene();
-      const off = (k: keyof typeof before, tol: number) => Math.abs(after[k] - before[k]) > tol;
-      if (off('wounds', 0) || off('stains', 0) || off('burning', 0.01) || off('charred', 0.01) || off('oil', 0.01) || off('puddle', 0.01)) {
-        return `undo gave ${JSON.stringify(after)}, was ${JSON.stringify(before)}`;
-      }
+      const differs = (after: typeof before) => {
+        const off = (k: 'wounds' | 'stains' | 'burning' | 'charred' | 'oil' | 'puddle', tol: number) => Math.abs(after[k] - before[k]) > tol;
+        return after.paint !== before.paint || off('wounds', 0) || off('stains', 0) || off('burning', 0.01) || off('charred', 0.01) || off('oil', 0.01) || off('puddle', 0.01);
+      };
+      const show = (o: typeof before) => JSON.stringify({ ...o, paint: o.paint.length });
+      if (differs(scene())) return `undo gave ${show(scene())}, was ${show(before)}`;
+      const saved = saveToString(game);
+      game.resetEnvironment();
+      loadFromString(game, saved);
+      if (differs(scene())) return `loading gave ${show(scene())}, was ${show(before)} (save ${(saved.length / 1000).toFixed(0)} kB)`;
       kit.advance(0.5);
       if (!game.fire.count) return 'the restored crate does not burn';
       controls.redo();

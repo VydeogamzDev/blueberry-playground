@@ -206,8 +206,7 @@ export abstract class Entity {
     }
   }
 
-  /** `paint`: keep painted sprites too (see PartState.paint). */
-  serialize(paint = false): EntityState {
+  serialize(): EntityState {
     return {
       def: this.def.id,
       flip: this.flipped,
@@ -219,8 +218,8 @@ export abstract class Entity {
         if (p.burning > 0) s.burn = p.burning;
         if (p.charred > 0) s.char = p.charred;
         if (p.oil > 0) s.oil = p.oil;
-        const img = paint ? p.paintData() : null;
-        if (img) s.paint = img;
+        const paint = p.paintData();
+        if (paint) s.paint = paint;
         return s;
       }),
       extra: this.serializeExtra(),

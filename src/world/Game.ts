@@ -140,7 +140,7 @@ export class Game {
       }
     }
     const c = mains === 1 ? group[0].center() : { x: (x0 + x1) / 2 };
-    const snap = mirror(capture(this, group, true), c.x);
+    const snap = mirror(capture(this, group), c.x);
     // connections to things outside the group are re-made on the mirrored parts
     const outside = this.connections.list.flatMap((k) => {
       const ia = index.get(k.a.entity);

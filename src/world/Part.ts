@@ -2,6 +2,7 @@ import { RAPIER } from '../engine/Physics';
 import { PX, GROUPS_DYNAMIC, GROUPS_NOCOLLIDE } from '../engine/constants';
 import { Sprite, type Region, type Sprites } from '../engine/Sprites';
 import { lerpAngle, rotate, type V2 } from '../engine/math';
+import { fromBase64, toBase64 } from '../engine/base64';
 import { PixelArt, type Color } from '../art/PixelArt';
 import type { PhysMaterial } from './Materials';
 import type { Entity } from './Entity';
@@ -61,8 +62,8 @@ export class Part {
   private region: Region;
   private ownsImage = false;
   private texDirty = false;
-  /** A copy of the painted image as it is now, shared by every capture until it's painted again. */
-  private paintCopy: Uint8Array | null = null;
+  /** paintData() as it is now, kept until the sprite is painted again (undefined: not worked out). */
+  private paintStr: string | null | undefined = undefined;
   private readonly sprites: Sprites;
 
   // gameplay state
@@ -363,21 +364,43 @@ export class Part {
       this.ownsImage = true;
     }
     this.texDirty = true;
-    this.paintCopy = null;
+    this.paintStr = undefined;
     return this.image;
   }
 
-  /** The sprite as painted (wounds, blood, scorch), or null while it's the plain art. Don't modify it. */
-  paintData(): Uint8Array | null {
+  /**
+   * What wounds, blood and scorching have painted on the sprite: the pixels that
+   * differ from its art (3 bytes of index, then RGBA), base64; null for none.
+   */
+  paintData(): string | null {
     if (!this.ownsImage) return null;
-    return (this.paintCopy ??= this.image.slice());
+    if (this.paintStr === undefined) {
+      const base = this.art.toRGBA(1);
+      const img = this.image;
+      const out: number[] = [];
+      for (let k = 0; k < img.length; k += 4) {
+        if (img[k] === base[k] && img[k + 1] === base[k + 1] && img[k + 2] === base[k + 2] && img[k + 3] === base[k + 3]) continue;
+        const i = k >> 2;
+        out.push(i & 255, (i >> 8) & 255, i >> 16, img[k], img[k + 1], img[k + 2], img[k + 3]);
+      }
+      this.paintStr = out.length ? toBase64(Uint8Array.from(out)) : null;
+    }
+    return this.paintStr;
   }
 
-  /** Puts back a sprite from paintData() (of a part with the same art). */
-  restorePaint(img: Uint8Array): void {
-    if (img.length !== this.image.length) return;
-    this.ownImage().set(img);
-    this.paintCopy = img;
+  /** Paints back what paintData() gave, on a part with the same art. */
+  restorePaint(data: string): void {
+    const b = fromBase64(data);
+    const img = this.ownImage();
+    for (let j = 0; j + 7 <= b.length; j += 7) {
+      const k = (b[j] | (b[j + 1] << 8) | (b[j + 2] << 16)) * 4;
+      if (k + 4 > img.length) continue;
+      img[k] = b[j + 3];
+      img[k + 1] = b[j + 4];
+      img[k + 2] = b[j + 5];
+      img[k + 3] = b[j + 6];
+    }
+    this.paintStr = data;
   }
 
   /** Paints one art pixel (only where the sprite is solid), blended by alpha. */
