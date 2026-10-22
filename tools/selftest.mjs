@@ -3,6 +3,7 @@
  *
  *   npm test                 every test
  *   npm test -- liquids      only tests whose name contains "liquids"
+ *   SEED=7 npm test          with Math.random seeded, to replay a failure
  *
  * Starts the Vite dev server, opens the game in headless Chrome (or Edge) over
  * the DevTools protocol, runs `bp.selftest()` in the page and prints the results.
@@ -15,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const filter = process.argv[2] ?? '';
+const seed = process.env.SEED ? Number(process.env.SEED) >>> 0 : null;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const candidates = [
@@ -34,7 +36,8 @@ if (!browser) {
   process.exit(2);
 }
 
-const server = await createServer({ server: { port: 0, strictPort: false }, logLevel: 'error' });
+// (no file watching or hot reload: editing the source mid-run mustn't reload the page under the tests)
+const server = await createServer({ server: { port: 0, strictPort: false, hmr: false, watch: null }, logLevel: 'error' });
 await server.listen();
 const url = server.resolvedUrls.local[0];
 const profile = mkdtempSync(join(tmpdir(), 'bp-selftest-'));
@@ -102,6 +105,11 @@ try {
   }
   if (!ready) throw new Error(`the game did not start${errors.length ? ': ' + errors.join('; ') : ''}`);
 
+  if (seed !== null) {
+    // mulberry32: the same sequence every run
+    await evaluate(`(() => { let a = ${seed}; Math.random = () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })()`);
+    console.log(`Math.random seeded with ${seed}`);
+  }
   console.log(`Running self-tests${filter ? ` matching "${filter}"` : ''} in ${browser.split(/[\\/]/).pop()} (headless)...\n`);
   const t0 = Date.now();
   const results = JSON.parse(await evaluate(`bp.selftest(${JSON.stringify(filter)}).then((r) => JSON.stringify(r))`, 15 * 60 * 1000));
