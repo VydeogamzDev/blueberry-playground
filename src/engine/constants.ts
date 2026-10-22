@@ -1,0 +1,44 @@
+/** Meters per sprite pixel. All sprite art is authored on this grid. */
+export const PX = 1 / 32;
+
+/** Fixed physics timestep (seconds). */
+export const FIXED_DT = 1 / 120;
+
+/** Max physics steps per rendered frame before we drop time (spiral-of-death guard). */
+export const MAX_STEPS_PER_FRAME = 8;
+
+export const GRAVITY = -9.81;
+
+/** Sandbox bounds (meters). The floor surface sits at y = 0. */
+export const WORLD = {
+  left: -70,
+  right: 70,
+  floor: 0,
+  ceiling: 48,
+  wallThickness: 4,
+  floorThickness: 6,
+};
+
+/** Default camera zoom in CSS pixels per meter (2 screen px per sprite px). */
+export const DEFAULT_ZOOM = 64;
+export const MIN_ZOOM = 8;
+export const MAX_ZOOM = 320;
+
+/** Collision group bits. */
+export const GROUP = {
+  STATIC: 1 << 0,
+  DYNAMIC: 1 << 1,
+  DEBRIS: 1 << 2,
+  NOCOLLIDE: 1 << 3,
+} as const;
+
+export function groups(membership: number, filter: number): number {
+  return ((membership & 0xffff) << 16) | (filter & 0xffff);
+}
+
+export const GROUPS_STATIC = groups(GROUP.STATIC, GROUP.DYNAMIC | GROUP.DEBRIS | GROUP.NOCOLLIDE);
+export const GROUPS_DYNAMIC = groups(GROUP.DYNAMIC, GROUP.STATIC | GROUP.DYNAMIC | GROUP.DEBRIS);
+/** Debris (gibs, shells) collides with the world and objects but not other debris. */
+export const GROUPS_DEBRIS = groups(GROUP.DEBRIS, GROUP.STATIC | GROUP.DYNAMIC);
+/** "No collide" objects only touch the static environment. */
+export const GROUPS_NOCOLLIDE = groups(GROUP.NOCOLLIDE, GROUP.STATIC);
