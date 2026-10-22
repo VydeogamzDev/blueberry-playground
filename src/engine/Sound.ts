@@ -273,15 +273,15 @@ export class Sound {
     if (!this.allow('gun', 6, 40)) return;
     switch (kind) {
       case 'pistol': this.play('gun/pistol', { gain: 0.8, x }); break;
-      case 'revolver': this.play('gun/magnum', { gain: 0.95, x }); break;
+      case 'revolver': this.play('gun/magnum', { gain: 0.7, x }); break;
       case 'smg': this.play('gun/smg', { gain: 0.7, x, vary: 0.04 }); break;
       case 'minigun': this.play('gun/rifle', { gain: 0.6, x, rate: 1.15, vary: 0.05 }); break;
       case 'rifle': this.play('gun/rifle', { gain: 0.85, x }); break;
       case 'shotgun':
-        this.play('gun/shotgun', { gain: 1, x });
+        this.play('gun/shotgun', { gain: 1.15, x });
         this.play('gun/pump', { gain: 0.35, x, delay: 0.35 });
         break;
-      case 'sniper': this.play('gun/sniper', { gain: 1, x, vary: 0.03 }); break;
+      case 'sniper': this.play('gun/sniper', { gain: 1.2, x, vary: 0.03 }); break;
       case 'laser':
         this.play('machine/zap', { gain: 0.75, x, rate: 1.7, vary: 0.05 });
         this.play('machine/spark', { gain: 0.3, x, rate: 1.4 });
@@ -304,7 +304,7 @@ export class Sound {
   bulletHit(mat: ImpactSound, x?: number): void {
     if (!this.allow('bhit', 6, 50)) return;
     switch (mat) {
-      case 'flesh': this.play('hit/flesh', { gain: 0.75, x }); break;
+      case 'flesh': this.play('hit/flesh', { gain: 0.55, x }); break;
       case 'metal': this.play('hit/metal', { gain: 0.5, x }); break;
       case 'wood': this.play('hit/wood', { gain: 0.6, x }); break;
       case 'glass': this.play('hit/glass', { gain: 0.6, x }); break;
@@ -342,7 +342,7 @@ export class Sound {
 
   gib(x?: number): void {
     if (!this.allow('gib', 2, 80)) return;
-    this.play('gore/gib', { gain: 1, x });
+    this.play('gore/gib', { gain: 0.8, x });
     this.play('gore/splat', { gain: 0.6, x, delay: 0.04 });
   }
 
