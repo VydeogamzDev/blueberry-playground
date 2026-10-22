@@ -59,6 +59,12 @@ try {
   check('a long press while spawning stops spawning and spawns nothing', disarmed.armed === null && disarmed.n === 1, JSON.stringify(disarmed));
   await ev(`bp.ui.closeContextMenu(); true`);
 
+  await tap(await centerOf(`document.querySelector('.tb-btn[title^="Undo"]')`));
+  const undone = await ev(`bp.game.entities.length`);
+  await tap(await centerOf(`document.querySelector('.tb-btn[title^="Redo"]')`));
+  const redone = await ev(`bp.game.entities.length`);
+  check('tapping Undo takes the spawn back and Redo puts it back', undone === 0 && redone === 1, `${undone}, then ${redone}`);
+
   const c0 = await screenOf(chest);
   const y0 = await ev(`${chest}.y`);
   await touch('touchStart', [c0]);
