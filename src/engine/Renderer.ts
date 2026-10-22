@@ -85,6 +85,7 @@ export function makePixelMaterial(tex: THREE.Texture, w: number, h: number, ghos
 const BG_FRAG = /* glsl */ `
 uniform vec2 uCam;
 uniform vec2 uRes;
+uniform vec2 uCenter;
 uniform float uScale;
 uniform float uGrid;
 uniform float uPx;
@@ -97,7 +98,7 @@ float lineMask(float w, float period, float thick) {
 }
 
 void main() {
-  vec2 world = uCam + (gl_FragCoord.xy - uRes * 0.5) / uScale;
+  vec2 world = uCam + (gl_FragCoord.xy - uCenter) / uScale;
   // snap to sprite pixel grid so the backdrop reads as pixel art
   vec2 sp = floor(world / uPx) * uPx;
   vec3 base = vec3(0.157, 0.165, 0.176);
@@ -136,7 +137,7 @@ const LIGHT_MAX = 16;
  */
 const LIGHT_FRAG = /* glsl */ `
 uniform vec2 uCam;
-uniform vec2 uRes;
+uniform vec2 uCenter;
 uniform float uScale;
 uniform float uPx;
 uniform float uAmbient;
@@ -144,7 +145,7 @@ uniform int uLightN;
 uniform vec4 uLights[${LIGHT_MAX}];
 uniform vec3 uLightCol[${LIGHT_MAX}];
 void main() {
-  vec2 world = uCam + (gl_FragCoord.xy - uRes * 0.5) / uScale;
+  vec2 world = uCam + (gl_FragCoord.xy - uCenter) / uScale;
   vec2 sp = (floor(world / uPx) + 0.5) * uPx;
   vec3 L = vec3(uAmbient);
   for (int i = 0; i < ${LIGHT_MAX}; i++) {
@@ -188,6 +189,8 @@ export class Renderer {
   private lights: Light[] = [];
   /** World brightness without lights (1 = day, lower = night). */
   ambient = 1;
+  /** Screen pixels covered by UI on the left; the camera centers on the rest. */
+  private inset = 0;
   private shakeAmt = 0;
   private shakeX = 0;
   private shakeY = 0;
@@ -206,6 +209,7 @@ export class Renderer {
       uniforms: {
         uCam: { value: new THREE.Vector2() },
         uRes: { value: new THREE.Vector2() },
+        uCenter: { value: new THREE.Vector2() },
         uScale: { value: 1 },
         uGrid: { value: 1 },
         uPx: { value: 1 / 32 },
@@ -224,7 +228,7 @@ export class Renderer {
       fragmentShader: LIGHT_FRAG,
       uniforms: {
         uCam: { value: new THREE.Vector2() },
-        uRes: { value: new THREE.Vector2() },
+        uCenter: { value: new THREE.Vector2() },
         uScale: { value: 1 },
         uPx: { value: PX },
         uAmbient: { value: 1 },
@@ -273,6 +277,26 @@ export class Renderer {
     return this.lights.length;
   }
 
+  /** Screen x (CSS px) of the camera center: the middle of the visible area. */
+  get centerX(): number {
+    return this.inset + (this.width - this.inset) / 2;
+  }
+
+  /** Width of the visible area (CSS px). */
+  get viewWidth(): number {
+    return this.width - this.inset;
+  }
+
+  /**
+   * Sets how much of the left of the screen is covered (the catalog). With
+   * keepView the camera shifts so nothing on screen moves.
+   */
+  setInsetLeft(px: number, keepView = true): void {
+    const before = this.centerX;
+    this.inset = Math.max(0, Math.min(px, this.width * 0.6));
+    if (keepView) this.camX += (this.centerX - before) / this.zoom;
+  }
+
   shake(amount: number): void {
     this.shakeAmt = Math.min(1.5, this.shakeAmt + amount);
   }
@@ -295,14 +319,14 @@ export class Renderer {
 
   screenToWorld(sx: number, sy: number): V2 {
     return {
-      x: this.camX + (sx - this.width / 2) / this.zoom,
+      x: this.camX + (sx - this.centerX) / this.zoom,
       y: this.camY - (sy - this.height / 2) / this.zoom,
     };
   }
 
   worldToScreen(x: number, y: number): V2 {
     return {
-      x: (x - this.camX) * this.zoom + this.width / 2,
+      x: (x - this.camX) * this.zoom + this.centerX,
       y: -(y - this.camY) * this.zoom + this.height / 2,
     };
   }
@@ -323,8 +347,8 @@ export class Renderer {
     const hw = this.width / 2 / this.zoom;
     const hh = this.height / 2 / this.zoom;
     const cam = this.camera;
-    cam.left = cx - hw;
-    cam.right = cx + hw;
+    cam.left = cx - this.centerX / this.zoom;
+    cam.right = cx + (this.width - this.centerX) / this.zoom;
     cam.top = cy + hh;
     cam.bottom = cy - hh;
     cam.updateProjectionMatrix();
@@ -332,17 +356,19 @@ export class Renderer {
     const u = this.bgMat.uniforms;
     u.uCam.value.set(cx, cy);
     u.uRes.value.set(this.width * this.dpr, this.height * this.dpr);
+    u.uCenter.value.set(this.centerX * this.dpr, (this.height * this.dpr) / 2);
     u.uScale.value = scale;
     u.uGrid.value = this.showGrid ? 1 : 0;
-    this.updateLights(cx, cy, hw, hh, scale, dt);
+    // lights are culled against the whole canvas (its middle is left of the camera center)
+    this.updateLights(cx, cy, cx + (this.width / 2 - this.centerX) / this.zoom, hw, hh, scale, dt);
 
     this.gl.render(this.scene, cam);
   }
 
-  private updateLights(cx: number, cy: number, hw: number, hh: number, scale: number, dt: number): void {
+  private updateLights(cx: number, cy: number, midX: number, hw: number, hh: number, scale: number, dt: number): void {
     const u = this.lightMat.uniforms;
     // keep the lights that reach the screen, strongest first
-    const vis = this.lights.filter((l) => Math.abs(l.x - cx) < hw + l.r && Math.abs(l.y - cy) < hh + l.r);
+    const vis = this.lights.filter((l) => Math.abs(l.x - midX) < hw + l.r && Math.abs(l.y - cy) < hh + l.r);
     const strength = (l: Light) => l.i * (l.max > 0 ? l.life / l.max : 1);
     vis.sort((a, b) => strength(b) * b.r - strength(a) * a.r);
     const n = Math.min(LIGHT_MAX, vis.length);
@@ -354,7 +380,7 @@ export class Renderer {
     u.uLightN.value = n;
     u.uAmbient.value = this.ambient;
     u.uCam.value.set(cx, cy);
-    u.uRes.value.set(this.width * this.dpr, this.height * this.dpr);
+    u.uCenter.value.set(this.centerX * this.dpr, (this.height * this.dpr) / 2);
     u.uScale.value = scale;
     this.lightMesh.visible = n > 0 || this.ambient < 0.999;
     // one-frame lights go now; flashes fade out over their life

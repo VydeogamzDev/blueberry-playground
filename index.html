@@ -4,8 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Blueberry Playground</title>
+    <style>
+      /* shown while the game script downloads and the physics engine starts */
+      html, body { margin: 0; background: #16171a; }
+      #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #7d848c; font: 13px 'Segoe UI', system-ui, sans-serif; z-index: 10; }
+      #loading .bar { width: 160px; height: 4px; margin: 10px auto 0; background: #2a2d31; overflow: hidden; }
+      #loading .bar i { display: block; width: 40%; height: 100%; background: #e2bd57; animation: ld 1s linear infinite; }
+      @keyframes ld { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+    </style>
   </head>
   <body>
+    <div id="loading"><div>Loading Blueberry Playground…<div class="bar"><i></i></div></div></div>
     <div id="app">
       <canvas id="view"></canvas>
       <div id="ui"></div>

@@ -25,6 +25,7 @@ async function boot(): Promise<void> {
   if (crate) game.spawn(crate, 2, 0.45);
 
   game.start();
+  document.getElementById('loading')?.remove();
   // exposed for debugging and automated tests in the browser console
   (window as unknown as { bp: unknown }).bp = { game, controls, ui, getItem, kit: makeTestKit(game, controls), selftest: makeSelfTest(game, controls), BALANCE, RAPIER, DRAG };
 }

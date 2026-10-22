@@ -75,7 +75,7 @@ export class Game {
     this.fire = new Fire(this);
     this.sound.panFor = (x) => {
       const r = this.renderer;
-      return ((x - r.camX) * r.zoom) / (r.width / 2);
+      return ((x - r.camX) * r.zoom) / (r.viewWidth / 2);
     };
   }
 

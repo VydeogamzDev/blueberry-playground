@@ -106,6 +106,9 @@ export class UI implements UIBridge {
       });
     }
     game.frameHandlers.push(() => this.frame());
+    // the camera centers on the part of the screen the catalog leaves free
+    this.updateInset(false);
+    window.addEventListener('resize', () => this.updateInset(false));
   }
 
   // ---- catalog -----------------------------------------------------------------
@@ -215,6 +218,13 @@ export class UI implements UIBridge {
   toggleCatalog(): void {
     this.catalogOpen = !this.catalogOpen;
     this.catalog.classList.toggle('collapsed', !this.catalogOpen);
+    this.updateInset(true);
+  }
+
+  /** Tells the renderer how much of the screen the catalog covers. */
+  private updateInset(keepView: boolean): void {
+    const w = this.catalogOpen ? this.catalog.getBoundingClientRect().width : this.strip.getBoundingClientRect().width;
+    this.game.renderer.setInsetLeft(w, keepView);
   }
 
   // ---- toolbar -----------------------------------------------------------------
