@@ -187,6 +187,7 @@ export class Renderer {
   private lightMat: THREE.ShaderMaterial;
   private lightMesh: THREE.Mesh;
   private lights: Light[] = [];
+  private warmed = false;
   /** World brightness without lights (1 = day, lower = night). */
   ambient = 1;
   /** Screen pixels covered by UI on the left; the camera centers on the rest. */
@@ -362,6 +363,15 @@ export class Renderer {
     // lights are culled against the whole canvas (its middle is left of the camera center)
     this.updateLights(cx, cy, cx + (this.width / 2 - this.centerX) / this.zoom, hw, hh, scale, dt);
 
+    if (!this.warmed) {
+      // the light pass is hidden until the first lamp or blast: compile it now,
+      // not in the middle of the first explosion
+      this.warmed = true;
+      const shown = this.lightMesh.visible;
+      this.lightMesh.visible = true;
+      this.gl.compile(this.scene, cam);
+      this.lightMesh.visible = shown;
+    }
     this.gl.render(this.scene, cam);
   }
 

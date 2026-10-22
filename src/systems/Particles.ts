@@ -61,6 +61,7 @@ const FIRE_RAMP = [0xfff4c4, 0xffd45c, 0xffa034, 0xe8601e, 0xb03414, 0x5e2216];
 class Layer {
   readonly cap: number;
   count = 0;
+  private warmed = false;
   readonly x: Float32Array;
   readonly y: Float32Array;
   readonly vx: Float32Array;
@@ -182,7 +183,10 @@ class Layer {
       this.psize[i] = this.size[i] + (this.size1[i] - this.size[i]) * t;
       this.shape[i] = kd === PK.Flash ? 2 : kd === PK.Smoke || kd === PK.Fire || kd === PK.Dust ? 1 : 0;
     }
-    this.geo.setDrawRange(0, this.count);
+    // the first frame draws one blank particle, so the buffers go to the GPU at
+    // load rather than as a hitch on the first shot or blast
+    this.geo.setDrawRange(0, this.warmed ? this.count : Math.max(1, this.count));
+    this.warmed = true;
     for (const name of ['position', 'pcolor', 'psize', 'pshape']) {
       const attr = this.geo.getAttribute(name) as THREE.BufferAttribute;
       attr.clearUpdateRanges();
@@ -479,6 +483,7 @@ export class Stains {
   private dirtyLo = Infinity;
   private dirtyHi = -1;
   private occupied = new Map<number, number>();
+  private warmed = false;
 
   constructor(scene: THREE.Scene) {
     this.pos = new Float32Array(this.cap * 3);
@@ -538,7 +543,9 @@ export class Stains {
 
   frame(scale: number): void {
     this.mat.uniforms.uScale.value = scale;
-    this.geo.setDrawRange(0, this.n);
+    // one blank stain on the first frame uploads the buffers at load (see Layer.frame)
+    this.geo.setDrawRange(0, this.warmed ? this.n : Math.max(1, this.n));
+    this.warmed = true;
     if (this.dirtyHi >= 0) {
       for (const name of ['position', 'pcolor']) {
         const attr = this.geo.getAttribute(name) as THREE.BufferAttribute;
