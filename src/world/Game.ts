@@ -13,6 +13,7 @@ import { Fire } from '../systems/Fire';
 import type { Entity } from './Entity';
 import type { Part } from './Part';
 import type { ItemDef, SpawnOptions } from './types';
+import { settle, REST_CHECK } from '../systems/Settle';
 
 export interface GameHooks {
   onEntitiesChanged?: () => void;
@@ -47,6 +48,7 @@ export class Game {
   /** Simulated time in seconds. */
   time = 0;
   private acc = 0;
+  private restTick = -1;
   private lastTime = 0;
 
   /** Called once per physics step before entity logic (drag forces, tools). */
@@ -323,6 +325,11 @@ export class Game {
     this.impacts.process();
     this.projectiles.step(dt);
     for (const e of this.entities) if (!e.destroyed) e.postStep(dt);
+    const tick = Math.floor(this.time / REST_CHECK);
+    if (tick !== this.restTick) {
+      this.restTick = tick;
+      settle(this, this.entities);
+    }
     for (const e of this.entities) for (const p of e.parts) if (!p.destroyed) p.sync();
     this.connections.postStep(dt);
     this.fire.step(dt);

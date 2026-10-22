@@ -227,9 +227,9 @@ function buttonArt(): PixelArt {
 
 const TOOLS: { id: string; tool: string; name: string; desc: string; tags: string[] }[] = [
   { id: 'tool-rope', tool: 'rope', name: 'Rope', desc: 'Drag from one object to another (or to the background) to tie a rope.', tags: ['string', 'cable', 'tie'] },
-  { id: 'tool-weld', tool: 'weld', name: 'Fixed Connector', desc: 'Drag between two objects to weld them rigidly together.', tags: ['weld', 'glue', 'attach'] },
+  { id: 'tool-weld', tool: 'weld', name: 'Fixed Connector', desc: 'Drag between two objects to weld them rigidly together. Click to weld an object to whatever is behind it, or to the background.', tags: ['weld', 'glue', 'attach'] },
   { id: 'tool-spring', tool: 'spring', name: 'Spring', desc: 'Drag between two objects to connect them with a spring.', tags: ['elastic', 'bungee'] },
-  { id: 'tool-hinge', tool: 'hinge', name: 'Hinge', desc: 'Drag between two objects: they rotate freely around the start point.', tags: ['axle', 'joint', 'rotate'] },
+  { id: 'tool-hinge', tool: 'hinge', name: 'Hinge', desc: 'Drag between two objects: they rotate freely around the start point. Click to hinge an object to whatever is behind it, or to the background.', tags: ['axle', 'joint', 'rotate'] },
   { id: 'tool-pin', tool: 'pin', name: 'Pin', desc: 'Click an object to pin it to the background at that point.', tags: ['nail', 'anchor', 'fix'] },
   { id: 'tool-wire', tool: 'wire', name: 'Wire', desc: 'Connect devices electrically: batteries, buttons, lights, motors, guns, explosives.', tags: ['cable', 'electric', 'power'] },
   { id: 'tool-remove', tool: 'remove', name: 'Remove Connections', desc: 'Click an object to remove all of its connections.', tags: ['delete', 'cut', 'detach'] },

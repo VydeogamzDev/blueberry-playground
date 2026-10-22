@@ -28,6 +28,8 @@ export abstract class Entity {
   usesPower = false;
   /** Can receive activation from the player / wires. */
   activatable = false;
+  /** Set by entities that can tell they have come to rest (limp ragdolls); see settle(). */
+  atRest = false;
 
   constructor(game: Game, def: ItemDef, flipped = false) {
     this.id = Entity.nextId++;

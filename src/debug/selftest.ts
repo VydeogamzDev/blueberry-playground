@@ -384,7 +384,9 @@ export function makeSelfTest(game: Game, controls: Controls) {
       kit.advance(0.3);
       const blade = kit.spawn('plank', 13.15, 3.5);
       blade.setFrozen(true);
+      kit.advance(0.05);
       tool('tool-weld', 11.95, 3.5, 12.5, 3.5);
+      if (!game.connections.list.some((c) => c.kind === 'weld' && c.b?.entity === blade)) return 'blade not welded to the rotor';
       blade.setFrozen(false);
       tool('tool-wire', bat.parts[0].x, bat.parts[0].y, 11.85, 3.55);
       kit.advance(3);
@@ -414,19 +416,21 @@ export function makeSelfTest(game: Game, controls: Controls) {
         const h = human(0);
         kit.advance(1);
         const hand = h.limbs.get('handF')!.part;
-        const g = kit.spawn(id, hand.x + side * 1.8, 0.3) as Firearm;
+        const hx = hand.x;
+        const hy = hand.y;
+        const g = kit.spawn(id, hx + side * 1.8, 0.3) as Firearm;
         kit.advance(0.5);
-        // grabbed by the far end, so the body of the gun meets the person first;
-        // the cursor heads for the hand wherever it is pushed to, like a player would
+        // grabbed by the far end, so the body of the gun meets the person first and
+        // shoves them; the cursor goes to where the hand was and is let go there
         const s = g.main.localToWorld(side * 0.5, 0);
         kit.down(s.x, s.y);
         for (let i = 1; i <= 36; i++) {
           const t = i / 36;
-          kit.move(s.x + (hand.x - s.x) * t, s.y + (hand.y - s.y) * t);
+          kit.move(s.x + (hx - s.x) * t, s.y + (hy - s.y) * t);
           game.advance(1 / 60);
         }
         game.advance(0.3);
-        kit.up(hand.x, hand.y);
+        kit.up(hx, hy);
         kit.advance(1);
         if (!g.holder) return `${id} from the ${side > 0 ? 'front' : 'back'} not held`;
       }
@@ -659,6 +663,47 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (!f.destroyed) return 'shot flask did not shatter';
       kit.advance(1.5);
       if (hp(h2) > hp1 - 10) return `splash barely hurt (${(hp1 - hp(h2)).toFixed(1)} hp)`;
+      return true;
+    }],
+    ['extra: hinge and weld by clicking: to the background or what is behind', () => {
+      const click = (id: string, x: number, y: number) => {
+        controls.arm(getItem(id)!);
+        kit.down(x, y);
+        kit.up(x, y);
+        controls.arm(null);
+      };
+      // a plank hinged to the background at one end swings down and hangs from it
+      kit.reset();
+      const plank = kit.spawn('plank', 0, 3)!.parts[0];
+      plank.setFrozen(true);
+      kit.advance(0.2);
+      const end = plank.pixelToWorld(2, plank.h / 2);
+      click('tool-hinge', end.x, end.y);
+      const c = game.connections.list[0];
+      if (!c || c.kind !== 'hinge' || c.b) return 'no background hinge';
+      plank.setFrozen(false);
+      // it swings like a pendulum: its middle passes right under the hinge
+      let low = Infinity;
+      let drift = 0;
+      for (let i = 0; i < 40; i++) {
+        kit.advance(0.1);
+        low = Math.min(low, plank.y);
+        const a = plank.localToWorld(c.la.x, c.la.y);
+        drift = Math.max(drift, Math.hypot(a.x - end.x, a.y - end.y));
+      }
+      if (drift > 0.03) return `hinge drifted ${drift.toFixed(3)} m`;
+      if (low > end.y - 0.8) return `plank did not swing down (lowest ${(end.y - low).toFixed(2)} m below the hinge)`;
+      // a wheel clicked where it overlaps a crate is hinged to the crate
+      kit.reset();
+      const crate = kit.spawn('crate', 0, 0.45)!;
+      const wheel = kit.spawn('tire', 0.3, 0.45)!;
+      kit.advance(0.3);
+      const w = wheel.parts[0];
+      w.teleport(0.3, 0.45, 0);
+      click('tool-hinge', w.x, w.y);
+      const h = game.connections.list[0];
+      const ends = h ? [h.a.entity, h.b?.entity] : [];
+      if (!ends.includes(crate) || !ends.includes(wheel)) return `wheel not hinged to the crate (${h ? h.b?.entity.def.id ?? 'background' : 'none'})`;
       return true;
     }],
   ];

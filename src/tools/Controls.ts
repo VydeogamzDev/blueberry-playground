@@ -366,8 +366,15 @@ export class Controls {
     const target = this.game.pick(this.wx, this.wy, this.pickRadius(), (p) => p !== c.part);
     const moved = Math.hypot(this.wx - c.wx, this.wy - c.wy);
     if (!target) {
-      if (tool === 'wire' || tool === 'weld' || tool === 'hinge') {
-        this.ui.toast(tool === 'wire' ? 'Wires must connect two objects' : 'Release over another object');
+      if (tool === 'wire') {
+        this.ui.toast('Wires must connect two objects');
+        return;
+      }
+      if (tool === 'weld' || tool === 'hinge') {
+        // joins whatever overlaps the start point, else fixes it to the background there
+        const under = this.game.pick(c.wx, c.wy, 0, (p) => p !== c.part && !p.entity.parts.includes(c.part));
+        this.game.connections.create(tool, c.part, { x: c.wx, y: c.wy }, under ?? null, { x: c.wx, y: c.wy });
+        this.game.sound.place(c.wx, 'metal');
         return;
       }
       if (moved < 0.05) return;

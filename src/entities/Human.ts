@@ -9,6 +9,7 @@ import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOp
 import { limbArt, faceColors, EYE, MOUTH, HUMAN_SKIN, type BodyKind, type LimbKey, type Skin } from '../art/human';
 import type { Item, Holder } from './Item';
 import type { Drug } from './Syringe';
+import { REST_CHECK } from '../systems/Settle';
 
 interface LimbSpec {
   key: LimbKey;
@@ -67,6 +68,10 @@ const POSE_DOWN: Pose = {
   head: -0.2, midTorso: 0.12, lowerTorso: 0.12, upperArmF: 0.6, upperArmB: 0.35, lowerArmF: 1.1, lowerArmB: 0.9,
   upperLegF: 0.55, upperLegB: 0.3, lowerLegF: -0.9, lowerLegB: -0.7, handF: 0.3, handB: 0.3, footF: 0.15, footB: 0.15,
 };
+
+/** How far (m, rad) parts may jiggle between rest checks and still count as at rest. */
+const REST_DIST = 0.015;
+const REST_ANGLE = 0.06;
 
 /** Dry friction torque (N*m) in a limp body's joints, keyed by the child limb. */
 const JOINT_FRICTION: Record<string, number> = {
@@ -247,6 +252,33 @@ export class Human extends Entity implements Holder {
   }
 
   // ---------------------------------------------------------------- control
+
+  /** Part poses at the last rest check, and how many checks in a row found them still. */
+  private restRef: number[] = [];
+  private restChecks = 0;
+  private restTick = -1;
+
+  /** A limp body whose parts have had no net movement for a second is at rest (see settle()). */
+  private restAssist(): void {
+    const tick = Math.floor(this.game.time / REST_CHECK);
+    if (tick === this.restTick) return;
+    this.restTick = tick;
+    const parts = this.parts.filter((p) => !p.destroyed);
+    const ref = this.restRef;
+    const same = ref.length === parts.length * 3;
+    let moved = !same || this.strength() > 0 || this.held || this.grips.length > 0;
+    let awake = false;
+    for (let i = 0; i < parts.length && !moved; i++) {
+      const p = parts[i];
+      if (p.frozen) moved = true;
+      else if (Math.abs(p.x - ref[i * 3]) > REST_DIST || Math.abs(p.y - ref[i * 3 + 1]) > REST_DIST) moved = true;
+      else if (Math.abs(p.a - ref[i * 3 + 2]) > REST_ANGLE || Math.hypot(p.vx, p.vy) > 1) moved = true;
+      else if (!p.body.isSleeping()) awake = true;
+    }
+    this.restChecks = moved ? 0 : this.restChecks + 1;
+    this.restRef = parts.flatMap((p) => [p.x, p.y, p.a]);
+    this.atRest = this.restChecks >= 2 && awake;
+  }
 
   /** Overall muscle strength 0..1. */
   private strength(): number {
@@ -634,6 +666,7 @@ export class Human extends Entity implements Holder {
 
   postStep(dt: number): void {
     this.updateGrips(dt);
+    this.restAssist();
     // ---- joint stress: limbs tear off when stretched too far
     for (const l of this.order) {
       if (!l.joint || l.severed || !l.joint.isValid() || !l.parent) continue;
@@ -1164,8 +1197,11 @@ export class Human extends Entity implements Holder {
       const d = Math.hypot(l.part.x - gw.x, l.part.y - gw.y);
       // or the item was let go with the cursor right on the hand (its body may have
       // been held back by the person while the cursor went through)
-      const aimed = !!at && Math.hypot(l.part.x - at.x, l.part.y - at.y) < 0.3 && distToSprite(item.main, at.x, at.y) < 0.6;
-      if ((d < 0.3 || touch < 0.15 || aimed) && d < bd) {
+      const aim = at ? Math.hypot(l.part.x - at.x, l.part.y - at.y) : Infinity;
+      const aimed = aim < 0.3 && distToSprite(item.main, at!.x, at!.y) < 0.6;
+      // or it was shoved into them on the way and pushed the hand a little off the cursor
+      const shoved = aim < 0.6 && this.touching(item);
+      if ((d < 0.3 || touch < 0.15 || aimed || shoved) && d < bd) {
         bd = d;
         best = l;
       }
@@ -1180,6 +1216,24 @@ export class Human extends Entity implements Holder {
     }
     this.attach(it, best);
     return true;
+  }
+
+  /** Is the item pressing against any part of this person? */
+  private touching(item: Item): boolean {
+    const world = this.game.physics.world;
+    const mine = new Set(this.parts.filter((p) => !p.destroyed).map((p) => p.body.handle));
+    for (const c of item.main.colliders) {
+      let hit = false;
+      world.contactPairsWith(c, (other) => {
+        const b = other.parent();
+        if (hit || !b || !mine.has(b.handle)) return;
+        world.contactPair(c, other, (m) => {
+          if (m.numContacts() > 0) hit = true;
+        });
+      });
+      if (hit) return true;
+    }
+    return false;
   }
 
   private attach(item: Item, hand: Limb): void {
