@@ -4,8 +4,13 @@ export const PX = 1 / 32;
 /** Fixed physics timestep (seconds). */
 export const FIXED_DT = 1 / 120;
 
-/** Max physics steps per rendered frame before we drop time (spiral-of-death guard). */
-export const MAX_STEPS_PER_FRAME = 8;
+/**
+ * Max physics steps per rendered frame before we drop time (spiral-of-death
+ * guard); fewer when the steps are slow (see Game.loop).
+ */
+export const MAX_STEPS_PER_FRAME = 16;
+/** Milliseconds of physics a frame may spend catching up. */
+export const STEP_BUDGET_MS = 12;
 
 export const GRAVITY = -9.81;
 

@@ -31,10 +31,15 @@ interface Grab {
   frozenMove: boolean;
   offset: V2;
   savedDamping: number;
+  /** Where the hand holding it is (it follows the cursor, see preStep()). */
+  at: V2;
 }
 
-/** Drag spring tuning (stiffness per kg, damping as a fraction of stiffness). */
-export const DRAG = { stiffness: 170, damping: 0.01 };
+/**
+ * Drag spring tuning (stiffness per kg, damping as a fraction of stiffness), and
+ * how fast the hand can follow the cursor (m/s: about a hard throw).
+ */
+export const DRAG = { stiffness: 170, damping: 0.01, maxSpeed: 25 };
 
 const SELECT_COLOR = 0xf2d16b;
 const HOVER_COLOR = 0x9aa3ad;
@@ -245,7 +250,7 @@ export class Controls {
     const local = part.worldToLocal(wx, wy);
     const g: Grab = {
       part, local, anchor: null, joint: null, frozenMove: part.frozen,
-      offset: { x: part.x - wx, y: part.y - wy }, savedDamping: part.body.angularDamping(),
+      offset: { x: part.x - wx, y: part.y - wy }, savedDamping: part.body.angularDamping(), at: { x: wx, y: wy },
     };
     if (!part.frozen) {
       const world = this.game.physics.world;
@@ -279,7 +284,7 @@ export class Controls {
     }
   }
 
-  private preStep(_dt: number): void {
+  private preStep(dt: number): void {
     const g = this.grab;
     if (!g) return;
     if (g.part.destroyed) {
@@ -311,7 +316,14 @@ export class Controls {
       }
       return;
     }
-    g.anchor?.setNextKinematicTranslation({ x: tx, y: ty });
+    // the hand chases the cursor no faster than a hard throw: a cursor that jumps
+    // (a dropped frame, a tap on a touch screen) would fling it at hundreds of m/s
+    const dx = tx - g.at.x;
+    const dy = ty - g.at.y;
+    const d = Math.hypot(dx, dy);
+    const most = DRAG.maxSpeed * dt;
+    g.at = d > most ? { x: g.at.x + (dx / d) * most, y: g.at.y + (dy / d) * most } : { x: tx, y: ty };
+    g.anchor?.setNextKinematicTranslation(g.at);
     const rot = this.rotateInput();
     if (rot !== 0) {
       const b = g.part.body;

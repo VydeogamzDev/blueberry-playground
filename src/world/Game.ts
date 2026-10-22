@@ -2,7 +2,7 @@ import { capture, instantiateIndexed, mirror, mirrorLocal } from './Snapshot';
 import { RAPIER, Physics } from '../engine/Physics';
 import { Renderer } from '../engine/Renderer';
 import { Sound } from '../engine/Sound';
-import { FIXED_DT, MAX_STEPS_PER_FRAME, WORLD } from '../engine/constants';
+import { FIXED_DT, MAX_STEPS_PER_FRAME, STEP_BUDGET_MS, WORLD } from '../engine/constants';
 import { Environment } from './Environment';
 import { Particles, Stains } from '../systems/Particles';
 import { Impacts } from '../systems/Impacts';
@@ -286,12 +286,15 @@ export class Game {
     if (!this.paused) this.acc += realDt * this.timeScale;
     let steps = 0;
     const s0 = performance.now();
-    while (this.acc >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
+    // a slow frame rate (a throttled tab, a slow GPU) still gets real time while
+    // the physics is cheap; a heavy scene slows down rather than stalling
+    const most = Math.max(4, Math.min(MAX_STEPS_PER_FRAME, Math.floor(STEP_BUDGET_MS / Math.max(0.05, this.stepMs))));
+    while (this.acc >= FIXED_DT && steps < most) {
       this.step();
       this.acc -= FIXED_DT;
       steps++;
     }
-    if (steps >= MAX_STEPS_PER_FRAME) this.acc = 0;
+    if (steps >= most) this.acc = 0;
     while (this.stepRequests > 0) {
       this.step();
       this.stepRequests--;
