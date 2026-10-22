@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test": "node tools/selftest.mjs",
+    "bench": "node tools/selftest.mjs --bench",
     "sheet": "vitest run --config tools/vitest.config.ts"
   },
   "dependencies": {

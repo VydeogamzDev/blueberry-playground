@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, PX, WORLD } from './constants';
 import { clamp, type V2 } from './math';
+import { Sprites } from './Sprites';
 
 THREE.ColorManagement.enabled = false;
 
@@ -173,6 +174,8 @@ export class Renderer {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.OrthographicCamera;
   readonly canvas: HTMLCanvasElement;
+  /** Every physics part's sprite, batched (see Sprites). */
+  readonly sprites: Sprites;
 
   camX = 0;
   camY = 4;
@@ -203,6 +206,7 @@ export class Renderer {
     this.gl.setClearColor(0x16171a, 1);
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 400);
     this.camera.position.z = 200;
+    this.sprites = new Sprites(this.gl, this.scene);
 
     this.bgMat = new THREE.ShaderMaterial({
       vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy * 2.0, 0.999, 1.0); }`,
@@ -371,7 +375,13 @@ export class Renderer {
       this.warmed = true;
       this.lightMesh.visible = true;
     }
+    this.sprites.flush();
     this.gl.render(this.scene, cam);
+  }
+
+  /** Draw calls in the last rendered frame. */
+  drawCalls(): number {
+    return this.gl.info.render.calls;
   }
 
   private updateLights(cx: number, cy: number, midX: number, hw: number, hh: number, scale: number, dt: number): void {

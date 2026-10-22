@@ -1241,7 +1241,7 @@ export class Human extends Entity implements Holder {
         const k = Math.min(1, this.deathT / 25);
         for (const l of this.order) {
           if (l.gone || l.part.frozen || l.part.noCollideAll) continue;
-          l.part.material.uniforms.tint.value.setRGB(1 - k * 0.12, 1 - k * 0.1, 1 - k * 0.04);
+          l.part.setTint(1 - k * 0.12, 1 - k * 0.1, 1 - k * 0.04);
         }
       }
     }

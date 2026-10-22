@@ -274,6 +274,24 @@ export class PixelArt {
     return this;
   }
 
+  /** RGBA bytes with a transparent border of `pad` pixels (row 0 at the top). */
+  toRGBA(pad = 1): Uint8Array {
+    const cw = this.w + pad * 2;
+    const out = new Uint8Array(cw * (this.h + pad * 2) * 4);
+    for (let y = 0; y < this.h; y++) {
+      for (let x = 0; x < this.w; x++) {
+        const c = this.px[y * this.w + x];
+        if (c === CLEAR) continue;
+        const o = ((y + pad) * cw + x + pad) * 4;
+        out[o] = (c >> 16) & 255;
+        out[o + 1] = (c >> 8) & 255;
+        out[o + 2] = c & 255;
+        out[o + 3] = 255;
+      }
+    }
+    return out;
+  }
+
   /** Renders to a canvas with a transparent border of `pad` pixels. */
   toCanvas(pad = 1, scale = 1): HTMLCanvasElement {
     const cw = (this.w + pad * 2) * scale;

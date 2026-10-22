@@ -1,7 +1,6 @@
-import * as THREE from 'three';
 import { RAPIER } from '../engine/Physics';
 import { PX, GROUPS_DYNAMIC, GROUPS_NOCOLLIDE } from '../engine/constants';
-import { makePixelMaterial, makePixelTexture, UNIT_QUAD, type PixelMaterial } from '../engine/Renderer';
+import { Sprite, type Region, type Sprites } from '../engine/Sprites';
 import { lerpAngle, rotate, type V2 } from '../engine/math';
 import { PixelArt, type Color } from '../art/PixelArt';
 import type { PhysMaterial } from './Materials';
@@ -36,11 +35,11 @@ export interface PartSpec {
   /** Contact-force threshold (N) above which impact events are reported. */
   forceThreshold?: number;
   gravityScale?: number;
-  /** Share the base texture between identical parts until painted. */
+  /** Share the base image between identical parts until painted. */
   textureKey?: string;
 }
 
-const sharedTextures = new Map<string, { canvas: HTMLCanvasElement; tex: THREE.CanvasTexture }>();
+const sharedImages = new Map<string, { image: Uint8Array; region: Region }>();
 
 export class Part {
   readonly entity: Entity;
@@ -48,8 +47,7 @@ export class Part {
   readonly mat: PhysMaterial;
   readonly body: RAPIER.RigidBody;
   readonly colliders: RAPIER.Collider[] = [];
-  readonly mesh: THREE.Mesh;
-  readonly material: PixelMaterial;
+  readonly sprite: Sprite;
   art: PixelArt;
   readonly w: number;
   readonly h: number;
@@ -58,11 +56,12 @@ export class Part {
   readonly layer: number;
   spriteOffset: V2;
 
-  private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D | null = null;
-  private texture: THREE.CanvasTexture;
-  private ownsTexture = false;
+  /** The sprite's RGBA bytes, (w + 2) x (h + 2) with a clear border, painted on by wounds. */
+  private image: Uint8Array;
+  private region: Region;
+  private ownsImage = false;
   private texDirty = false;
+  private readonly sprites: Sprites;
 
   // gameplay state
   hp: number;
@@ -128,26 +127,21 @@ export class Part {
     this.a = this.pa = spec.angle ?? 0;
 
     // sprite
-    if (spec.textureKey) {
-      let shared = sharedTextures.get(spec.textureKey);
-      if (!shared) {
-        const canvas = spec.art.toCanvas(1);
-        shared = { canvas, tex: makePixelTexture(canvas) };
-        sharedTextures.set(spec.textureKey, shared);
-      }
-      this.canvas = shared.canvas;
-      this.texture = shared.tex;
+    this.sprites = entity.game.renderer.sprites;
+    const shared = spec.textureKey ? sharedImages.get(spec.textureKey) : undefined;
+    if (shared) {
+      this.image = shared.image;
+      this.region = shared.region;
     } else {
-      this.canvas = spec.art.toCanvas(1);
-      this.texture = makePixelTexture(this.canvas);
-      this.ownsTexture = true;
+      this.image = spec.art.toRGBA(1);
+      this.region = this.sprites.alloc(this.w + 2, this.h + 2);
+      this.sprites.upload(this.region, this.image);
+      if (spec.textureKey) sharedImages.set(spec.textureKey, { image: this.image, region: this.region });
+      else this.ownsImage = true;
     }
-    this.material = makePixelMaterial(this.texture, this.w + 2, this.h + 2);
-    this.mesh = new THREE.Mesh(UNIT_QUAD, this.material);
-    this.mesh.scale.set((this.w + 2) * PX * this.flip, (this.h + 2) * PX, 1);
-    this.mesh.frustumCulled = false;
-    this.mesh.matrixAutoUpdate = true;
-    entity.game.renderer.scene.add(this.mesh);
+    this.sprite = new Sprite(this.region);
+    this.sprite.w = (this.w + 2) * PX * this.flip;
+    this.sprite.h = (this.h + 2) * PX;
     this.updateZ();
     this.render(1);
   }
@@ -214,7 +208,12 @@ export class Part {
   }
 
   updateZ(): void {
-    this.mesh.position.z = this.entity.zBase + this.layer * 0.001;
+    this.sprite.z = this.entity.zBase + this.layer * 0.001;
+  }
+
+  /** Drawing depth: higher is in front. */
+  get z(): number {
+    return this.sprite.z;
   }
 
   get mass(): number {
@@ -251,7 +250,7 @@ export class Part {
    */
   mirror(cx: number): void {
     this.flip = this.flip === 1 ? -1 : 1;
-    this.mesh.scale.x = -this.mesh.scale.x;
+    this.sprite.w = -this.sprite.w;
     const b = this.body;
     const t = b.translation();
     const v = b.linvel();
@@ -276,23 +275,24 @@ export class Part {
     const y = this.py + (this.y - this.py) * alpha;
     const a = lerpAngle(this.pa, this.a, alpha);
     const o = this.spriteOffset;
+    const s = this.sprite;
     if (o.x !== 0 || o.y !== 0) {
       const r = rotate(o.x * PX * this.flip, o.y * PX, a);
-      this.mesh.position.x = x + r.x;
-      this.mesh.position.y = y + r.y;
+      s.x = x + r.x;
+      s.y = y + r.y;
     } else {
-      this.mesh.position.x = x;
-      this.mesh.position.y = y;
+      s.x = x;
+      s.y = y;
     }
-    this.mesh.rotation.z = a;
-    const u = this.material.uniforms;
+    s.a = a;
     if (this.flash > 0) {
-      u.flash.value = Math.min(1, this.flash);
+      s.flash = Math.min(1, this.flash);
       this.flash = Math.max(0, this.flash - 0.08);
-    } else u.flash.value = 0;
-    u.charred.value = this.charred * 0.85;
+    } else s.flash = 0;
+    s.charred = this.charred * 0.85;
+    s.write();
     if (this.texDirty) {
-      this.texture.needsUpdate = true;
+      this.sprites.upload(this.region, this.image);
       this.texDirty = false;
     }
   }
@@ -339,30 +339,27 @@ export class Part {
 
   // ---- painting (wounds, blood, scorch) ----------------------------------
 
-  private ensureCanvas(): CanvasRenderingContext2D {
-    if (!this.ownsTexture) {
-      const c = document.createElement('canvas');
-      c.width = this.canvas.width;
-      c.height = this.canvas.height;
-      c.getContext('2d')!.drawImage(this.canvas, 0, 0);
-      this.canvas = c;
-      this.texture = makePixelTexture(c);
-      this.material.uniforms.map.value = this.texture;
-      this.ownsTexture = true;
+  /** The image to paint on: a shared one is copied first. */
+  private ownImage(): Uint8Array {
+    if (!this.ownsImage) {
+      this.image = this.image.slice();
+      this.region = this.sprites.alloc(this.w + 2, this.h + 2);
+      this.sprite.setRegion(this.region);
+      this.ownsImage = true;
     }
-    if (!this.ctx) this.ctx = this.canvas.getContext('2d', { willReadFrequently: false })!;
-    return this.ctx;
+    this.texDirty = true;
+    return this.image;
   }
 
-  /** Paints one art pixel (only where the sprite is solid). */
+  /** Paints one art pixel (only where the sprite is solid), blended by alpha. */
   paintPixel(ix: number, iy: number, color: Color, alpha = 1): boolean {
     if (!this.art.filled(ix, iy)) return false;
-    const ctx = this.ensureCanvas();
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = '#' + color.toString(16).padStart(6, '0');
-    ctx.fillRect(ix + 1, iy + 1, 1, 1);
-    ctx.globalAlpha = 1;
-    this.texDirty = true;
+    const img = this.ownImage();
+    const o = ((iy + 1) * (this.w + 2) + ix + 1) * 4;
+    const k = 1 - alpha;
+    img[o] = Math.round(((color >> 16) & 255) * alpha + img[o] * k);
+    img[o + 1] = Math.round(((color >> 8) & 255) * alpha + img[o + 1] * k);
+    img[o + 2] = Math.round((color & 255) * alpha + img[o + 2] * k);
     return true;
   }
 
@@ -394,11 +391,8 @@ export class Part {
 
   /** Replaces the sprite with another of the same size (e.g. a lamp turning on). */
   setArt(art: PixelArt): void {
-    const ctx = this.ensureCanvas();
-    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    ctx.drawImage(art.toCanvas(1), 0, 0);
+    this.ownImage().set(art.toRGBA(1));
     this.art = art;
-    this.texDirty = true;
   }
 
   /** Is the given art pixel solid? */
@@ -422,15 +416,22 @@ export class Part {
   }
 
   refreshTint(): void {
-    const t = this.material.uniforms.tint.value;
-    if (this.frozen) t.setRGB(0.68, 0.84, 1.08);
-    else if (this.noCollideAll) t.setRGB(0.85, 0.85, 0.85);
-    else t.setRGB(1, 1, 1);
+    if (this.frozen) this.setTint(0.68, 0.84, 1.08);
+    else if (this.noCollideAll) this.setTint(0.85, 0.85, 0.85);
+    else this.setTint(1, 1, 1);
+  }
+
+  /** Multiplies the sprite's colors (frozen blue, a corpse's pallor). */
+  setTint(r: number, g: number, b: number): void {
+    const s = this.sprite;
+    s.r = r;
+    s.g = g;
+    s.b = b;
   }
 
   setOutline(on: boolean, color = 0xf2d16b): void {
-    this.material.uniforms.outline.value = on ? 1 : 0;
-    this.material.uniforms.outlineColor.value.setHex(color);
+    this.sprite.outline = on;
+    this.sprite.outlineColor = color;
   }
 
   /** Moves the body instantly (and its interpolation state). */
@@ -456,9 +457,8 @@ export class Part {
     const phys = this.entity.game.physics;
     for (const c of this.colliders) phys.partByCollider.delete(c.handle);
     phys.world.removeRigidBody(this.body);
-    this.entity.game.renderer.scene.remove(this.mesh);
-    this.material.dispose();
-    if (this.ownsTexture) this.texture.dispose();
+    this.sprite.dispose();
+    if (this.ownsImage) this.sprites.release(this.region);
   }
 }
 

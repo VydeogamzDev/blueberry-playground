@@ -511,7 +511,8 @@ export class UI implements UIBridge {
       for (const e of g.entities) parts += e.parts.length;
       this.status.textContent =
         `${g.fps.toFixed(0)} fps · step ${g.stepMs.toFixed(2)} ms · ${g.entities.length} objects · ${parts} bodies · ${g.particles.count} particles` +
-        (g.paused ? ' · PAUSED' : '') + (g.timeScale !== 1 ? ` · ${g.timeScale}×` : '');
+        (g.paused ? ' · PAUSED' : '') + (g.timeScale !== 1 ? ` · ${g.timeScale}×` : '') +
+        (!g.paused && g.simRate < g.timeScale * 0.9 ? ` · heavy scene: running at ${Math.round((g.simRate / g.timeScale) * 100)}% speed` : '');
     } else this.status.textContent = '';
     const h = this.controls.hover;
     let hint = this.controls.hint;

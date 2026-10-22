@@ -9,8 +9,11 @@ export const FIXED_DT = 1 / 120;
  * guard); fewer when the steps are slow (see Game.loop).
  */
 export const MAX_STEPS_PER_FRAME = 16;
-/** Milliseconds of physics a frame may spend catching up. */
-export const STEP_BUDGET_MS = 12;
+/**
+ * Milliseconds of physics a frame may spend. A scene too heavy to simulate in
+ * real time within it runs in slow motion at a steady frame rate.
+ */
+export const STEP_BUDGET_MS = 13;
 
 export const GRAVITY = -9.81;
 

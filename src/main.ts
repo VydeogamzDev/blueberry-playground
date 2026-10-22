@@ -7,6 +7,7 @@ import { registerAll } from './catalog/registry';
 import { getItem } from './catalog/items';
 import { makeTestKit } from './debug/testkit';
 import { makeSelfTest } from './debug/selftest';
+import { makeBench } from './debug/bench';
 import { BALANCE, GAIT } from './entities/Human';
 
 async function boot(): Promise<void> {
@@ -27,7 +28,7 @@ async function boot(): Promise<void> {
   game.start();
   document.getElementById('loading')?.remove();
   // exposed for debugging and automated tests in the browser console
-  (window as unknown as { bp: unknown }).bp = { game, controls, ui, getItem, kit: makeTestKit(game, controls), selftest: makeSelfTest(game, controls), BALANCE, GAIT, RAPIER, DRAG };
+  (window as unknown as { bp: unknown }).bp = { game, controls, ui, getItem, kit: makeTestKit(game, controls), selftest: makeSelfTest(game, controls), bench: makeBench(game, controls), BALANCE, GAIT, RAPIER, DRAG };
 }
 
 boot().catch((e) => {

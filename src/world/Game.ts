@@ -63,7 +63,11 @@ export class Game {
   // perf stats
   fps = 60;
   stepMs = 0;
+  /** Simulated seconds per real second the loop managed (below timeScale when the scene is too heavy). */
+  simRate = 1;
   frameMs = 0;
+  /** Milliseconds spent per stage, summed while set (see debug/bench). */
+  prof: Record<string, number> | null = null;
   private fpsAcc = 0;
   private fpsFrames = 0;
 
@@ -221,9 +225,9 @@ export class Game {
     let bestZ = -Infinity;
     const onPoint = (c: RAPIER.Collider): boolean => {
       const p = this.physics.partOf(c);
-      if (p && !p.destroyed && (!filter || filter(p)) && p.mesh.position.z > bestZ) {
+      if (p && !p.destroyed && (!filter || filter(p)) && p.z > bestZ) {
         best = p;
-        bestZ = p.mesh.position.z;
+        bestZ = p.z;
       }
       return true;
     };
@@ -237,10 +241,10 @@ export class Game {
       const proj = c.projectPoint({ x, y }, true);
       const d = proj ? Math.hypot(proj.point.x - x, proj.point.y - y) : radius;
       // prefer nearer; break near-ties by z
-      if (d < bestD - 0.01 || (Math.abs(d - bestD) <= 0.01 && p.mesh.position.z > bestZ)) {
+      if (d < bestD - 0.01 || (Math.abs(d - bestD) <= 0.01 && p.z > bestZ)) {
         best = p;
         bestD = d;
-        bestZ = p.mesh.position.z;
+        bestZ = p.z;
       }
       return true;
     };
@@ -287,14 +291,20 @@ export class Game {
     let steps = 0;
     const s0 = performance.now();
     // a slow frame rate (a throttled tab, a slow GPU) still gets real time while
-    // the physics is cheap; a heavy scene slows down rather than stalling
-    const most = Math.max(4, Math.min(MAX_STEPS_PER_FRAME, Math.floor(STEP_BUDGET_MS / Math.max(0.05, this.stepMs))));
-    while (this.acc >= FIXED_DT && steps < most) {
+    // the physics is cheap; a heavy scene slows down rather than stalling: steps
+    // stop when the next one wouldn't fit in the frame's budget
+    while (this.acc >= FIXED_DT && steps < MAX_STEPS_PER_FRAME) {
+      if (steps > 0 && performance.now() - s0 + this.stepMs > STEP_BUDGET_MS) break;
       this.step();
       this.acc -= FIXED_DT;
       steps++;
     }
-    if (steps >= most) this.acc = 0;
+    // time that didn't fit is dropped, not owed
+    if (this.acc >= FIXED_DT) this.acc = 0;
+    if (!this.paused && realDt > 0) {
+      const rate = (steps * FIXED_DT) / realDt;
+      this.simRate += (Math.min(rate, this.timeScale) - this.simRate) * Math.min(1, realDt * 2);
+    }
     while (this.stepRequests > 0) {
       this.step();
       this.stepRequests--;
@@ -310,11 +320,13 @@ export class Game {
 
   /** Runs per-frame logic and draws the scene. */
   renderFrame(realDt: number, alpha: number): void {
+    const lap = this.lapper();
     for (const h of this.frameHandlers) h(realDt, alpha);
     for (const e of this.entities) {
       e.frame(realDt);
       for (const p of e.parts) if (!p.destroyed) p.render(alpha);
     }
+    lap?.('frame: entities');
     this.connections.frame(alpha);
     this.fire.frame();
     this.puddles.frame();
@@ -323,7 +335,21 @@ export class Game {
     this.stains.frame(this.renderer.zoom * this.renderer.dpr);
     this.sound.rate = this.paused ? 1 : this.timeScale;
     this.sound.update(realDt);
+    lap?.('frame: effects');
     this.renderer.render(realDt);
+    lap?.('frame: draw');
+  }
+
+  /** While profiling, a function that adds the time since its last call to a stage. */
+  private lapper(): ((stage: string) => void) | null {
+    const prof = this.prof;
+    if (!prof) return null;
+    let t = performance.now();
+    return (stage) => {
+      const n = performance.now();
+      prof[stage] = (prof[stage] ?? 0) + n - t;
+      t = n;
+    };
   }
 
   /**
@@ -342,28 +368,36 @@ export class Game {
   /** Advances the simulation by exactly one fixed step. */
   step(): void {
     const dt = FIXED_DT;
+    const lap = this.lapper();
     this.stepping = true;
     for (const h of this.preStepHandlers) h(dt);
     for (const e of this.entities) if (!e.destroyed) e.preStep(dt);
     this.connections.preStep(dt);
+    lap?.('step: control');
     wakeSettled(this);
     this.physics.step();
     resleepSettled(this);
+    lap?.('step: physics');
     this.impacts.process();
     this.projectiles.step(dt);
+    lap?.('step: impacts');
     for (const e of this.entities) if (!e.destroyed) e.postStep(dt);
+    lap?.('step: control');
     const tick = Math.floor(this.time / REST_CHECK);
     if (tick !== this.restTick) {
       this.restTick = tick;
       restCheck(this.entities);
       settle(this, this.entities);
     }
+    lap?.('step: settle');
     for (const e of this.entities) for (const p of e.parts) if (!p.destroyed) p.sync();
     this.connections.postStep(dt);
+    lap?.('step: sync');
     this.fire.step(dt);
     this.explosions.step(dt);
     this.particles.step(dt);
     this.puddles.step(dt);
+    lap?.('step: effects');
     this.time += dt;
     this.stepping = false;
     if (this.pendingRemoval.length) {
