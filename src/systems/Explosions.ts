@@ -63,6 +63,7 @@ export class Explosions {
     // ---- visuals & audio
     this.visuals(x, y, o);
     g.sound.explosion(o.power / 60, x);
+    g.alarm(x, y, R * 3 + 6);
     const r = g.renderer;
     const dCam = Math.hypot(x - r.camX, y - r.camY);
     r.shake(Math.max(0, (o.power / 50) * (1 - dCam / 60)));

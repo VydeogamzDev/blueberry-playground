@@ -31,6 +31,8 @@ function registerCharacters(): void {
   const animals = [
     { id: 'dog', name: 'Dog', tags: ['animal', 'pet', 'ragdoll', 'creature'] as string[], description: 'A big, friendly dog. Stands on four legs, gets back up, bleeds and yelps.' },
     { id: 'cat', name: 'Cat', tags: ['animal', 'pet', 'ragdoll', 'creature'] as string[], description: 'A small, light cat. Twists round in the air and lands on its feet.' },
+    { id: 'pig', name: 'Pig', tags: ['animal', 'farm', 'ragdoll', 'creature', 'hog'] as string[], description: 'A heavy, sturdy pig. Ambles about, oinking, and squeals when hurt.' },
+    { id: 'fox', name: 'Fox', tags: ['animal', 'wild', 'ragdoll', 'creature'] as string[], description: 'A quick, wary fox. Runs from anyone who comes close.' },
   ] as const;
   for (const a of animals) {
     const def: ItemDef = register({

@@ -1,5 +1,6 @@
 import type { Game } from '../world/Game';
 import type { Part } from '../world/Part';
+import type { Entity } from '../world/Entity';
 
 /** Burning parts: emit flames and smoke, char, take damage and spread to neighbours. */
 export class Fire {
@@ -19,6 +20,21 @@ export class Fire {
     if (p.destroyed || (p.mat.flammability <= 0 && p.oil <= 0)) return;
     p.burning = Math.min(1, Math.max(p.burning, amount));
     this.burning.add(p);
+  }
+
+  /** The nearest part burning within `r` m of (x, y), not counting `skip`'s own. */
+  near(x: number, y: number, r: number, skip?: Entity): Part | null {
+    let best: Part | null = null;
+    let bd = r * r;
+    for (const p of this.burning) {
+      if (p.burning < 0.05 || p.entity === skip) continue;
+      const d = (p.x - x) ** 2 + (p.y - y) ** 2;
+      if (d < bd) {
+        bd = d;
+        best = p;
+      }
+    }
+    return best;
   }
 
   extinguish(p: Part): void {

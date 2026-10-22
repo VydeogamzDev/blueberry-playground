@@ -6,7 +6,7 @@ Processing applied to all files: cut/trimmed (leading silence removed, `@ N s` =
 
 Freesound files were taken from the publicly accessible high-quality preview (`-hq`) of each sound, since original downloads need a login.
 
-Total: 266 files from 97 sources.
+Total: 288 files from 107 sources.
 
 ## Kenney
 
@@ -479,6 +479,17 @@ Total: 266 files from 97 sources.
 
 ## Freesound
 
+### 27-hungry fox.wav
+
+- Source: https://freesound.org/people/tilano408/sounds/445659/
+- Author: tilano408
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/fox_whine_1.ogg` | freesound #445659 (HQ preview) | @ 0.66 s; 0.55 s |
+| `creature/fox_whine_2.ogg` | freesound #445659 (HQ preview) | @ 3.17 s; 0.60 s |
+
 ### 357 Magnum Revolver Gunshot
 
 - Source: https://freesound.org/people/Shark_Anthony/sounds/683186/
@@ -803,6 +814,32 @@ Total: 266 files from 97 sources.
 |---|---|---|
 | `hit/whizz_1.ogg` | freesound #789222 (HQ preview) | @ 0.01 s; 0.67 s |
 
+### Fox Barking
+
+- Source: https://freesound.org/people/gadzooks/sounds/397655/
+- Author: gadzooks
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/fox_bark_1.ogg` | freesound #397655 (HQ preview) | @ 5.66 s; 0.55 s; night bark |
+| `creature/fox_bark_2.ogg` | freesound #397655 (HQ preview) | @ 8.50 s; 0.60 s; night bark |
+| `creature/fox_bark_3.ogg` | freesound #397655 (HQ preview) | @ 10.83 s; 0.55 s; night bark |
+
+### Fox Screams
+
+- Source: https://freesound.org/people/Soundburst/sounds/634005/
+- Author: Soundburst
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/fox_scream_1.ogg` | freesound #634005 (HQ preview) | @ 5.52 s; 0.75 s |
+| `creature/fox_scream_2.ogg` | freesound #634005 (HQ preview) | @ 11.22 s; 0.70 s |
+| `creature/fox_scream_3.ogg` | freesound #634005 (HQ preview) | @ 14.30 s; 0.65 s |
+| `creature/fox_die_1.ogg` | freesound #634005 (HQ preview) | @ 6.52 s; 0.70 s |
+| `creature/fox_die_2.ogg` | freesound #634005 (HQ preview) | @ 12.37 s; 0.65 s |
+
 ### fuse2.wav
 
 - Source: https://freesound.org/people/j1987/sounds/140715/
@@ -944,6 +981,81 @@ Total: 266 files from 97 sources.
 | File | Original file | Notes |
 |---|---|---|
 | `machine/motor_loop_1.ogg` | freesound #325810 (HQ preview) | @ 0.15 s; 3.00 s; loop |
+
+### Pig Grunt
+
+- Source: https://freesound.org/people/qubodup/sounds/442907/
+- Author: qubodup
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/pig_grunt_1.ogg` | freesound #442907 (HQ preview) | @ 0.04 s; 0.34 s |
+
+### Pig grunts
+
+- Source: https://freesound.org/people/gerainsan/sounds/421734/
+- Author: gerainsan
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/pig_grunt_2.ogg` | freesound #421734 (HQ preview) | @ 12.08 s; 0.30 s |
+| `creature/pig_grunt_3.ogg` | freesound #421734 (HQ preview) | @ 12.78 s; 0.30 s |
+
+### Pig in slop squealing
+
+- Source: https://freesound.org/people/mrmunk/sounds/344972/
+- Author: mrmunk
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/pig_squeal_1.ogg` | freesound #344972 (HQ preview) | @ 0.48 s; 0.30 s |
+| `creature/pig_squeal_2.ogg` | freesound #344972 (HQ preview) | @ 0.93 s; 0.30 s |
+| `creature/pig_squeal_3.ogg` | freesound #344972 (HQ preview) | @ 2.03 s; 0.35 s |
+| `creature/pig_die_1.ogg` | freesound #344972 (HQ preview) | @ 3.08 s; 1.30 s; long squeal |
+
+### Pig Oink
+
+- Source: https://freesound.org/people/qubodup/sounds/442906/
+- Author: qubodup
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/pig_oink_1.ogg` | freesound #442906 (HQ preview) | @ 0.00 s; 0.74 s |
+
+### Pig Sound
+
+- Source: https://freesound.org/people/qubodup/sounds/442905/
+- Author: qubodup
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/pig_oink_2.ogg` | freesound #442905 (HQ preview) | @ 0.06 s; 0.55 s |
+
+### Pig Squeak
+
+- Source: https://freesound.org/people/qubodup/sounds/442904/
+- Author: qubodup
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/pig_squeal_4.ogg` | freesound #442904 (HQ preview) | @ 0.04 s; 0.55 s |
+
+### Pig.ogg
+
+- Source: https://freesound.org/people/egomassive/sounds/536746/
+- Author: egomassive
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/pig_oink_3.ogg` | freesound #536746 (HQ preview) | @ 0.14 s; 0.42 s |
+| `creature/pig_oink_4.ogg` | freesound #536746 (HQ preview) | @ 0.56 s; 0.40 s |
 
 ### Pouring_Water_04.wav
 

@@ -164,6 +164,11 @@ export class Game {
     return e;
   }
 
+  /** A blast or a gunshot at (x, y): anything within `radius` m that can hear it reacts (animals run). */
+  alarm(x: number, y: number, radius: number): void {
+    for (const e of this.entities) if (!e.destroyed) e.onAlarm(x, y, radius);
+  }
+
   /** Schedules an entity for removal (safe to call mid-step). */
   remove(e: Entity): void {
     if (e.destroyed || this.pendingRemoval.includes(e)) return;

@@ -16,7 +16,8 @@ export abstract class Entity {
   /** Whether this entity's own parts collide with each other. */
   selfCollide = false;
   destroyed = false;
-  readonly flipped: boolean;
+  /** Faces left. Set at creation; only animals turn round in place (Creature.turn()). */
+  flipped: boolean;
   /** Activation input currently held (auto-fire etc). */
   activeHeld = false;
   /** Receiving electrical power. */
@@ -71,6 +72,8 @@ export abstract class Entity {
 
   // ---- lifecycle hooks (override as needed) --------------------------------
   preStep(_dt: number): void {}
+  /** A blast or a gunshot at (x, y), heard out to `radius` m (see Game.alarm()). */
+  onAlarm(_x: number, _y: number, _radius: number): void {}
   postStep(_dt: number): void {}
   frame(_dt: number): void {}
   activate(): void {}

@@ -1,5 +1,5 @@
 import { RAPIER } from '../engine/Physics';
-import { GRAVITY, PX } from '../engine/constants';
+import { GRAVITY, PX, WORLD } from '../engine/constants';
 import { clamp, rotate, smoothstep, wrapAngle, type V2 } from '../engine/math';
 import { Entity } from '../world/Entity';
 import type { Part, ShapeSpec } from '../world/Part';
@@ -8,6 +8,7 @@ import { MAT } from '../world/Materials';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
 import { creatureArt, creatureFigure, CREATURE_EYE, type CreatureKind } from '../art/creatures';
 import type { Drug } from './Syringe';
+import { Human } from './Human';
 
 interface CLimbSpec {
   key: string;
@@ -42,7 +43,19 @@ interface Species {
   friction: number;
   /** Lands on its feet: keeps righting itself in the air. */
   airRight: boolean;
-  sounds: { hurt: string; bad: string; pain: string; idle: string; die: string };
+  /** Hip height (px), which sets the length of a stride. */
+  hipY: number;
+  /** Walking and running speed (m/s), leg swing at a walk (rad) and how far the paws lift (rad). */
+  gait: { walk: number; run: number; swing: number; lift: number };
+  /** Follows people about (dogs) rather than keeping to itself (cats). */
+  social: boolean;
+  /** Keeps its distance from people (foxes). */
+  shy: boolean;
+  /** How it carries its tail standing (rad, + up). */
+  tail: number;
+  /** How fast its wounds drain it (a small animal has less blood to lose). */
+  bleedRate: number;
+  sounds: { hurt: string; bad: string; pain: string; idle: string; die: string; alarm: string };
 }
 
 const box = (w: number, h: number, r: number, x = 0, y = 0): ShapeSpec => ({ kind: 'box', w, h, r, x, y });
@@ -80,7 +93,13 @@ const DOG: Species = {
   toughness: 1,
   friction: 3,
   airRight: false,
-  sounds: { hurt: 'creature/dog_yelp', bad: 'creature/dog_yelp', pain: 'creature/dog_whine', idle: 'creature/dog_bark', die: 'creature/dog_die' },
+  hipY: 12,
+  gait: { walk: 1.1, run: 3.2, swing: 0.42, lift: 0.9 },
+  social: true,
+  shy: false,
+  tail: 0.15,
+  bleedRate: 0.55,
+  sounds: { hurt: 'creature/dog_yelp', bad: 'creature/dog_yelp', pain: 'creature/dog_whine', idle: 'creature/dog_bark', die: 'creature/dog_die', alarm: 'creature/dog_bark' },
   specs: [
     { key: 'chest', name: 'Chest', cx: 6, cy: 16, layer: 6, density: 110, hp: 120, shape: box(13, 9, 2), muscle: 0, fragility: 1 },
     { key: 'head', name: 'Head', cx: 17, cy: 22, layer: 7, density: 60, hp: 60, shape: box(10, 7, 2, 0, 0.5), parent: 'chest', jx: 12, jy: 20, lo: -0.6, hi: 0.5, muscle: 260, fragility: 1.8 },
@@ -96,7 +115,13 @@ const CAT: Species = {
   toughness: 0.85,
   friction: 0.35,
   airRight: true,
-  sounds: { hurt: 'creature/cat_hiss', bad: 'creature/cat_yowl', pain: 'creature/cat_meow', idle: 'creature/cat_meow', die: 'creature/cat_yowl' },
+  hipY: 8.5,
+  gait: { walk: 0.75, run: 2.2, swing: 0.45, lift: 0.9 },
+  social: false,
+  shy: false,
+  tail: 0.15,
+  bleedRate: 0.8,
+  sounds: { hurt: 'creature/cat_hiss', bad: 'creature/cat_yowl', pain: 'creature/cat_meow', idle: 'creature/cat_meow', die: 'creature/cat_yowl', alarm: 'creature/cat_hiss' },
   specs: [
     { key: 'chest', name: 'Chest', cx: 4, cy: 11, layer: 6, density: 45, hp: 60, shape: box(8, 6, 1.5), muscle: 0, fragility: 1 },
     { key: 'head', name: 'Head', cx: 11, cy: 15.5, layer: 7, density: 28, hp: 35, shape: box(7, 6, 2, 0, 0), parent: 'chest', jx: 8, jy: 13.5, lo: -0.6, hi: 0.5, muscle: 22, fragility: 1.6 },
@@ -106,7 +131,51 @@ const CAT: Species = {
   ],
 };
 
-export const SPECIES: Record<CreatureKind, Species> = { dog: DOG, cat: CAT };
+const PIG: Species = {
+  kind: 'pig',
+  midY: 8.5,
+  toughness: 1.3,
+  friction: 4,
+  airRight: false,
+  hipY: 6,
+  gait: { walk: 0.7, run: 2.2, swing: 0.5, lift: 1.4 },
+  social: false,
+  shy: false,
+  tail: 0,
+  bleedRate: 0.45,
+  sounds: { hurt: 'creature/pig_squeal', bad: 'creature/pig_squeal', pain: 'creature/pig_grunt', idle: 'creature/pig_oink', die: 'creature/pig_die', alarm: 'creature/pig_squeal' },
+  specs: [
+    { key: 'chest', name: 'Chest', cx: 4, cy: 11, layer: 6, density: 110, hp: 150, shape: box(13, 11, 3.5), muscle: 0, fragility: 0.9 },
+    { key: 'head', name: 'Head', cx: 14.5, cy: 11.5, layer: 7, density: 75, hp: 80, shape: box(12, 9, 3, 0, -0.5), parent: 'chest', jx: 9.5, jy: 12, lo: -0.5, hi: 0.4, muscle: 700, fragility: 1.5 },
+    { key: 'hips', name: 'Hindquarters', cx: -7, cy: 11, layer: 5, density: 110, hp: 140, shape: box(12, 11, 3.5), parent: 'chest', jx: -1.5, jy: 11, lo: -0.3, hi: 0.3, muscle: 2600, fragility: 0.9 },
+    { key: 'tail', name: 'Tail', cx: -14.5, cy: 14, layer: 4, density: 30, hp: 20, shape: box(4, 4, 1.5), parent: 'hips', jx: -12.5, jy: 14, lo: -0.6, hi: 0.6, muscle: 6, fragility: 0.8 },
+    ...legs(2400, 7, -8, 6, [4, 4, 4.5], [4, 3, 1.5, 2.75], 90, 70, 80, 60),
+  ],
+};
+
+const FOX: Species = {
+  kind: 'fox',
+  midY: 11,
+  toughness: 0.9,
+  friction: 1.2,
+  airRight: false,
+  hipY: 10,
+  gait: { walk: 1.0, run: 3.4, swing: 0.45, lift: 0.9 },
+  social: false,
+  shy: true,
+  tail: -0.2,
+  bleedRate: 0.7,
+  sounds: { hurt: 'creature/fox_scream', bad: 'creature/fox_scream', pain: 'creature/fox_whine', idle: 'creature/fox_bark', die: 'creature/fox_die', alarm: 'creature/fox_bark' },
+  specs: [
+    { key: 'chest', name: 'Chest', cx: 5, cy: 13, layer: 6, density: 40, hp: 70, shape: box(11, 7, 2), muscle: 0, fragility: 1 },
+    { key: 'head', name: 'Head', cx: 13.5, cy: 17.5, layer: 7, density: 30, hp: 40, shape: box(9, 6, 2, 0.5, -0.5), parent: 'chest', jx: 9.5, jy: 16, lo: -0.6, hi: 0.5, muscle: 70, fragility: 1.7 },
+    { key: 'hips', name: 'Hindquarters', cx: -4.5, cy: 12.5, layer: 5, density: 40, hp: 60, shape: box(10, 7, 2), parent: 'chest', jx: 0, jy: 13, lo: -0.35, hi: 0.35, muscle: 500, fragility: 1 },
+    { key: 'tail', name: 'Tail', cx: -14.5, cy: 12, layer: 4, density: 18, hp: 25, shape: box(11, 4, 1.5), parent: 'hips', jx: -9, jy: 13, lo: -0.7, hi: 0.6, muscle: 8, fragility: 0.8 },
+    ...legs(300, 6, -6, 10, [3, 7, 7], [3, 6, 3, 4.5], 55, 45, 45, 35),
+  ],
+};
+
+export const SPECIES: Record<CreatureKind, Species> = { dog: DOG, cat: CAT, pig: PIG, fox: FOX };
 
 /** Catalog picture of a standing animal. */
 export function creaturePreview(kind: CreatureKind): HTMLCanvasElement {
@@ -175,6 +244,8 @@ export class Creature extends Entity {
   private getupFails = 0;
   /** Where the chest lay when it gave up trying to stand. */
   private gaveUp: V2 | null = null;
+  /** Extra tries earned by the pile shifting (see Human.retry). */
+  private retries = 0;
   private getupBest = 0;
   private getupProgressT = 0;
   private motorTimer = 0;
@@ -194,6 +265,25 @@ export class Creature extends Entity {
   readonly drugs = { adrenaline: 0, knockout: 0, poison: 0 };
   private mendDose = 0;
   private lifeDose = 0;
+
+  // behaviour (see think())
+  private goal: 'idle' | 'walk' | 'flee' = 'idle';
+  /** Seconds left of standing about, walking somewhere or running. */
+  private goalT = 2 + Math.random() * 4;
+  private targetX = 0;
+  private following: Human | null = null;
+  private fleeFrom = 0;
+  /** Direction it last walked into something, to try the other way next. */
+  private blocked = 0;
+  private stuckT = 0;
+  /** Running scared with something in the way. */
+  private cornered = false;
+  private turnT = 0;
+  private lookT = 0;
+  /** Wanted speed (m/s, + forward), and the phase and strength of the stepping legs. */
+  private speed = 0;
+  private stride = 0;
+  private gaitAmt = 0;
 
   constructor(game: Game, def: ItemDef, species: Species, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -272,7 +362,7 @@ export class Creature extends Entity {
   canRest(): boolean {
     if (this.held) return false;
     if (this.strength() <= 0) return true;
-    return this.state !== 'getup' && this.stateT > 3 && this.pain < 0.05 && this.wag <= 0;
+    return this.state !== 'getup' && this.stateT > 3 && this.pain < 0.05 && this.wag <= 0 && this.gaitAmt < 0.02;
   }
 
   private strength(): number {
@@ -314,7 +404,7 @@ export class Creature extends Entity {
     const f = this.f;
     const standing = this.state !== 'down' && conscious;
     const ramp = this.state === 'getup' ? clamp(this.stateT / 1.0, 0.15, 1) : 1;
-    const wagging = this.wag > 0 && standing;
+    const wagging = (this.wag > 0 || this.gaitAmt > 0) && standing;
     const folding = this.foldT > 0 && !conscious;
     // lying still it relaxes (see Human.updateMotors)
     const relaxed = !standing && conscious && this.pain < 0.35 && this.stateT > 4;
@@ -327,7 +417,8 @@ export class Creature extends Entity {
       const key = l.spec.key;
       let target = standing ? 0 : POSE_DOWN[key.replace(/[FB]$/, '')] ?? 0;
       if (key === 'head' && standing) target = 0.05;
-      if (key === 'tail' && standing) target = wagging ? Math.sin(this.t * 14) * 0.45 : 0.15;
+      if (key === 'tail' && standing) target = this.wag > 0 ? Math.sin(this.t * 14) * 0.45 : this.species.tail;
+      if (this.gaitAmt > 0 && standing && /^(upper|lower)/.test(key)) target = this.step(key);
       target *= f;
       const from = this.blendFrom?.get(l);
       if (from !== undefined) target = from + (target - from) * smoothstep(0, 1, this.stateT / 0.9);
@@ -352,8 +443,8 @@ export class Creature extends Entity {
     }
   }
 
-  /** How many paws are on something solid. */
-  private pawsDown(): number {
+  /** How many paws are on something solid (firm: the ground or something fixed, not a heap of bodies). */
+  private pawsDown(firm = false): number {
     const world = this.game.physics.world;
     const ray = new RAPIER.Ray({ x: 0, y: 0 }, { x: 0, y: -1 });
     let n = 0;
@@ -363,7 +454,7 @@ export class Creature extends Entity {
       ray.origin = { x: l.part.x, y: l.part.y };
       const hit = world.castRay(ray, (l.spec.cy + 2) * PX, true, undefined, undefined, undefined, undefined, (c) => {
         const p = this.game.physics.partOf(c);
-        return !p || p.entity !== this;
+        return firm ? !p || p.frozen : !p || p.entity !== this;
       });
       if (hit) n++;
     }
@@ -439,7 +530,7 @@ export class Creature extends Entity {
       // cats twist round in the air and land on their feet
       const fallen = (this.species.airRight ? this.airT > 2.5 || (!airborne && tilt > 1.0) : tilt > 0.95 || this.airT > 0.45) || this.leanT > 1.5;
       // only standing for a while counts as having got up (not toppling off a pile again)
-      if (this.state === 'stand' && this.stateT > 3) this.getupFails = 0;
+      if (this.state === 'stand' && this.stateT > 3) this.getupFails = this.retries = 0;
       if (!this.legsWork()) this.setState('down');
       else if (this.state === 'stand' && fallen) {
         if (this.stateT < 3) this.failGetup();
@@ -457,7 +548,7 @@ export class Creature extends Entity {
       const c = this.L('chest').part;
       const rest = Math.hypot(c.vx, c.vy) < 0.6;
       const wait = 1.6 + this.getupFails * 1.5 + this.pain * 4;
-      if (this.gaveUp && Math.hypot(c.x - this.gaveUp.x, c.y - this.gaveUp.y) > 0.4) this.retry();
+      if (this.gaveUp && this.retries < 2 && Math.hypot(c.x - this.gaveUp.x, c.y - this.gaveUp.y) > 0.4) this.retry();
       const inAir = this.species.airRight && !paws && this.stateT > 0.3 && !this.touching();
       if ((inAir || (!this.gaveUp && this.stateT > wait && rest)) && this.legsWork() && str > 0.7 && this.pain < 0.6 && !this.held && !this.pinned()) {
         this.getupBest = tilt;
@@ -471,8 +562,16 @@ export class Creature extends Entity {
       this.foldT -= dt;
       if (this.foldT <= 0) this.updateMotors(true);
     }
+    // ---- what to do on its feet
+    if (conscious && this.state === 'stand' && !this.held) this.think(dt);
+    else {
+      this.speed = 0;
+      this.goalT -= dt;
+    }
+
     this.motorTimer -= dt;
-    if (this.motorTimer <= 0) {
+    // stepping legs follow their gait every step
+    if (this.motorTimer <= 0 || this.gaitAmt > 0) {
       this.motorTimer = 0.05;
       this.updateMotors(false);
     }
@@ -485,10 +584,11 @@ export class Creature extends Entity {
         const over = 1 + Math.abs(err);
         this.right(RIGHT.kp * str * r, RIGHT.kd * str, RIGHT.amax * r * over, 0, false, dt);
         this.lift(str * r * (Math.abs(err) > 1.4 ? 1.3 : 1), dt);
-      } else if (paws >= 2) this.right(STAND.kp * str, STAND.kd * str, STAND.amax, STAND.dead, true, dt);
+      } else if (paws >= 2 || (paws && this.gaitAmt > 0)) this.right(STAND.kp * str, STAND.kd * str, STAND.amax, STAND.dead, true, dt);
       else if (this.species.airRight && !paws) this.right(RIGHT.kp, RIGHT.kd, RIGHT.amax * 1.5, 0, false, dt);
     }
 
+    this.walk(dt, paws);
     this.idle(dt, conscious);
   }
 
@@ -561,6 +661,308 @@ export class Creature extends Entity {
     for (const l of trunk) l.part.body.applyImpulse({ x: 0, y: F * (l.part.mass / tm) * dt }, true);
   }
 
+  // ---------------------------------------------------------------- behaviour
+
+  /**
+   * Decides where to go while on its feet: it stands about, wanders off a few
+   * meters, runs from blasts, gunshots and fire, and dogs go to the nearest
+   * person standing.
+   */
+  private think(dt: number): void {
+    this.goalT -= dt;
+    this.turnT -= dt;
+    this.lookT -= dt;
+    const c = this.L('chest').part;
+    const look = this.lookT <= 0;
+    if (look) {
+      this.lookT = 0.1;
+      const fire = this.game.fire.near(c.x, c.y, 2.5, this);
+      if (fire) this.scare(fire.x, 2.5);
+      // a fox won't let anyone near it
+      const near = this.species.shy && this.goal !== 'flee' ? this.nearestPerson(c.x, c.y, 3.5) : null;
+      if (near) this.scare(near.limbs.get('upperTorso')!.part.x, 2);
+    }
+    const g = this.species.gait;
+    let speed = 0;
+    if (this.goal === 'flee') {
+      if (this.goalT <= 0) this.rest();
+      else speed = (Math.sign(c.x - this.fleeFrom) || this.f) * g.run;
+    } else if (this.goal === 'walk') {
+      const h = this.following;
+      const tx = h ? (h.alive && h.state === 'stand' && !h.destroyed ? h.limbs.get('upperTorso')!.part.x : NaN) : this.targetX;
+      const near = h ? 1.3 : 0.2;
+      const dx = tx - c.x;
+      if (Number.isNaN(dx) || Math.abs(dx) < near || this.goalT <= 0) {
+        // glad to see them
+        if (h && Math.abs(dx) < near * 1.5) this.wag = 1.5 + Math.random() * 1.5;
+        this.rest();
+      } else speed = Math.sign(dx) * g.walk * clamp(Math.abs(dx) / 0.6, 0.4, 1);
+    } else if (this.goalT <= 0) this.decide();
+    // it can only walk forwards: facing the wrong way, turn round first
+    if (speed && Math.sign(speed) !== this.f && !this.turn()) speed = 0;
+    // something in the way (another animal, a person, a crate): stop short rather
+    // than climb it (running scared, it keeps looking for a way through)
+    if (speed && (look ? this.blockedAhead() : this.cornered)) {
+      this.blocked = this.f;
+      speed = 0;
+      if (this.goal === 'flee') this.cornered = true;
+      else this.rest();
+    } else if (look) this.cornered = false;
+    // walked into something: give up and try elsewhere later
+    const vx = this.trunkVx();
+    this.stuckT = speed && vx < Math.abs(speed) * 0.25 ? this.stuckT + dt : 0;
+    if (this.stuckT > 2) {
+      this.stuckT = 0;
+      this.blocked = Math.sign(speed);
+      speed = 0;
+      this.rest();
+    }
+    this.speed = Math.abs(speed);
+  }
+
+  /** Sends it walking to x (scripts and tests); it gets there if nothing is in the way. */
+  goTo(x: number): void {
+    this.goal = 'walk';
+    this.following = null;
+    this.targetX = x;
+    this.goalT = 6 + Math.abs(x - this.L('chest').part.x) * 2;
+  }
+
+  /** Stands about for `secs` seconds before deciding what to do next (scripts and tests). */
+  stay(secs: number): void {
+    this.rest();
+    this.goalT = secs;
+  }
+
+  /** Facing left (-1) or right (1). */
+  get facing(): 1 | -1 {
+    return this.f;
+  }
+
+  /** Done standing about: off somewhere, or stays put a while longer. */
+  private decide(): void {
+    const c = this.L('chest').part;
+    const h = this.species.social ? this.nearestPerson(c.x, c.y, 18) : null;
+    const hx = h ? h.limbs.get('upperTorso')!.part.x : 0;
+    if (h && Math.abs(hx - c.x) > 2.2 && this.clearTo(Math.sign(hx - c.x))) {
+      this.goal = 'walk';
+      this.following = h;
+      this.goalT = 25;
+      return;
+    }
+    // standing on a heap of bodies or junk it stays put rather than stir it all up again
+    if (this.pawsDown(true) < 2) {
+      this.rest();
+      this.goalT += 10 + Math.random() * 20;
+      return;
+    }
+    if (Math.random() < 0.6) {
+      // mostly away from whatever stopped it last time
+      let dir = this.blocked ? -this.blocked : Math.random() < 0.5 ? -1 : 1;
+      this.blocked = 0;
+      if (!this.clearTo(dir)) dir = -dir;
+      if (!this.clearTo(dir)) {
+        // hemmed in (in a crowd, on a heap of bodies): it stays put, and stays still
+        this.rest();
+        this.goalT += 10 + Math.random() * 20;
+        return;
+      }
+      const dist = 1 + Math.random() * 3.5;
+      this.goal = 'walk';
+      this.following = null;
+      this.targetX = clamp(c.x + dir * dist, WORLD.left + 2, WORLD.right - 2);
+      this.goalT = 6 + dist * 2;
+    } else this.rest();
+  }
+
+  /** Room to set off that way, turning round first if it has to? */
+  private clearTo(dir: number): boolean {
+    return dir === this.f ? !this.blockedAhead() : !this.blockedAhead(true, 0.35);
+  }
+
+  private rest(): void {
+    this.goal = 'idle';
+    this.following = null;
+    this.goalT = 3 + Math.random() * 8;
+  }
+
+  private nearestPerson(x: number, y: number, r: number): Human | null {
+    let best: Human | null = null;
+    let bd = r;
+    for (const e of this.game.entities) {
+      if (!(e instanceof Human) || e.destroyed || !e.alive || e.state !== 'stand') continue;
+      const t = e.limbs.get('upperTorso')!.part;
+      const d = Math.hypot(t.x - x, t.y - y);
+      if (d < bd) {
+        bd = d;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  /** Runs away from x for a few seconds. */
+  private scare(fromX: number, secs: number): void {
+    if (!this.alive) return;
+    if (this.goal !== 'flee') {
+      this.goalT = 0;
+      if (this.voiceT <= 0 && this.consciousness > 0.5 && this.state === 'stand') {
+        this.voiceT = 1.5;
+        this.game.sound.play(this.species.sounds.alarm, { gain: 0.45, x: this.L('chest').part.x });
+      }
+    }
+    this.goal = 'flee';
+    this.following = null;
+    this.fleeFrom = fromX;
+    this.goalT = Math.max(this.goalT, secs);
+  }
+
+  onAlarm(x: number, y: number, radius: number): void {
+    if (!this.alive || this.consciousness < 0.3 || this.L('chest').gone) return;
+    const c = this.L('chest').part;
+    const d = Math.hypot(c.x - x, c.y - y);
+    if (d > radius) return;
+    // close by, it scrambles up off the floor to get away
+    if (this.state === 'down' && d < radius * 0.6) this.rouse();
+    this.scare(x, 2.5 + 4 * (1 - d / radius));
+  }
+
+  /**
+   * Is there something solid just ahead (or behind: back = true), at head,
+   * chest or knee height, within `margin` m of the nose (or tail)?
+   */
+  private blockedAhead(back = false, margin = 0.35): boolean {
+    const c = this.L('chest').part;
+    const cx = this.L('chest').spec.cx;
+    let ext = 0;
+    for (const s of this.species.specs) {
+      if (s.shape.kind === 'box') ext = Math.max(ext, back ? cx - (s.cx - s.shape.w / 2) : s.cx + s.shape.w / 2 - cx);
+    }
+    const reach = ext * PX + margin;
+    const world = this.game.physics.world;
+    const ray = new RAPIER.Ray({ x: c.x, y: c.y }, { x: back ? -this.f : this.f, y: 0 });
+    // head height too: a cat would walk in under a dog's belly
+    const head = this.ok('head') ? this.L('head').part.y : c.y;
+    for (const y of [head, c.y, c.y - this.species.hipY * 0.45 * PX]) {
+      ray.origin = { x: c.x, y };
+      const hit = world.castRay(ray, reach, true, undefined, undefined, undefined, undefined, (o) => {
+        const p = this.game.physics.partOf(o);
+        return !p || p.entity !== this;
+      });
+      if (hit) return true;
+    }
+    return false;
+  }
+
+  /** Horizontal speed of the trunk, + forward. */
+  private trunkVx(): number {
+    let m = 0;
+    let p = 0;
+    for (const k of ['chest', 'hips']) {
+      const l = this.L(k);
+      if (l.gone || !l.attached) continue;
+      m += l.part.mass;
+      p += l.part.mass * l.part.vx;
+    }
+    return m ? (p / m) * this.f : 0;
+  }
+
+  /** A stepping leg's joint angle (facing right): diagonal pairs swing together, paws lifting as they go forward. */
+  private step(key: string): number {
+    const g = this.species.gait;
+    const ph = this.stride + (key.endsWith('FrontF') || key.endsWith('BackB') ? 0 : Math.PI);
+    const run = clamp((this.speed - g.walk) / (g.run - g.walk), 0, 1);
+    if (key.startsWith('upper')) return this.gaitAmt * g.swing * (1 + 0.25 * run) * Math.sin(ph);
+    const flex = this.gaitAmt * g.lift * Math.max(0, Math.cos(ph));
+    return key.startsWith('lowerFront') ? flex : -flex;
+  }
+
+  /**
+   * Walking: the legs step in a trot, at the rate that matches the speed, and
+   * the trunk is driven toward the wanted speed while enough paws are down.
+   */
+  private walk(dt: number, paws: number): void {
+    const want = this.state === 'stand' ? this.speed : 0;
+    this.gaitAmt = want > 0 ? Math.min(1, this.gaitAmt + dt * 4) : Math.max(0, this.gaitAmt - dt * 3);
+    if (!this.gaitAmt) return;
+    const g = this.species.gait;
+    const run = clamp((want - g.walk) / (g.run - g.walk), 0, 1);
+    // each diagonal pair carries the body one sweep of the legs per half step
+    const sweep = 2 * this.species.hipY * PX * Math.sin(g.swing * (1 + 0.25 * run));
+    this.stride = (this.stride + 2 * Math.PI * Math.max(1.2, want / (2 * sweep)) * dt) % (2 * Math.PI);
+    if (!want || paws < 2) return;
+    const a = clamp((want - this.trunkVx()) * 6, -4, 4 + 8 * run);
+    let m = 0;
+    for (const l of this.order) if (!l.gone && l.attached) m += l.part.mass;
+    const trunk = ['chest', 'hips'].map((k) => this.L(k)).filter((l) => !l.gone && l.attached && !l.part.frozen);
+    const tm = trunk.reduce((s, l) => s + l.part.mass, 0);
+    for (const l of trunk) l.part.body.applyImpulse({ x: m * a * this.f * (l.part.mass / tm) * dt, y: 0 }, true);
+  }
+
+  /** Pinned, tied, welded or stuck with something: it can't turn round in place. */
+  private tethered(): boolean {
+    const world = this.game.physics.world;
+    const mine = new Set(this.parts.map((p) => p.body.handle));
+    let out = false;
+    for (const l of this.order) {
+      if (l.gone || !l.attached) continue;
+      if (l.part.frozen) return true;
+      world.impulseJoints.forEachJointHandleAttachedToRigidBody(l.part.body.handle, (h) => {
+        const j = world.impulseJoints.get(h);
+        if (!j || out) return;
+        const o = j.body1().handle === l.part.body.handle ? j.body2() : j.body1();
+        if (!mine.has(o.handle)) out = true;
+      });
+      if (out) return true;
+    }
+    return this.game.connections.list.some((k) => k.a.entity === this || k.b?.entity === this);
+  }
+
+  /**
+   * Turns round in place: the body is mirrored about its middle, keeping its
+   * pose and motion (a sprite game's about-turn).
+   */
+  private turn(): boolean {
+    if (this.turnT > 0) return false;
+    // turning swings the head round to where the tail was: there has to be room
+    if (this.tethered() || this.blockedAhead(true, 0.1)) {
+      this.turnT = 0.3;
+      return false;
+    }
+    this.turnT = 0.8;
+    const live = this.order.filter((l) => !l.gone && l.attached);
+    let m = 0;
+    let mx = 0;
+    for (const l of live) {
+      m += l.part.mass;
+      mx += l.part.x * l.part.mass;
+    }
+    const cx = mx / m;
+    for (const l of live) {
+      const v = l.part.body.linvel();
+      l.part.mirror(cx);
+      // it turns round, it doesn't bounce back
+      l.part.body.setLinvel(v, false);
+      l.part.vx = v.x;
+      for (const w of l.wounds) w.dx = -w.dx;
+    }
+    this.f = this.f === 1 ? -1 : 1;
+    this.flipped = this.f === -1;
+    for (const l of live) {
+      const j = l.joint;
+      if (!j || !j.isValid() || !l.parent) continue;
+      l.a1 = { x: -l.a1.x, y: l.a1.y };
+      l.a2 = { x: -l.a2.x, y: l.a2.y };
+      j.setAnchor1(l.a1);
+      j.setAnchor2(l.a2);
+      if (this.f === 1) j.setLimits(l.spec.lo!, l.spec.hi!);
+      else j.setLimits(-l.spec.hi!, -l.spec.lo!);
+    }
+    this.updateMotors(true);
+    for (const l of live) if (!l.part.frozen) l.part.body.wakeUp();
+    return true;
+  }
+
   /** Tail wags and the odd bark or meow while healthy; whimpers while hurt. */
   private idle(dt: number, conscious: boolean): void {
     this.wag = Math.max(0, this.wag - dt);
@@ -595,12 +997,14 @@ export class Creature extends Entity {
   private rouse(): void {
     this.gaveUp = null;
     this.getupFails = 0;
+    this.retries = 0;
   }
 
   /** The pile it gave up in has shifted: one more try (see Human.retry). */
   private retry(): void {
     this.gaveUp = null;
     this.getupFails = 3;
+    this.retries++;
   }
 
   private yelp(dmg: number): void {
@@ -850,8 +1254,11 @@ export class Creature extends Entity {
   private injure(l: Limb, dmg: number, kind: DamageKind, point?: V2, dir?: V2): void {
     const p = l.part;
     p.hp -= dmg;
-    // a real hit (not the knocks of flopping back down) makes it try again
-    if (dmg > 6) this.rouse();
+    // a real hit (not the knocks of flopping back down) makes it try again, and get away
+    if (dmg > 6) {
+      this.rouse();
+      if (point) this.scare(point.x - Math.sign(dir?.x ?? 0), 3);
+    }
     this.pain = Math.min(1.5, this.pain + dmg / 70);
     this.shock = Math.min(1, this.shock + dmg / 500);
     if (l.spec.key === 'head') this.consciousness = Math.max(0, this.consciousness - dmg / l.spec.hp);
@@ -915,7 +1322,7 @@ export class Creature extends Entity {
   private bleed(dt: number): void {
     const pulse = this.alive ? 0.55 + 0.45 * Math.max(0, Math.sin(this.t * Math.PI * 2 * 1.6)) : 0.2;
     // a smaller animal has less blood to lose
-    const loss = this.species.kind === 'cat' ? 0.8 : 0.55;
+    const loss = this.species.bleedRate;
     let total = 0;
     for (const l of this.order) {
       if (l.gone || !l.wounds.length) continue;
@@ -1052,7 +1459,8 @@ export class Creature extends Entity {
   /** Short status line (shown in tooltips/tests). */
   status(): string {
     const drugs = (Object.keys(this.drugs) as (keyof typeof this.drugs)[]).filter((k) => this.drugs[k] > 0).map((k) => ` · ${k}`).join('');
-    return `${this.alive ? (this.consciousness > 0.3 ? 'conscious' : 'unconscious') : 'dead'} · blood ${this.blood.toFixed(0)}%${drugs} · ${this.state}`;
+    const doing = this.state !== 'stand' ? this.state : this.goal === 'flee' ? 'running' : this.following ? 'following' : this.goal === 'walk' ? 'walking' : 'standing';
+    return `${this.alive ? (this.consciousness > 0.3 ? 'conscious' : 'unconscious') : 'dead'} · blood ${this.blood.toFixed(0)}%${drugs} · ${doing}`;
   }
 
   protected serializeExtra(): Record<string, unknown> {

@@ -397,6 +397,44 @@
   "creature/cat_yowl": [
     "sfx/creature/cat_yowl_1.ogg"
   ],
+  "creature/pig_oink": [
+    "sfx/creature/pig_oink_1.ogg",
+    "sfx/creature/pig_oink_2.ogg",
+    "sfx/creature/pig_oink_3.ogg",
+    "sfx/creature/pig_oink_4.ogg"
+  ],
+  "creature/pig_grunt": [
+    "sfx/creature/pig_grunt_1.ogg",
+    "sfx/creature/pig_grunt_2.ogg",
+    "sfx/creature/pig_grunt_3.ogg"
+  ],
+  "creature/pig_squeal": [
+    "sfx/creature/pig_squeal_1.ogg",
+    "sfx/creature/pig_squeal_2.ogg",
+    "sfx/creature/pig_squeal_3.ogg",
+    "sfx/creature/pig_squeal_4.ogg"
+  ],
+  "creature/pig_die": [
+    "sfx/creature/pig_die_1.ogg"
+  ],
+  "creature/fox_bark": [
+    "sfx/creature/fox_bark_1.ogg",
+    "sfx/creature/fox_bark_2.ogg",
+    "sfx/creature/fox_bark_3.ogg"
+  ],
+  "creature/fox_scream": [
+    "sfx/creature/fox_scream_1.ogg",
+    "sfx/creature/fox_scream_2.ogg",
+    "sfx/creature/fox_scream_3.ogg"
+  ],
+  "creature/fox_whine": [
+    "sfx/creature/fox_whine_1.ogg",
+    "sfx/creature/fox_whine_2.ogg"
+  ],
+  "creature/fox_die": [
+    "sfx/creature/fox_die_1.ogg",
+    "sfx/creature/fox_die_2.ogg"
+  ],
   "ui/click": [
     "sfx/ui/click_1.ogg",
     "sfx/ui/click_2.ogg",

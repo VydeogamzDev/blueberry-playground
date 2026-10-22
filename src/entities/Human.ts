@@ -159,6 +159,8 @@ export class Human extends Entity implements Holder {
   private getupFails = 0;
   /** Where the torso lay when it gave up trying to stand (see rouse()). */
   private gaveUp: V2 | null = null;
+  /** Extra tries earned by the pile shifting since it last got up or was roused. */
+  private retries = 0;
   private getupBest = 0;
   private getupProgressT = 0;
   private motorTimer = 0;
@@ -280,15 +282,18 @@ export class Human extends Entity implements Holder {
   private rouse(): void {
     this.gaveUp = null;
     this.getupFails = 0;
+    this.retries = 0;
   }
 
   /**
-   * The pile it gave up in has shifted: one more try. Only one, or every
-   * attempt would shift the pile enough to start everyone else trying again.
+   * The pile it gave up in has shifted: one more try. Only one at a time, and
+   * only a couple in all: two people wedged together would otherwise take
+   * turns shifting each other and trying again forever.
    */
   private retry(): void {
     this.gaveUp = null;
     this.getupFails = GIVE_UP - 1;
+    this.retries++;
   }
 
   /** Overall muscle strength 0..1. */
@@ -541,7 +546,7 @@ export class Human extends Entity implements Holder {
       this.airT = col.grounded ? 0 : this.airT + dt;
       const tilt = Math.abs(col.theta);
       // only standing for a while counts as having got up (not toppling off a pile again)
-      if (this.state === 'stand' && this.stateT > 3) this.getupFails = 0;
+      if (this.state === 'stand' && this.stateT > 3) this.getupFails = this.retries = 0;
       if (!this.legsWork()) this.setState('down');
       else if (this.state === 'stand' && (tilt > 0.62 || this.airT > 0.35)) {
         if (this.stateT < 3) this.failGetup();
@@ -563,7 +568,7 @@ export class Human extends Entity implements Holder {
       const up = this.L('upperTorso').part;
       const rest = Math.hypot(up.vx, up.vy) < 0.6;
       const wait = 2.2 + this.getupFails * 1.5 + this.pain * 4;
-      if (this.gaveUp && Math.hypot(up.x - this.gaveUp.x, up.y - this.gaveUp.y) > 0.4) this.retry();
+      if (this.gaveUp && this.retries < 2 && Math.hypot(up.x - this.gaveUp.x, up.y - this.gaveUp.y) > 0.4) this.retry();
       if (!this.gaveUp && this.stateT > wait && rest && col.grounded && this.legsWork() && str > 0.7 && this.pain < 0.6 && this.grounded(true) && !this.pinned()) {
         this.getupBest = Math.abs(col.theta);
         this.getupProgressT = 0;

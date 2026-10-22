@@ -804,20 +804,22 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (!game.puddles.burningAt(3)) return 'grenade did not light the oil';
       return true;
     }],
-    ['extra: animals: dog and cat stand, get up, land on their feet', () => {
+    ['extra: animals: dog, cat, pig and fox stand, get up, land on their feet', () => {
       kit.reset();
-      const dog = kit.spawn('dog', -1.5, 0.6) as Creature;
-      const cat = kit.spawn('cat', 1.5, 0.4) as Creature;
+      const herd = ['dog', 'cat', 'pig', 'fox'].map((id, i) => kit.spawn(id, -3 + i * 2, 0.6) as Creature);
+      for (const a of herd) a.stay(60);
       kit.advance(3);
-      for (const a of [dog, cat]) {
+      for (const a of herd) {
         if (a.state !== 'stand') return `${a.def.id} did not stand (${a.status()})`;
         if (Math.abs(a.parts[0].a) > 0.1) return `${a.def.id} leans ${a.parts[0].a.toFixed(2)} rad`;
       }
       if (kit.maxSpeed() > 0.05) return `still moving ${kit.maxSpeed().toFixed(3)} m/s`;
       // knocked over onto its back (or side), each gets back up
-      for (const [id, angle] of [['dog', Math.PI], ['dog', Math.PI / 2], ['cat', -Math.PI / 2], ['cat', Math.PI]] as const) {
+      const turns = [['dog', Math.PI], ['dog', Math.PI / 2], ['cat', -Math.PI / 2], ['cat', Math.PI], ['pig', Math.PI / 2], ['pig', Math.PI], ['fox', -Math.PI / 2], ['fox', Math.PI]] as const;
+      for (const [id, angle] of turns) {
         kit.reset();
-        const a = kit.spawn(id, 0, id === 'dog' ? 0.6 : 0.35, { angle }) as Creature;
+        const a = kit.spawn(id, 0, id === 'cat' ? 0.35 : 0.6, { angle }) as Creature;
+        a.stay(60);
         let t = 0;
         while (t < 12 && !(a.state === 'stand' && Math.abs(a.parts[0].a) < 0.15 && t > 1)) {
           kit.advance(0.5);
@@ -883,6 +885,78 @@ export function makeSelfTest(game: Game, controls: Controls) {
       (kit.spawn('grenade', d3.parts[0].x + 0.6, 0.3) as Explosive).activate();
       kit.advance(3.5);
       if (d3.parts.reduce((n, p) => n + (p.destroyed ? 0 : p.hp), 0) >= before) return 'grenade did not hurt the dog';
+      return true;
+    }],
+    ['extra: animals walk where they are sent, turn round, and keep their feet in a crowd', () => {
+      const chest = (a: Creature) => a.limbs.get('chest')!.part;
+      for (const kind of ['dog', 'cat', 'pig', 'fox']) {
+        for (const dx of [4, -4]) {
+          kit.reset();
+          const a = kit.spawn(kind, 0, 0.6) as Creature;
+          kit.advance(1.5);
+          a.goTo(dx);
+          let t = 0;
+          while (t < 12 && Math.abs(chest(a).x - dx) > 0.4) {
+            kit.advance(0.25);
+            t += 0.25;
+            if (a.state !== 'stand') return `${kind} walking to ${dx}: fell over (${a.status()})`;
+          }
+          if (Math.abs(chest(a).x - dx) > 0.4) return `${kind} sent to ${dx} only got to ${chest(a).x.toFixed(2)}`;
+          if (a.facing !== Math.sign(dx)) return `${kind} walked to ${dx} facing the other way`;
+        }
+      }
+      // eight animals milling about together for 45 s
+      kit.reset();
+      const herd: Creature[] = [];
+      for (let i = 0; i < 8; i++) herd.push(kit.spawn(['dog', 'cat', 'pig', 'fox'][i % 4], -9 + i * 2.5, 0.6) as Creature);
+      const start = herd.map((a) => chest(a).x);
+      for (let i = 0; i < 180; i++) {
+        kit.advance(0.25);
+        const down = herd.find((a) => a.state !== 'stand');
+        if (down) return `${down.def.id} fell over after ${(i * 0.25).toFixed(1)} s among the others (${down.status()})`;
+      }
+      const moved = herd.filter((a, i) => Math.abs(chest(a).x - start[i]) > 0.5).length;
+      if (moved < 4) return `only ${moved} of 8 animals wandered off in 45 s`;
+      return true;
+    }],
+    ['extra: animals run from gunshots and fire; dogs go to people', () => {
+      const chest = (a: Creature) => a.limbs.get('chest')!.part;
+      kit.reset();
+      const dog = kit.spawn('dog', 0, 0.6) as Creature;
+      const cat = kit.spawn('cat', 3, 0.5) as Creature;
+      kit.advance(1.5);
+      const d0 = chest(dog).x;
+      const c0 = chest(cat).x;
+      // a shot fired over their heads, off to the left
+      (kit.spawn('pistol', -6, 2.5) as Firearm).fire();
+      kit.advance(3);
+      if (chest(dog).x - d0 < 3 || chest(cat).x - c0 < 3) return `ran ${(chest(dog).x - d0).toFixed(1)} m (dog), ${(chest(cat).x - c0).toFixed(1)} m (cat) from a gunshot`;
+      if (dog.state !== 'stand' || cat.state !== 'stand') return `fell running away: ${dog.status()}; ${cat.status()}`;
+      // a burning crate next to a dog
+      kit.reset();
+      const d2 = kit.spawn('dog', 0, 0.6) as Creature;
+      kit.advance(1.5);
+      const crate = kit.spawn('crate', 1.4, 0.4);
+      kit.advance(0.5);
+      game.fire.ignite(crate.parts[0], 1);
+      kit.advance(3);
+      if (chest(d2).x > -1.5) return `dog stayed by the fire (x ${chest(d2).x.toFixed(2)})`;
+      // a dog trots over to the nearest person
+      kit.reset();
+      kit.spawn('human', 8, 0.9);
+      const d3 = kit.spawn('dog', 0, 0.6) as Creature;
+      let t = 0;
+      while (t < 25 && Math.abs(chest(d3).x - 8) > 2.2) {
+        kit.advance(0.5);
+        t += 0.5;
+      }
+      if (Math.abs(chest(d3).x - 8) > 2.2) return `dog didn't come to the person (x ${chest(d3).x.toFixed(2)})`;
+      // and a fox keeps away from them
+      kit.reset();
+      kit.spawn('human', 0, 0.9);
+      const fox = kit.spawn('fox', 2.2, 0.6) as Creature;
+      kit.advance(4);
+      if (chest(fox).x < 4.5) return `fox stayed near a person (x ${chest(fox).x.toFixed(2)})`;
       return true;
     }],
     ['extra: conscious people and dogs lying in a pile stop squirming', () => {

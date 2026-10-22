@@ -81,6 +81,7 @@ export class Firearm extends Item {
     this.shots++;
     const m = p.pixelToWorld(g.muzzle[0], g.muzzle[1]);
     const fwd = this.forward();
+    game.alarm(m.x, m.y, g.laser !== undefined ? 5 : 16);
     const up = { x: -fwd.y * p.flip, y: fwd.x * p.flip };
     if (g.laser !== undefined) {
       game.projectiles.laser(m.x, m.y, fwd.x, fwd.y, { damage: g.damage, color: g.laser, ignore: p.body });

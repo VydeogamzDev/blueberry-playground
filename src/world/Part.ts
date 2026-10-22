@@ -53,7 +53,8 @@ export class Part {
   art: PixelArt;
   readonly w: number;
   readonly h: number;
-  readonly flip: 1 | -1;
+  /** -1 when drawn and shaped facing left (see mirror()). */
+  flip: 1 | -1;
   readonly layer: number;
   spriteOffset: V2;
 
@@ -241,6 +242,33 @@ export class Part {
     this.x = this.px = t.x;
     this.y = this.py = t.y;
     this.a = this.pa = this.body.rotation();
+  }
+
+  /**
+   * Mirrors the part in place about the vertical line x = cx: pose, motion,
+   * sprite and collider offsets (an animal turning round). Joints and anything
+   * attached by local coordinates are up to the owner.
+   */
+  mirror(cx: number): void {
+    this.flip = this.flip === 1 ? -1 : 1;
+    this.mesh.scale.x = -this.mesh.scale.x;
+    const b = this.body;
+    const t = b.translation();
+    const v = b.linvel();
+    b.setTranslation({ x: 2 * cx - t.x, y: t.y }, false);
+    b.setRotation(-b.rotation(), false);
+    b.setLinvel({ x: -v.x, y: v.y }, false);
+    b.setAngvel(-b.angvel(), false);
+    for (const c of this.colliders) {
+      const o = c.translationWrtParent();
+      if (o && o.x !== 0) c.setTranslationWrtParent({ x: -o.x, y: o.y });
+      const r = c.rotationWrtParent();
+      if (r) c.setRotationWrtParent(-r);
+    }
+    // mid-step interpolation would sweep the sprite across
+    this.resetInterpolation();
+    this.vx = -this.vx;
+    this.av = -this.av;
   }
 
   render(alpha: number): void {
