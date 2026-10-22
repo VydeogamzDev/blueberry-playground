@@ -4,9 +4,11 @@ Every file in `public/sfx/` is derived from a recording released under **CC0 1.0
 
 Processing applied to all files: cut/trimmed (leading silence removed, `@ N s` = start offset in the original), short fades, downmixed to mono, resampled to 44.1 kHz, level-normalized (gunshots/explosions peak-limited), encoded as Ogg Vorbis (q4; loops q6). Loops were made seamless with an equal-power crossfade of the source material.
 
+Where a row says so, a second pass removed rumble (two-pole high-pass at the given frequency) and/or re-levelled the file so that its A-weighted loudness (loudest 50 ms) matches the other variants of the same sound.
+
 Freesound files were taken from the publicly accessible high-quality preview (`-hq`) of each sound, since original downloads need a login.
 
-Total: 288 files from 107 sources.
+Total: 282 files from 106 sources.
 
 ## Kenney
 
@@ -18,8 +20,8 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `hit/concrete_2.ogg` | impactMining_000.ogg | 0.50 s |
-| `hit/concrete_3.ogg` | impactMining_003.ogg | 0.50 s |
+| `hit/concrete_2.ogg` | impactMining_000.ogg | 0.50 s; high-pass 120 Hz, re-levelled |
+| `hit/concrete_3.ogg` | impactMining_003.ogg | 0.50 s; high-pass 120 Hz, re-levelled |
 | `impact/wood_light_1.ogg` | impactWood_light_000.ogg | 0.14 s |
 | `impact/wood_light_2.ogg` | impactWood_light_001.ogg | 0.13 s |
 | `impact/wood_light_3.ogg` | impactWood_light_002.ogg | 0.14 s |
@@ -80,8 +82,8 @@ Total: 288 files from 107 sources.
 | `impact/plank_1.ogg` | impactPlank_medium_000.ogg | 0.45 s |
 | `impact/plank_2.ogg` | impactPlank_medium_001.ogg | 0.44 s |
 | `impact/plank_3.ogg` | impactPlank_medium_002.ogg | 0.44 s |
-| `impact/stone_1.ogg` | impactMining_001.ogg | 0.59 s |
-| `impact/stone_2.ogg` | impactMining_004.ogg | 0.60 s |
+| `impact/stone_1.ogg` | impactMining_001.ogg | 0.59 s; high-pass 100 Hz, re-levelled |
+| `impact/stone_2.ogg` | impactMining_004.ogg | 0.60 s; high-pass 100 Hz, re-levelled |
 
 ### Interface Sounds
 
@@ -101,7 +103,7 @@ Total: 288 files from 107 sources.
 | `ui/toggle_4.ogg` | toggle_004.ogg | 0.06 s |
 | `ui/error_1.ogg` | error_001.ogg | 0.16 s |
 | `ui/error_2.ogg` | error_004.ogg | 0.10 s |
-| `ui/error_3.ogg` | error_007.ogg | 0.19 s |
+| `ui/error_3.ogg` | error_007.ogg | 0.19 s; high-pass 150 Hz |
 | `ui/confirm_1.ogg` | confirmation_001.ogg | 0.29 s |
 | `ui/confirm_2.ogg` | confirmation_003.ogg | 0.32 s |
 | `ui/drop_1.ogg` | drop_002.ogg | 0.12 s |
@@ -127,8 +129,6 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `hit/metal_4.ogg` | impactMetal_004.ogg | 0.27 s |
-| `explosion/small_4.ogg` | lowFrequency_explosion_001.ogg | @ 0.01 s; 0.80 s |
 | `machine/thruster_loop_1.ogg` | thrusterFire_001.ogg | @ 0.20 s; 4.20 s; loop |
 
 ### UI Audio
@@ -140,8 +140,8 @@ Total: 288 files from 107 sources.
 | File | Original file | Notes |
 |---|---|---|
 | `ui/click_1.ogg` | click1.ogg | 0.09 s |
-| `ui/click_2.ogg` | click2.ogg | 0.05 s |
-| `ui/click_3.ogg` | click3.ogg | @ 0.02 s; 0.06 s |
+| `ui/click_2.ogg` | click2.ogg | 0.05 s; high-pass 150 Hz, re-levelled |
+| `ui/click_3.ogg` | click3.ogg | @ 0.02 s; 0.06 s; re-levelled |
 | `ui/hover_1.ogg` | rollover2.ogg | @ 0.02 s; 0.04 s |
 | `ui/hover_2.ogg` | rollover3.ogg | 0.07 s |
 
@@ -157,7 +157,6 @@ Total: 288 files from 107 sources.
 |---|---|---|
 | `hit/wood_1.ogg` | wood_hit_03.ogg | @ 0.00 s; 0.30 s |
 | `hit/wood_2.ogg` | wood_hit_07.ogg | @ 0.01 s; 0.27 s |
-| `hit/wood_3.ogg` | wood_hit_09.ogg | @ 0.02 s; 0.20 s |
 
 ### 100 CC0 SFX
 
@@ -181,10 +180,9 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `hit/concrete_4.ogg` | sfx100v2_stones_02.ogg | @ 0.02 s; 0.37 s |
 | `hit/glass_2.ogg` | sfx100v2_glass_04.ogg | @ 0.01 s; 0.15 s |
-| `impact/stone_3.ogg` | sfx100v2_stones_01.ogg | @ 0.02 s; 0.39 s |
-| `impact/stone_4.ogg` | sfx100v2_stones_03.ogg | 0.43 s |
+| `impact/stone_3.ogg` | sfx100v2_stones_01.ogg | @ 0.02 s; 0.39 s; re-levelled |
+| `impact/stone_4.ogg` | sfx100v2_stones_03.ogg | 0.43 s; re-levelled |
 | `machine/switch_3.ogg` | sfx100v2_switch_01.ogg | @ 0.00 s; 0.20 s |
 
 ### 2 wooden squish splatter sequences
@@ -217,7 +215,7 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `gore/swish_1.ogg` | melee sounds__sword sound.wav | 0.54 s |
+| `gore/swish_1.ogg` | melee sounds__sword sound.wav | 0.54 s; re-levelled |
 | `gore/swish_2.ogg` | melee sounds__melee sound.wav | @ 0.01 s; 0.60 s |
 
 ### 75 CC0 breaking / falling / hit sfx
@@ -341,7 +339,7 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `hit/glass_4.ogg` | IceShatters__LedasLuzta2.ogg | @ 0.01 s; 0.39 s |
+| `hit/glass_4.ogg` | IceShatters__LedasLuzta2.ogg | @ 0.01 s; 0.39 s; re-levelled |
 
 ### Impact
 
@@ -352,7 +350,7 @@ Total: 288 files from 107 sources.
 | File | Original file | Notes |
 |---|---|---|
 | `hit/wood_4.ogg` | qubodupImpactWood.ogg | 0.35 s |
-| `hit/concrete_1.ogg` | qubodupImpactStone.ogg | 0.27 s |
+| `hit/concrete_1.ogg` | qubodupImpactStone.ogg | 0.27 s; high-pass 120 Hz, re-levelled |
 
 ### Lego Bricks
 
@@ -521,16 +519,6 @@ Total: 288 files from 107 sources.
 |---|---|---|
 | `machine/rope_snap_1.ogg` | freesound #443833 (HQ preview) | 0.16 s; breaking rope |
 
-### Acid Bubbling.wav
-
-- Source: https://freesound.org/people/spookymodem/sounds/202094/
-- Author: spookymodem
-- License: CC0 1.0
-
-| File | Original file | Notes |
-|---|---|---|
-| `liquid/sizzle_5.ogg` | freesound #202094 (HQ preview) | @ 0.65 s; 1.40 s; acid bubbling |
-
 ### bark yelp dog small int.flac
 
 - Source: https://freesound.org/people/kyles/sounds/452180/
@@ -633,7 +621,7 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `creature/cat_hiss_1.ogg` | freesound #485952 (HQ preview) | 0.65 s |
+| `creature/cat_hiss_1.ogg` | freesound #485952 (HQ preview) | 0.65 s; re-levelled |
 
 ### cat meow
 
@@ -673,7 +661,7 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `creature/cat_hiss_2.ogg` | freesound #146963 (HQ preview) | @ 0.35 s; 0.90 s |
+| `creature/cat_hiss_2.ogg` | freesound #146963 (HQ preview) | @ 0.35 s; 0.90 s; re-levelled |
 
 ### Civilian Stun Gun 1/10s zap
 
@@ -683,7 +671,7 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `machine/zap_3.ogg` | freesound #264779 (HQ preview) | @ 0.12 s; 0.28 s |
+| `machine/zap_3.ogg` | freesound #264779 (HQ preview) | @ 0.12 s; 0.28 s; high-pass 120 Hz, re-levelled |
 
 ### Desert Eagle Gunshot
 
@@ -778,7 +766,7 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `explosion/large_3.ogg` | freesound #165808 (HQ preview) | @ 2.15 s; 2.00 s; real 4 kg TNT demolition (camcorder recording) |
+| `explosion/large_3.ogg` | freesound #165808 (HQ preview) | @ 2.15 s; 2.00 s; real 4 kg TNT demolition (camcorder recording); re-levelled |
 
 ### Explosion_Debris_Short_Stereo.wav
 
@@ -890,7 +878,6 @@ Total: 288 files from 107 sources.
 | File | Original file | Notes |
 |---|---|---|
 | `machine/rope_snap_3.ogg` | freesound #537084 (HQ preview) | @ 11.62 s; 0.40 s; guitar string snap |
-| `machine/rope_snap_4.ogg` | freesound #537084 (HQ preview) | @ 21.56 s; 0.60 s; guitar string snap |
 
 ### Gut Rip (Bladed)
 
@@ -920,7 +907,7 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `hit/flesh_4.ogg` | freesound #660769 (HQ preview) | @ 0.00 s; 0.27 s |
+| `hit/flesh_4.ogg` | freesound #660769 (HQ preview) | @ 0.00 s; 0.27 s; high-pass 120 Hz, re-levelled |
 
 ### Headshot.wav
 
@@ -930,7 +917,7 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `hit/flesh_3.ogg` | freesound #511194 (HQ preview) | @ 0.06 s; 0.80 s |
+| `hit/flesh_3.ogg` | freesound #511194 (HQ preview) | @ 0.06 s; 0.80 s; high-pass 120 Hz, re-levelled |
 
 ### Knife Stab Melon.wav
 
@@ -1011,9 +998,9 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `creature/pig_squeal_1.ogg` | freesound #344972 (HQ preview) | @ 0.48 s; 0.30 s |
-| `creature/pig_squeal_2.ogg` | freesound #344972 (HQ preview) | @ 0.93 s; 0.30 s |
-| `creature/pig_squeal_3.ogg` | freesound #344972 (HQ preview) | @ 2.03 s; 0.35 s |
+| `creature/pig_squeal_1.ogg` | freesound #344972 (HQ preview) | @ 0.48 s; 0.30 s; re-levelled |
+| `creature/pig_squeal_2.ogg` | freesound #344972 (HQ preview) | @ 0.96 s; 0.27 s; high-pass 120 Hz, re-levelled |
+| `creature/pig_squeal_3.ogg` | freesound #344972 (HQ preview) | @ 2.03 s; 0.35 s; re-levelled |
 | `creature/pig_die_1.ogg` | freesound #344972 (HQ preview) | @ 3.08 s; 1.30 s; long squeal |
 
 ### Pig Oink
@@ -1044,7 +1031,7 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `creature/pig_squeal_4.ogg` | freesound #442904 (HQ preview) | @ 0.04 s; 0.55 s |
+| `creature/pig_squeal_4.ogg` | freesound #442904 (HQ preview) | @ 0.04 s; 0.55 s; re-levelled |
 
 ### Pig.ogg
 
@@ -1180,8 +1167,8 @@ Total: 288 files from 107 sources.
 
 | File | Original file | Notes |
 |---|---|---|
-| `hit/flesh_1.ogg` | freesound #423301 (HQ preview) | @ 1.20 s; 0.26 s |
-| `hit/flesh_2.ogg` | freesound #423301 (HQ preview) | @ 1.90 s; 0.26 s |
+| `hit/flesh_1.ogg` | freesound #423301 (HQ preview) | @ 1.20 s; 0.26 s; high-pass 120 Hz, re-levelled |
+| `hit/flesh_2.ogg` | freesound #423301 (HQ preview) | @ 1.90 s; 0.26 s; high-pass 120 Hz, re-levelled |
 
 ### Water Drip
 

@@ -477,10 +477,11 @@ export class Sound {
     this.play(mat === 'metal' ? 'impact/metal_light' : 'impact/generic_light', { gain: 0.3, x, rate: 1.1 });
   }
 
-  squish(strength: number, x?: number): void {
+  /** `gain` scales the whole sound (a bullet hit already has its own flesh sample). */
+  squish(strength: number, x?: number, gain = 1): void {
     if (!this.allow('squish', 3, 80)) return;
     const s = Math.min(1, strength);
-    this.play(s > 0.75 ? 'gore/splat' : 'gore/squish', { gain: 0.25 + s * 0.45, x });
+    this.play(s > 0.75 ? 'gore/splat' : 'gore/squish', { gain: (0.25 + s * 0.45) * gain, x });
   }
 
   gib(x?: number): void {

@@ -1839,7 +1839,7 @@ export class Human extends Entity implements Holder {
       const ps = this.game.particles;
       ps.blood(hit.point.x, hit.point.y, -hit.dir.x + (Math.random() - 0.5), -hit.dir.y + 0.3, 6 + dmg * 0.3, 2.2, p.body);
       if (hit.exit) ps.blood(hit.exit.x, hit.exit.y, hit.dir.x, hit.dir.y, 10 + dmg * 0.5, 4.5, p.body);
-      this.game.sound.squish(0.3, hit.point.x);
+      this.game.sound.squish(0.3, hit.point.x, 0.5);
     } else {
       this.game.particles.sparks(hit.point.x, hit.point.y, -hit.dir.x, -hit.dir.y, 6, 4);
     }

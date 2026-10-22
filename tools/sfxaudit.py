@@ -12,7 +12,7 @@ Decodes each file with ffmpeg (on PATH) and checks:
   hiss                   a flat (white) noise floor close to the sound itself
   rumble                 most of the energy below 60 Hz (mud that eats headroom)
   seam                   loops whose end doesn't meet their start (a click every lap)
-  uneven                 variants of one sound that differ a lot in loudness
+  uneven                 variants of one sound that differ a lot in loudness (A-weighted, as heard)
 """
 import json
 import os
@@ -47,15 +47,24 @@ def windows_rms(x, n):
     return np.sqrt(np.mean(x[:k * n].reshape(k, n) ** 2, axis=1))
 
 
+def a_weight(f):
+    """IEC 61672 A-weighting (gain, 1 at 1 kHz): roughly how loud each frequency sounds."""
+    f2 = np.maximum(f, 1e-3) ** 2
+    return 12194 ** 2 * f2 ** 2 / ((f2 + 20.6 ** 2) * np.sqrt((f2 + 107.7 ** 2) * (f2 + 737.9 ** 2)) * (f2 + 12194 ** 2)) / 0.794
+
+
 def analyse(x, loop):
     peak = float(np.max(np.abs(x))) if len(x) else 0.0
     w5 = windows_rms(x, int(SR * 0.005))
     w50 = windows_rms(x, int(SR * 0.05))
     loud = float(np.max(w50))
+    # the same, as heard: rumble counts in plain RMS but barely in the ear
+    xa = np.fft.irfft(np.fft.rfft(x) * a_weight(np.fft.rfftfreq(len(x), 1 / SR)), n=len(x)) if len(x) > 1 else x
     r = {
         'dur': len(x) / SR,
         'peak': db(peak),
         'loud': db(loud),
+        'aloud': db(float(np.max(windows_rms(xa, int(SR * 0.05))))),
         'dc': float(np.mean(x)),
     }
     # how big a jump the very first/last sample is, against the sound's own peak
@@ -102,7 +111,7 @@ def main():
             continue
         loop = key in loops
         res = [(f, analyse(decode(os.path.join(SFX, f)), loop)) for f in files]
-        louds = [r['loud'] for _, r in res]
+        louds = [r['aloud'] for _, r in res]
         spread = max(louds) - min(louds) if louds else 0
         for f, r in res:
             why = []
@@ -124,12 +133,12 @@ def main():
                 why.append(f"rumble ({r['low']:.0%} below 60 Hz)")
             if loop and r.get('seam', 0) > 8:
                 why.append(f"seam (jump {r['seam']:.0f}x a normal step)")
-            if spread > 9 and abs(r['loud'] - float(np.median(louds))) > 6:
-                why.append(f"uneven ({r['loud'] - float(np.median(louds)):+.0f} dB from its variants)")
+            if spread > 9 and abs(r['aloud'] - float(np.median(louds))) > 6:
+                why.append(f"uneven ({r['aloud'] - float(np.median(louds)):+.0f} dB A-weighted from its variants)")
             if why:
                 flagged += 1
             if why or show_all:
-                rows.append(f"{f[4:]:34} {r['dur']:5.2f}s peak {r['peak']:6.1f} loud {r['loud']:6.1f} {'  '.join(why)}")
+                rows.append(f"{f[4:]:34} {r['dur']:5.2f}s peak {r['peak']:6.1f} loud {r['loud']:6.1f} A {r['aloud']:6.1f} {'  '.join(why)}")
     print('\n'.join(rows))
     total = sum(len(v) for k, v in manifest.items() if isinstance(v, list) and k != 'loops')
     print(f"\n{flagged} of {total} files flagged")
