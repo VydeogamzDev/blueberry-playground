@@ -25,9 +25,45 @@ interface Recording {
   loops: Loop[];
 }
 
+/** A rendered buffer as a 16-bit PCM WAV file, base64. */
+function wavBase64(buf: AudioBuffer): string {
+  const ch = buf.numberOfChannels;
+  const n = buf.length;
+  const bytes = new ArrayBuffer(44 + n * ch * 2);
+  const v = new DataView(bytes);
+  const text = (at: number, s: string) => [...s].forEach((c, i) => v.setUint8(at + i, c.charCodeAt(0)));
+  text(0, 'RIFF');
+  v.setUint32(4, 36 + n * ch * 2, true);
+  text(8, 'WAVE');
+  text(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, ch, true);
+  v.setUint32(24, buf.sampleRate, true);
+  v.setUint32(28, buf.sampleRate * ch * 2, true);
+  v.setUint16(32, ch * 2, true);
+  v.setUint16(34, 16, true);
+  text(36, 'data');
+  v.setUint32(40, n * ch * 2, true);
+  const data = [...Array(ch)].map((_, c) => buf.getChannelData(c));
+  let at = 44;
+  for (let i = 0; i < n; i++) {
+    for (let c = 0; c < ch; c++) {
+      v.setInt16(at, Math.round(Math.max(-1, Math.min(1, data[c][i])) * 32767), true);
+      at += 2;
+    }
+  }
+  let s = '';
+  const u8 = new Uint8Array(bytes);
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
 export interface MixReport {
   scene: string;
   seconds: number;
+  /** The mix as it comes out of the master bus at the game's volume: a 16-bit WAV file, base64 (when asked for). */
+  wav?: string;
   /** Sounds the game started, how many of those the voice limit turned away, and how many it cut short. */
   sounds: number;
   dropped: number;
@@ -365,7 +401,7 @@ export function makeMixCheck(game: Game, controls: Controls) {
 
   return {
     /** Records, renders and measures the busy scenes (all, or those whose name contains `filter`). */
-    async scenes(filter = ''): Promise<MixReport[]> {
+    async scenes(filter = '', wav = false): Promise<MixReport[]> {
       await snd.whenLoaded();
       const reports: MixReport[] = [];
       for (const [name, sc] of Object.entries(scenes)) {
@@ -398,6 +434,7 @@ export function makeMixCheck(game: Game, controls: Controls) {
           loudest: round1(dB(b.loudest)),
           mean: round1(dB(b.mean)),
           top: [...keys.entries()].sort((p, q) => q[1].peak - p[1].peak).slice(0, 8).map(([k, v]) => [k, round1(dB(v.peak)), v.n]),
+          wav: wav ? wavBase64(wet.out) : undefined,
         });
       }
       kit.reset();

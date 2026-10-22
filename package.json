@@ -12,6 +12,7 @@
     "test:touch": "node tools/touchtest.mjs",
     "bench": "node tools/selftest.mjs --bench",
     "mixcheck": "node tools/selftest.mjs --mix",
+    "sfxaudit": "python tools/sfxaudit.py",
     "sheet": "vitest run --config tools/vitest.config.ts"
   },
   "dependencies": {
