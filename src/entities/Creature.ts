@@ -47,6 +47,8 @@ interface Species {
   hipY: number;
   /** Walking and running speed (m/s), leg swing at a walk (rad) and how far the paws lift (rad). */
   gait: { walk: number; run: number; swing: number; lift: number };
+  /** How high (m) a step or box it can leap up onto (0: it can't). */
+  jump: number;
   /** Follows people about (dogs) rather than keeping to itself (cats). */
   social: boolean;
   /** Keeps its distance from people (foxes). */
@@ -95,6 +97,7 @@ const DOG: Species = {
   airRight: false,
   hipY: 12,
   gait: { walk: 1.1, run: 3.2, swing: 0.42, lift: 0.9 },
+  jump: 0.55,
   social: true,
   shy: false,
   tail: 0.15,
@@ -117,6 +120,7 @@ const CAT: Species = {
   airRight: true,
   hipY: 8.5,
   gait: { walk: 0.75, run: 2.2, swing: 0.45, lift: 0.9 },
+  jump: 0.9,
   social: false,
   shy: false,
   tail: 0.15,
@@ -139,6 +143,7 @@ const PIG: Species = {
   airRight: false,
   hipY: 6,
   gait: { walk: 0.7, run: 2.2, swing: 0.5, lift: 1.4 },
+  jump: 0.2,
   social: false,
   shy: false,
   tail: 0,
@@ -161,6 +166,7 @@ const FOX: Species = {
   airRight: false,
   hipY: 10,
   gait: { walk: 1.0, run: 3.4, swing: 0.45, lift: 0.9 },
+  jump: 0.6,
   social: false,
   shy: true,
   tail: -0.2,
@@ -190,6 +196,8 @@ const POSE_DOWN: Record<string, number> = { head: -0.25, tail: -0.3, upperFront:
 
 /** Standing balance (rad/s^2 per rad, per rad/s, cap) and righting while getting up. */
 const STAND = { kp: 40, kd: 7, amax: 9, dead: 0.04 };
+/** Legs folded up under the body in a leap (facing right). */
+const TUCK: Record<string, number> = { upperFront: -0.4, lowerFront: 1.3, upperBack: 0.5, lowerBack: -1.2 };
 const RIGHT = { kp: 28, kd: 7, amax: 14 };
 
 interface Wound {
@@ -279,11 +287,24 @@ export class Creature extends Entity {
   /** Running scared with something in the way. */
   private cornered = false;
   private turnT = 0;
+  /** How long it has been unable to turn round to set off. */
+  private turnWait = 0;
   private lookT = 0;
   /** Wanted speed (m/s, + forward), and the phase and strength of the stepping legs. */
   private speed = 0;
   private stride = 0;
   private gaitAmt = 0;
+  /** The speed the legs are stepping for: the body's own speed, working up to the wanted one. */
+  private pace = 0;
+  /** What blockedAhead() last found in the way (null: nothing, or the ground or a wall). */
+  private blocker: Part | null = null;
+  /** Following someone ahead: the speed to keep to (0: nobody in the way). */
+  private pacing = 0;
+  /** Seconds into a leap (0: not leaping), and until it may leap again. */
+  private jumpT = 0;
+  private jumpCool = 0;
+  /** Seconds since it last landed from a leap. */
+  private landT = 9;
 
   constructor(game: Game, def: ItemDef, species: Species, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -362,6 +383,8 @@ export class Creature extends Entity {
   canRest(): boolean {
     if (this.held) return false;
     if (this.strength() <= 0) return true;
+    // lying down it only whimpers: pain doesn't move it
+    if (this.state === 'down') return this.stateT > 3;
     return this.state !== 'getup' && this.stateT > 3 && this.pain < 0.05 && this.wag <= 0 && this.gaitAmt < 0.02;
   }
 
@@ -404,11 +427,14 @@ export class Creature extends Entity {
     const f = this.f;
     const standing = this.state !== 'down' && conscious;
     const ramp = this.state === 'getup' ? clamp(this.stateT / 1.0, 0.15, 1) : 1;
-    const wagging = (this.wag > 0 || this.gaitAmt > 0) && standing;
+    const wagging = (this.wag > 0 || this.gaitAmt > 0 || this.jumpT > 0) && standing;
     const folding = this.foldT > 0 && !conscious;
     // lying still it relaxes (see Human.updateMotors)
     const relaxed = !standing && conscious && this.pain < 0.35 && this.stateT > 4;
-    const sig = `${standing}:${Math.round(str * 50)}:${Math.round(ramp * 20)}:${folding}:${relaxed}`;
+    // limp or relaxed joints only have friction: how strong it is doesn't matter
+    // (and re-sending motors wakes the body)
+    const tone = standing || (conscious && !relaxed) ? Math.round(str * 50) : -1;
+    const sig = `${standing}:${conscious}:${tone}:${Math.round(ramp * 20)}:${folding}:${relaxed}`;
     if (!force && !wagging && sig === this.motorSig) return;
     this.motorSig = wagging ? '' : sig;
     for (const l of this.order) {
@@ -419,6 +445,8 @@ export class Creature extends Entity {
       if (key === 'head' && standing) target = 0.05;
       if (key === 'tail' && standing) target = this.wag > 0 ? Math.sin(this.t * 14) * 0.45 : this.species.tail;
       if (this.gaitAmt > 0 && standing && /^(upper|lower)/.test(key)) target = this.step(key);
+      // legs tucked up on the way up, reaching for the ground on the way down
+      if (this.jumpT > 0 && standing && this.L('chest').part.vy > 0.3 && /^(upper|lower)/.test(key)) target = TUCK[key.replace(/[FB]$/, '')] ?? target;
       target *= f;
       const from = this.blendFrom?.get(l);
       if (from !== undefined) target = from + (target - from) * smoothstep(0, 1, this.stateT / 0.9);
@@ -528,7 +556,19 @@ export class Creature extends Entity {
       // leaning on something for a while counts as fallen too
       this.leanT = tilt > 0.5 && !airborne ? this.leanT + dt : 0;
       // cats twist round in the air and land on their feet
-      const fallen = (this.species.airRight ? this.airT > 2.5 || (!airborne && tilt > 1.0) : tilt > 0.95 || this.airT > 0.45) || this.leanT > 1.5;
+      this.landT += dt;
+      if (this.jumpT > 0) {
+        this.jumpT += dt;
+        // landed (or it's been too long: it fell instead)
+        if ((paws >= 2 && this.jumpT > 0.2) || this.jumpT > 1.4) {
+          this.jumpT = 0;
+          this.landT = 0;
+        }
+      }
+      // (pitching onto its front paws as it lands, it still has a moment to catch itself)
+      const fallen = this.jumpT > 0 || this.landT < 0.5
+        ? tilt > 1.2
+        : (this.species.airRight ? this.airT > 2.5 || (!airborne && tilt > 1.0) : tilt > 0.95 || this.airT > 0.45) || this.leanT > 1.5;
       // only standing for a while counts as having got up (not toppling off a pile again)
       if (this.state === 'stand' && this.stateT > 3) this.getupFails = this.retries = 0;
       if (!this.legsWork()) this.setState('down');
@@ -571,7 +611,7 @@ export class Creature extends Entity {
 
     this.motorTimer -= dt;
     // stepping legs follow their gait every step
-    if (this.motorTimer <= 0 || this.gaitAmt > 0) {
+    if (this.motorTimer <= 0 || this.gaitAmt > 0 || this.jumpT > 0) {
       this.motorTimer = 0.05;
       this.updateMotors(false);
     }
@@ -585,6 +625,7 @@ export class Creature extends Entity {
         this.right(RIGHT.kp * str * r, RIGHT.kd * str, RIGHT.amax * r * over, 0, false, dt);
         this.lift(str * r * (Math.abs(err) > 1.4 ? 1.3 : 1), dt);
       } else if (paws >= 2 || (paws && this.gaitAmt > 0)) this.right(STAND.kp * str, STAND.kd * str, STAND.amax, STAND.dead, true, dt);
+      else if (this.jumpT > 0) this.right(RIGHT.kp, RIGHT.kd, RIGHT.amax, 0, false, dt);
       else if (this.species.airRight && !paws) this.right(RIGHT.kp, RIGHT.kd, RIGHT.amax * 1.5, 0, false, dt);
     }
 
@@ -672,6 +713,7 @@ export class Creature extends Entity {
     this.goalT -= dt;
     this.turnT -= dt;
     this.lookT -= dt;
+    this.jumpCool -= dt;
     const c = this.L('chest').part;
     const look = this.lookT <= 0;
     if (look) {
@@ -699,15 +741,45 @@ export class Creature extends Entity {
       } else speed = Math.sign(dx) * g.walk * clamp(Math.abs(dx) / 0.6, 0.4, 1);
     } else if (this.goalT <= 0) this.decide();
     // it can only walk forwards: facing the wrong way, turn round first
-    if (speed && Math.sign(speed) !== this.f && !this.turn()) speed = 0;
+    if (speed && Math.sign(speed) !== this.f && !this.turn()) {
+      // no room to turn (someone at their heels): after a while, give up and go
+      // some other time (running scared, keep trying)
+      this.turnWait += dt;
+      if (this.turnWait > 1.5 && this.goal !== 'flee') {
+        this.blocked = Math.sign(speed);
+        this.rest();
+      }
+      speed = 0;
+    } else this.turnWait = 0;
     // something in the way (another animal, a person, a crate): stop short rather
     // than climb it (running scared, it keeps looking for a way through)
-    if (speed && (look ? this.blockedAhead() : this.cornered)) {
+    let drop = speed && look && this.jumpT <= 0 ? this.dropAhead() : { depth: 0, edge: 0 };
+    // front half already over an edge, hind paws still up on it: hop the rest of the way
+    if (speed && look && this.jumpT <= 0 && !drop.depth) drop = this.hangingOver();
+    if (this.jumpT > 0) {
+      // in the air: keep going
+    } else if (speed && look && this.blockedAhead() && this.leap()) {
+      // up onto it
+    } else if (drop.depth > 0.15 && drop.depth < 2.5 && this.hopDown(drop.edge)) {
+      // down off a ledge
+    } else if (speed && drop.depth < 2.5 && (look ? this.blockedAhead() && this.blockerPace() > 0.3 : this.pacing > 0)) {
+      // someone ahead going the same way: fall in behind them at their pace (until
+      // it next looks, too)
+      if (look) {
+        this.pacing = this.blockerPace() * 0.9;
+        this.cornered = false;
+      }
+      speed = Math.sign(speed) * Math.min(Math.abs(speed), this.pacing);
+    } else if (speed && (drop.depth >= 2.5 || (look ? this.blockedAhead() : this.cornered))) {
+      this.pacing = 0;
       this.blocked = this.f;
       speed = 0;
       if (this.goal === 'flee') this.cornered = true;
       else this.rest();
-    } else if (look) this.cornered = false;
+    } else if (look) {
+      this.cornered = false;
+      this.pacing = 0;
+    }
     // walked into something: give up and try elsewhere later
     const vx = this.trunkVx();
     this.stuckT = speed && vx < Math.abs(speed) * 0.25 ? this.stuckT + dt : 0;
@@ -737,6 +809,15 @@ export class Creature extends Entity {
   /** Facing left (-1) or right (1). */
   get facing(): 1 | -1 {
     return this.f;
+  }
+
+  get canWalk(): boolean {
+    return true;
+  }
+
+  /** Walking or running about. */
+  get moving(): boolean {
+    return this.gaitAmt > 0;
   }
 
   /** Done standing about: off somewhere, or stays put a while longer. */
@@ -843,15 +924,172 @@ export class Creature extends Entity {
     const ray = new RAPIER.Ray({ x: c.x, y: c.y }, { x: back ? -this.f : this.f, y: 0 });
     // head height too: a cat would walk in under a dog's belly
     const head = this.ok('head') ? this.L('head').part.y : c.y;
+    this.blocker = null;
     for (const y of [head, c.y, c.y - this.species.hipY * 0.45 * PX]) {
       ray.origin = { x: c.x, y };
       const hit = world.castRay(ray, reach, true, undefined, undefined, undefined, undefined, (o) => {
         const p = this.game.physics.partOf(o);
         return !p || p.entity !== this;
       });
-      if (hit) return true;
+      if (hit) {
+        this.blocker = this.game.physics.partOf(hit.collider) ?? null;
+        return true;
+      }
     }
     return false;
+  }
+
+  /** How fast what's in the way is going the same way (m/s; 0 if it isn't). */
+  private blockerPace(): number {
+    const b = this.blocker;
+    if (!b || b.destroyed || !b.entity.canWalk) return 0;
+    return Math.max(0, b.vx * this.f);
+  }
+
+  /**
+   * Something low in the way that it can get up onto (a box, a step: not a person
+   * or an animal), with room on top: it leaps. Returns whether it did.
+   */
+  private leap(): boolean {
+    const J = this.species.jump;
+    if (!J || this.jumpCool > 0 || this.pawsDown() < 2 || this.tethered()) return false;
+    const c = this.L('chest').part;
+    const world = this.game.physics.world;
+    const mine = (o: RAPIER.Collider) => this.game.physics.partOf(o)?.entity === this;
+    const down = new RAPIER.Ray({ x: c.x, y: c.y }, { x: 0, y: -1 });
+    const floor = world.castRay(down, 1.5, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+    if (!floor) return false;
+    const groundY = c.y - floor.timeOfImpact;
+    const tall = c.y - groundY;
+    // how far ahead it is, just off the floor
+    const ahead = new RAPIER.Ray({ x: c.x, y: groundY + 0.06 }, { x: this.f, y: 0 });
+    const face = world.castRay(ahead, tall * 2.5 + 0.4, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+    if (!face) return false;
+    const what = this.game.physics.partOf(face.collider);
+    if (what && (what.entity instanceof Human || what.entity instanceof Creature)) return false;
+    // how high its top is
+    const fx = c.x + this.f * (face.timeOfImpact + 0.12);
+    const top = world.castRay(new RAPIER.Ray({ x: fx, y: groundY + J + tall + 0.3 }, { x: 0, y: -1 }), J + tall + 0.3, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+    if (!top) return false;
+    const topY = groundY + J + tall + 0.3 - top.timeOfImpact;
+    const dh = topY - groundY;
+    if (dh < 0.05 || dh > J) return false;
+    // room to land, and nothing overhead on the way
+    const room = world.castRay(new RAPIER.Ray({ x: c.x, y: topY + tall + 0.05 }, { x: this.f, y: 0 }), face.timeOfImpact + 0.6, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+    const roof = world.castRay(new RAPIER.Ray({ x: c.x, y: c.y }, { x: 0, y: 1 }), dh + 0.3, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+    if (room || roof) return false;
+    // where its paws are, ahead of and behind the chest
+    const { front, back } = this.pawSpan();
+    // how wide the top is
+    let width = 0;
+    while (width < 1.6) {
+      const x = c.x + this.f * (face.timeOfImpact + width + 0.04);
+      const h = world.castRay(new RAPIER.Ray({ x, y: topY + 0.3 }, { x: 0, y: -1 }), 0.36, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+      if (!h) break;
+      width += 0.08;
+    }
+    // Room on top for all four paws: up onto it. Too narrow: clean over it. The
+    // paws have to be above the top from when the front ones reach the near edge
+    // until the hind ones are past the near edge (onto it) or the far one (over it):
+    // the arc through those two points, a little higher, peaking between them.
+    const g = -GRAVITY;
+    const onto = width >= front + back + 0.25;
+    const faceD = face.timeOfImpact;
+    const x1 = faceD - front - 0.08;
+    const x2 = onto ? faceD + back + 0.08 : faceD + width + back + 0.12;
+    if (x1 < 0.05) return false;
+    if (!onto) {
+      // somewhere to come down on the far side
+      const far = world.castRay(new RAPIER.Ray({ x: c.x + this.f * (x2 + front + 0.2), y: topY + 0.3 }, { x: 0, y: -1 }), dh + 0.6, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+      if (!far || Math.abs(topY + 0.3 - far.timeOfImpact - groundY) > 0.3) return false;
+    }
+    const rise = dh + 0.14;
+    const D = (x1 + x2) / 2;
+    const d = (x2 - x1) / 2;
+    const speed = Math.sqrt((g * (D * D - d * d)) / (2 * rise));
+    if (!(speed > 0.6 && speed < 4.5)) return false;
+    const vx = speed * this.f;
+    const vy = (g * D) / speed;
+    for (const l of this.order) {
+      if (l.gone || !l.attached || l.part.frozen) continue;
+      const v = l.part.body.linvel();
+      l.part.body.applyImpulse({ x: l.part.mass * (vx - v.x), y: l.part.mass * (vy - v.y) }, true);
+    }
+    this.jumpT = 1e-3;
+    this.jumpCool = 1.2;
+    this.updateMotors(true);
+    return true;
+  }
+
+  /**
+   * The ground falling away ahead of the front paws: how far down (m; 0: it
+   * doesn't) and how far ahead of the chest the edge is.
+   */
+  private dropAhead(): { depth: number; edge: number } {
+    const c = this.L('chest').part;
+    const world = this.game.physics.world;
+    const mine = (o: RAPIER.Collider) => this.game.physics.partOf(o)?.entity === this;
+    const none = { depth: 0, edge: 0 };
+    const under = world.castRay(new RAPIER.Ray({ x: c.x, y: c.y }, { x: 0, y: -1 }), 1.5, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+    if (!under) return none;
+    const front = this.pawSpan().front;
+    for (let d = front + 0.04; d <= front + 0.2; d += 0.08) {
+      const ahead = world.castRay(new RAPIER.Ray({ x: c.x + this.f * d, y: c.y }, { x: 0, y: -1 }), 4, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+      const depth = (ahead ? ahead.timeOfImpact : 4) - under.timeOfImpact;
+      if (depth > 0.15) return { depth, edge: d };
+    }
+    return none;
+  }
+
+  /** Chest over a drop with the hindquarters still up on the ledge: how far down. */
+  private hangingOver(): { depth: number; edge: number } {
+    const world = this.game.physics.world;
+    const mine = (o: RAPIER.Collider) => this.game.physics.partOf(o)?.entity === this;
+    const below = (k: string) => {
+      const p = this.L(k).part;
+      const h = world.castRay(new RAPIER.Ray({ x: p.x, y: p.y }, { x: 0, y: -1 }), 4, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+      return h ? p.y - h.timeOfImpact : -Infinity;
+    };
+    if (!this.ok('hips')) return { depth: 0, edge: 0 };
+    const depth = below('hips') - below('chest');
+    return depth > 0.15 && depth < 2.5 ? { depth, edge: 0 } : { depth: 0, edge: 0 };
+  }
+
+  /** Paw positions ahead of and behind the chest (m, standing). */
+  private pawSpan(): { front: number; back: number } {
+    const cx = this.L('chest').spec.cx;
+    let front = 0;
+    let back = 0;
+    for (const sp of this.species.specs) {
+      if (!sp.key.startsWith('lower')) continue;
+      front = Math.max(front, sp.cx - cx);
+      back = Math.max(back, cx - sp.cx);
+    }
+    return { front: front * PX, back: back * PX };
+  }
+
+  /**
+   * At the edge of a drop (`edge` m ahead of the chest): a hop forward that
+   * carries the hind paws over the edge too, so it lands on its feet rather than
+   * its nose.
+   */
+  private hopDown(edge: number): boolean {
+    // (straight after landing on a narrow top too: no waiting about on the edge)
+    if (this.pawsDown() < 1 || this.tethered()) return false;
+    // the hind paws over the edge before it has come back down to the ledge's height
+    const g = -GRAVITY;
+    const vy = 1.5;
+    const tOver = (vy + Math.sqrt(vy * vy - 2 * g * 0.05)) / g;
+    const vx = clamp((edge + this.pawSpan().back + 0.12) / tOver, 1, 3.5) * this.f;
+    for (const l of this.order) {
+      if (l.gone || !l.attached || l.part.frozen) continue;
+      const v = l.part.body.linvel();
+      l.part.body.applyImpulse({ x: l.part.mass * (vx - v.x), y: l.part.mass * (vy - v.y) }, true);
+    }
+    this.jumpT = 1e-3;
+    this.jumpCool = 0.8;
+    this.updateMotors(true);
+    return true;
   }
 
   /** Horizontal speed of the trunk, + forward. */
@@ -871,7 +1109,7 @@ export class Creature extends Entity {
   private step(key: string): number {
     const g = this.species.gait;
     const ph = this.stride + (key.endsWith('FrontF') || key.endsWith('BackB') ? 0 : Math.PI);
-    const run = clamp((this.speed - g.walk) / (g.run - g.walk), 0, 1);
+    const run = clamp((this.pace - g.walk) / (g.run - g.walk), 0, 1);
     if (key.startsWith('upper')) return this.gaitAmt * g.swing * (1 + 0.25 * run) * Math.sin(ph);
     const flex = this.gaitAmt * g.lift * Math.max(0, Math.cos(ph));
     return key.startsWith('lowerFront') ? flex : -flex;
@@ -883,15 +1121,25 @@ export class Creature extends Entity {
    */
   private walk(dt: number, paws: number): void {
     const want = this.state === 'stand' ? this.speed : 0;
-    this.gaitAmt = want > 0 ? Math.min(1, this.gaitAmt + dt * 4) : Math.max(0, this.gaitAmt - dt * 3);
+    // (stopping from a run or landing from a hop, it keeps stepping until it has
+    // braked: legs locked at a canter, it slides on past where it meant to stop)
+    const coasting = this.state === 'stand' && this.trunkVx() > 0.3;
+    this.gaitAmt = want > 0 ? Math.min(1, this.gaitAmt + dt * 4) : coasting && this.gaitAmt ? Math.max(0.3, this.gaitAmt - dt * 3) : Math.max(0, this.gaitAmt - dt * 3);
     if (!this.gaitAmt) return;
     const g = this.species.gait;
-    const run = clamp((want - g.walk) / (g.run - g.walk), 0, 1);
+    // step for the speed the body is going (setting off, a little ahead of it): legs
+    // flailing at a gallop from a standing start trip it up
+    this.pace = want ? clamp(this.trunkVx() + 0.5, 0.5 * Math.min(want, g.walk), want) : Math.max(0, this.trunkVx());
+    const run = clamp((this.pace - g.walk) / (g.run - g.walk), 0, 1);
     // each diagonal pair carries the body one sweep of the legs per half step
     const sweep = 2 * this.species.hipY * PX * Math.sin(g.swing * (1 + 0.25 * run));
-    this.stride = (this.stride + 2 * Math.PI * Math.max(1.2, want / (2 * sweep)) * dt) % (2 * Math.PI);
-    if (!want || paws < 2) return;
-    const a = clamp((want - this.trunkVx()) * 6, -4, 4 + 8 * run);
+    this.stride = (this.stride + 2 * Math.PI * Math.max(1.2, this.pace / (2 * sweep)) * dt) % (2 * Math.PI);
+    if (paws < 2) return;
+    // (stopping, it brakes rather than coasting on into whatever stopped it)
+    // (slowing down, gently: braking hard pitches it onto its nose. But not so
+    // gently it runs into someone ahead)
+    const brake = this.blocker && !this.blocker.destroyed && this.blocker.entity.canWalk ? -4 : -2.5;
+    const a = want ? clamp((want - this.trunkVx()) * 6, brake, (4 + 8 * run) * (0.3 + 0.7 * this.gaitAmt)) : clamp(-this.trunkVx() * 4, -3, 0);
     let m = 0;
     for (const l of this.order) if (!l.gone && l.attached) m += l.part.mass;
     const trunk = ['chest', 'hips'].map((k) => this.L(k)).filter((l) => !l.gone && l.attached && !l.part.frozen);
@@ -989,8 +1237,24 @@ export class Creature extends Entity {
   /** A failed attempt to stand; wedged in a crowd it lies still after a few, until something changes. */
   private failGetup(): void {
     this.getupFails++;
-    if (this.getupFails >= 4) this.gaveUp = { x: this.L('chest').part.x, y: this.L('chest').part.y };
+    // scrabbling about on top of a heap of bodies gets nowhere: give up sooner
+    if (this.getupFails >= (this.onHeap() ? 2 : 4)) this.gaveUp = { x: this.L('chest').part.x, y: this.L('chest').part.y };
     this.setState('down');
+  }
+
+  /** Lying on other bodies rather than on the ground or something fixed. */
+  private onHeap(): boolean {
+    const world = this.game.physics.world;
+    const ray = new RAPIER.Ray({ x: 0, y: 0 }, { x: 0, y: -1 });
+    for (const k of ['chest', 'hips']) {
+      const l = this.L(k);
+      if (l.gone) continue;
+      ray.origin = { x: l.part.x, y: l.part.y };
+      const hit = world.castRay(ray, 0.6, true, undefined, undefined, undefined, undefined, (c) => this.game.physics.partOf(c)?.entity !== this);
+      const p = hit && this.game.physics.partOf(hit.collider);
+      if (p && !p.frozen && (p.entity instanceof Creature || p.entity instanceof Human)) return true;
+    }
+    return false;
   }
 
   /** Something happened (a hit, a wound, being picked up): try standing again. */
@@ -1031,7 +1295,7 @@ export class Creature extends Entity {
     this.bleed(dt);
 
     // ---- vitals
-    this.pain = Math.max(0, this.pain - dt * 0.06);
+    this.pain = Math.max(0, this.pain - dt * 0.06 * (1 + this.pain));
     const d = this.drugs;
     d.adrenaline = Math.max(0, d.adrenaline - dt);
     d.knockout = Math.max(0, d.knockout - dt);
@@ -1196,7 +1460,8 @@ export class Creature extends Entity {
     ps.blood(hit.point.x, hit.point.y, -hit.dir.x + (Math.random() - 0.5), -hit.dir.y + 0.3, 6 + dmg * 0.3, 2.2, hit.part.body);
     if (hit.exit) ps.blood(hit.exit.x, hit.exit.y, hit.dir.x, hit.dir.y, 10 + dmg * 0.5, 4.5, hit.part.body);
     this.game.sound.squish(0.3, hit.point.x);
-    if (l.spec.key === 'head' && dmg > 18) {
+    // a bullet through the brain (a stray fragment or a pellet wounds and stuns)
+    if (l.spec.key === 'head' && hit.damage > 16) {
       this.injure(l, dmg, 'bullet', hit.point, hit.dir);
       hit.part.hp = Math.min(hit.part.hp, 0);
       this.die();

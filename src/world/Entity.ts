@@ -74,6 +74,10 @@ export abstract class Entity {
   preStep(_dt: number): void {}
   /** A blast or a gunshot at (x, y), heard out to `radius` m (see Game.alarm()). */
   onAlarm(_x: number, _y: number, _radius: number): void {}
+  /** Gets about on its own legs (people and animals). */
+  get canWalk(): boolean {
+    return false;
+  }
   postStep(_dt: number): void {}
   frame(_dt: number): void {}
   activate(): void {}

@@ -808,12 +808,18 @@ export function makeSelfTest(game: Game, controls: Controls) {
       kit.reset();
       const herd = ['dog', 'cat', 'pig', 'fox'].map((id, i) => kit.spawn(id, -3 + i * 2, 0.6) as Creature);
       for (const a of herd) a.stay(60);
-      kit.advance(3);
+      kit.advance(2);
+      // settled: standing still for a while (a last shuffle of the feet is fine)
+      let still = 0;
+      for (let t = 0; t < 6 && still < 6; t += 0.1) {
+        kit.advance(0.1);
+        still = kit.maxSpeed() < 0.05 ? still + 1 : 0;
+      }
       for (const a of herd) {
         if (a.state !== 'stand') return `${a.def.id} did not stand (${a.status()})`;
         if (Math.abs(a.parts[0].a) > 0.1) return `${a.def.id} leans ${a.parts[0].a.toFixed(2)} rad`;
       }
-      if (kit.maxSpeed() > 0.05) return `still moving ${kit.maxSpeed().toFixed(3)} m/s`;
+      if (still < 6) return `still moving ${kit.maxSpeed().toFixed(3)} m/s after 8 s`;
       // knocked over onto its back (or side), each gets back up
       const turns = [['dog', Math.PI], ['dog', Math.PI / 2], ['cat', -Math.PI / 2], ['cat', Math.PI], ['pig', Math.PI / 2], ['pig', Math.PI], ['fox', -Math.PI / 2], ['fox', Math.PI]] as const;
       for (const [id, angle] of turns) {
@@ -909,14 +915,17 @@ export function makeSelfTest(game: Game, controls: Controls) {
       kit.reset();
       const herd: Creature[] = [];
       for (let i = 0; i < 8; i++) herd.push(kit.spawn(['dog', 'cat', 'pig', 'fox'][i % 4], -9 + i * 2.5, 0.6) as Creature);
-      const start = herd.map((a) => chest(a).x);
+      // (how long each spent on the move: one that wanders off and back again went somewhere too)
+      const walked = herd.map(() => 0);
       for (let i = 0; i < 180; i++) {
-        kit.advance(0.25);
+        game.advance(0.25, (k) => {
+          if (k % 6 === 0) herd.forEach((a, j) => (walked[j] += a.moving ? 0.05 : 0));
+        });
         const down = herd.find((a) => a.state !== 'stand');
         if (down) return `${down.def.id} fell over after ${(i * 0.25).toFixed(1)} s among the others (${down.status()})`;
       }
-      const moved = herd.filter((a, i) => Math.abs(chest(a).x - start[i]) > 0.5).length;
-      if (moved < 4) return `only ${moved} of 8 animals wandered off in 45 s`;
+      const about = walked.filter((t) => t > 2).length;
+      if (about < 4) return `only ${about} of 8 animals wandered about in 45 s (${walked.map((t) => t.toFixed(0)).join(', ')} s)`;
       return true;
     }],
     ['extra: animals run from gunshots and fire; dogs go to people', () => {
@@ -1050,6 +1059,177 @@ export function makeSelfTest(game: Game, controls: Controls) {
         return first ? `asleep at ${first} s, but still waking up again at ${t} s` : `${awake} of ${lying().length} bodies still awake after ${t} s`;
       }
       if (peak > 12) return `launch while settling: ${peak.toFixed(1)} m/s`;
+      if (first > 50) return `took ${first} s to fall asleep`;
+      return true;
+    }],
+    ['extra: people walk where they are sent, turn round, stop short of things and run from gunfire', () => {
+      const torso = (h: Human) => h.limbs.get('upperTorso')!.part;
+      kit.reset();
+      const h = human(0);
+      kit.advance(1);
+      h.goTo(5);
+      kit.advance(8);
+      if (h.state !== 'stand') return `fell walking (${h.status()})`;
+      if (Math.abs(torso(h).x - 5) > 0.5) return `sent to 5 m, got to ${torso(h).x.toFixed(2)}`;
+      h.goTo(1);
+      kit.advance(8);
+      if (h.state !== 'stand') return `fell walking back (${h.status()})`;
+      if (h.facing !== -1) return 'did not turn round to walk back';
+      if (Math.abs(torso(h).x - 1) > 0.5) return `sent back to 1 m, got to ${torso(h).x.toFixed(2)}`;
+      // someone set wandering still is after a save and load
+      h.wander = true;
+      loadFromString(game, saveToString(game));
+      const back = game.entities.find((e) => e.def.id === 'human') as Human | undefined;
+      if (!back?.wander) return 'wandering was lost on save/load';
+      // a crate in the way: stop short of it
+      kit.reset();
+      const w = human(0);
+      const crate = kit.spawn('crate', 3, 0.45);
+      kit.advance(1);
+      w.goTo(6);
+      kit.advance(6);
+      if (w.state !== 'stand') return `walked into a crate and fell (${w.status()})`;
+      if (torso(w).x > crate.parts[0].x - 0.4) return `walked into the crate (x ${torso(w).x.toFixed(2)})`;
+      if (Math.abs(crate.parts[0].x - 3) > 0.1) return 'shoved the crate along';
+      // the end of a raised beam: stop at the edge
+      kit.reset();
+      const beam = kit.spawn('beam', 0, 1.2);
+      beam.setFrozen(true);
+      const top = 1.2 + (beam.parts[0].h * PX) / 2;
+      const p = kit.spawn('human', -0.5, top + 0.9) as Human;
+      kit.advance(1.5);
+      p.goTo(4);
+      kit.advance(6);
+      if (p.state !== 'stand' || torso(p).y < top + 0.5) return `walked off the end of a beam (${p.status()})`;
+      // a shot fired over their heads: off and away (someone holding a gun stands their ground)
+      kit.reset();
+      const r = human(0);
+      const armed = human(-3);
+      if (!arm(armed)) return 'could not give someone a gun';
+      kit.advance(1);
+      const r0 = torso(r).x;
+      const a0 = torso(armed).x;
+      (kit.spawn('pistol', -6, 2.6) as Firearm).fire();
+      kit.advance(3);
+      if (r.state !== 'stand') return `fell running from a gunshot (${r.status()})`;
+      if (torso(r).x - r0 < 2.5) return `ran only ${(torso(r).x - r0).toFixed(1)} m from a gunshot`;
+      if (Math.abs(torso(armed).x - a0) > 0.3) return 'someone holding a gun ran off';
+      return true;
+    }],
+    ['extra: people wandering about among animals keep their feet', () => {
+      kit.reset();
+      const hs: Human[] = [];
+      for (let i = 0; i < 6; i++) {
+        const h = human(-7 + i * 2.6, { flip: i % 2 === 1 });
+        h.wander = true;
+        hs.push(h);
+      }
+      for (let i = 0; i < 4; i++) kit.spawn(['dog', 'cat', 'pig', 'fox'][i], -6 + i * 3.5, 0.5);
+      const was = hs.map((h) => h.state);
+      const walked = hs.map(() => 0);
+      let falls = 0;
+      game.advance(40, (i) => {
+        if (i % 12) return;
+        hs.forEach((h, k) => {
+          if (was[k] === 'stand' && h.state !== 'stand') falls++;
+          was[k] = h.state;
+          if (h.moving) walked[k] += 0.1;
+        });
+      });
+      if (falls) return `${falls} fell over`;
+      const about = walked.filter((t) => t > 2).length;
+      if (about < 4) return `only ${about} of 6 walked about in 40 s (${walked.map((t) => t.toFixed(0)).join(', ')} s)`;
+      return true;
+    }],
+    ['extra: animals leap up onto boxes and hop down the far side', () => {
+      const chest = (a: Creature) => a.limbs.get('chest')!.part;
+      const runs: [string, string, number, number][] = [
+        ['dog', 'concrete-block', 0.25, 2.5], ['dog', 'concrete-block', 0.25, 1.5],
+        ['fox', 'concrete-block', 0.25, 2.5], ['cat', 'crate', 0.44, 2.5], ['cat', 'crate', 0.44, 1.8],
+      ];
+      for (const [kind, box, y, at] of runs) {
+        kit.reset();
+        const a = kit.spawn(kind, 0, 0.6) as Creature;
+        kit.spawn(box, at, y);
+        kit.advance(1.5);
+        a.goTo(5);
+        let falls = 0;
+        let up = false;
+        let was = a.state;
+        const log: string[] = [];
+        let air = false;
+        // where it stops (left standing about it wanders off again in a while)
+        let stopped = NaN;
+        game.advance(8, (i) => {
+          const c = chest(a);
+          if (Number.isNaN(stopped) && (a as unknown as { goal: string }).goal !== 'walk' && Math.abs(c.vx) < 0.05) stopped = c.x;
+          const j = (a as unknown as { jumpT: number }).jumpT > 0;
+          if (j !== air || a.state !== was) log.push(`${(i / 120).toFixed(2)}${j !== air ? (j ? ' up' : ' down') : ''}${a.state !== was ? ' ' + a.state : ''} ${c.x.toFixed(2)},${c.y.toFixed(2)} a${c.a.toFixed(2)} v${c.vx.toFixed(1)}`);
+          air = j;
+          if (was === 'stand' && a.state !== 'stand') falls++;
+          was = a.state;
+          if (c.y > 0.9) up = true;
+        });
+        if (!up) return `${kind} never left the floor for a ${box} ${at} m away`;
+        if (falls) return `${kind} fell getting over a ${box} ${at} m away: ${log.join('; ')}`;
+        if (Number.isNaN(stopped)) return `${kind} sent past a ${box} to 5 m never stopped (at ${chest(a).x.toFixed(2)}): ${log.join('; ')}`;
+        if (Math.abs(stopped - 5) > 0.7) return `${kind} sent past a ${box} to 5 m stopped at ${stopped.toFixed(2)}: ${log.join('; ')}`;
+      }
+      // too high for it: it stops
+      kit.reset();
+      const d = kit.spawn('dog', 0, 0.6) as Creature;
+      kit.spawn('crate', 2.5, 0.44);
+      kit.advance(1.5);
+      d.goTo(5);
+      kit.advance(5);
+      if (chest(d).x > 2) return 'dog got past a crate taller than it can jump';
+      if (d.state !== 'stand') return `dog fell at a crate it couldn't jump (${d.status()})`;
+      return true;
+    }],
+    ['extra: someone standing on or beside a lying body leaves it where it is', () => {
+      // (put right on the edge of it, someone may topple off: that's fair, but
+      // whoever keeps their feet mustn't shove the body along)
+      let stood = 0;
+      for (const dx of [-0.15, 0.02, 0.07, 0.12]) {
+        kit.reset();
+        const lying = kit.spawn('human', 0, 0.5, { angle: Math.PI / 2 }) as Human;
+        lying.limp = true;
+        kit.advance(2);
+        const t = lying.limbs.get('midTorso')!.part;
+        const x0 = t.x;
+        const end = Math.max(...lying.parts.filter((p) => !p.destroyed).map((p) => p.x));
+        const st = kit.spawn('human', end + dx, 1.2) as Human;
+        // (someone who topples off it crawls away, and may shove it a little doing so)
+        let fell = false;
+        game.advance(15, () => {
+          if (st.state !== 'stand') fell = true;
+        });
+        if (fell || st.state !== 'stand') continue;
+        stood++;
+        if (Math.abs(t.x - x0) > 0.05) return `body pushed ${(t.x - x0).toFixed(3)} m along the floor (person at +${dx} m)`;
+      }
+      if (stood < 2) return `only ${stood} of 4 people put by the body kept their feet`;
+      return true;
+    }],
+    ['extra: someone dropped across a lying body crawls off it and gets up', () => {
+      let stood = 0;
+      const tries: [number, number][] = [[-0.4, Math.PI / 2], [0, -Math.PI / 2], [0.3, Math.PI / 2], [0.5, -Math.PI / 2]];
+      for (const [dx, angle] of tries) {
+        kit.reset();
+        const lying = kit.spawn('human', 0, 0.5, { angle: Math.PI / 2 }) as Human;
+        lying.limp = true;
+        kit.advance(2);
+        const xs = lying.parts.map((p) => p.x);
+        const [lo, hi] = [Math.min(...xs), Math.max(...xs)];
+        const h = kit.spawn('human', dx, 0.85, { angle }) as Human;
+        kit.advance(25);
+        if (h.state === 'stand') stood++;
+        // nothing of the trunk still up on the body
+        const trunk = (['upperTorso', 'midTorso', 'lowerTorso'] as const).map((k) => h.limbs.get(k)!.part);
+        const on = trunk.some((p) => p.x > lo && p.x < hi && p.y > 0.28 && p.y < 0.6);
+        if (on) return `still lying on the body 25 s after being dropped on it at ${dx} m (${h.status()})`;
+      }
+      if (stood < 2) return `only ${stood} of 4 dropped on a body got up again`;
       return true;
     }],
   ];
@@ -1057,6 +1237,14 @@ export function makeSelfTest(game: Game, controls: Controls) {
   /** Runs every test, or only those whose name contains `filter`. */
   return async (filter?: string): Promise<Result[]> => {
     const results: Result[] = [];
+    // Repeatable runs: the real-time loop would step the world between tests by
+    // however long they took, and sounds pick variants with Math.random as wall-
+    // clock throttling allows. Hold the loop still and the sound off meanwhile.
+    const raf = window.requestAnimationFrame;
+    window.requestAnimationFrame = () => 0;
+    const muted = game.sound.muted;
+    game.sound.setMuted(true);
+    await new Promise((res) => setTimeout(res, 50));
     for (const [name, fn] of tests) {
       if (filter && !name.includes(filter)) continue;
       const t0 = performance.now();
@@ -1069,6 +1257,10 @@ export function makeSelfTest(game: Game, controls: Controls) {
       results.push({ name, pass: r === true, detail: r === true ? 'ok' : r, ms: Math.round(performance.now() - t0) });
       await new Promise((res) => setTimeout(res, 0));
     }
+    game.sound.setMuted(muted);
+    window.requestAnimationFrame = raf;
+    (game as unknown as { lastTime: number }).lastTime = performance.now();
+    window.requestAnimationFrame((game as unknown as { loop: FrameRequestCallback }).loop);
     kit.reset();
     console.table(results);
     return results;

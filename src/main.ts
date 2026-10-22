@@ -7,7 +7,7 @@ import { registerAll } from './catalog/registry';
 import { getItem } from './catalog/items';
 import { makeTestKit } from './debug/testkit';
 import { makeSelfTest } from './debug/selftest';
-import { BALANCE } from './entities/Human';
+import { BALANCE, GAIT } from './entities/Human';
 
 async function boot(): Promise<void> {
   await initPhysics();
@@ -27,7 +27,7 @@ async function boot(): Promise<void> {
   game.start();
   document.getElementById('loading')?.remove();
   // exposed for debugging and automated tests in the browser console
-  (window as unknown as { bp: unknown }).bp = { game, controls, ui, getItem, kit: makeTestKit(game, controls), selftest: makeSelfTest(game, controls), BALANCE, RAPIER, DRAG };
+  (window as unknown as { bp: unknown }).bp = { game, controls, ui, getItem, kit: makeTestKit(game, controls), selftest: makeSelfTest(game, controls), BALANCE, GAIT, RAPIER, DRAG };
 }
 
 boot().catch((e) => {
