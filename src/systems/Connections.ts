@@ -22,6 +22,8 @@ export interface Connection {
   rest: number;
   /** Separation (m) at which the connection snaps. */
   breakAt: number;
+  /** Extra part pairs whose contacts this connection disabled. */
+  ignored?: [Part, Part][];
 }
 
 /** Batches thick pixel-art line segments into one mesh. */
@@ -178,12 +180,24 @@ export class Connections {
       case 'wire':
         break;
     }
+    let ignored: [Part, Part][] | undefined;
     if (joint && b && kind !== 'spring' && kind !== 'rope') {
       // stop the two parts from fighting each other through contacts
       (a.noCollide ??= new Set()).add(b);
       (b.noCollide ??= new Set()).add(a);
+      // things fixed to a rotor must swing past the rest of their machine (motor housings)
+      ignored = [];
+      for (const [p, q] of [[a, b], [b, a]] as [Part, Part][]) {
+        if (!q.entity.attachIgnoresBody) continue;
+        for (const r of q.entity.parts) {
+          if (r === q || r === p || r.destroyed || p.noCollide?.has(r)) continue;
+          (p.noCollide ??= new Set()).add(r);
+          (r.noCollide ??= new Set()).add(p);
+          ignored.push([p, r]);
+        }
+      }
     }
-    const c: Connection = { id: this.nextId++, kind, a, la, b, lb, joint, rest, breakAt };
+    const c: Connection = { id: this.nextId++, kind, a, la, b, lb, joint, rest, breakAt, ignored };
     this.list.push(c);
     if (kind === 'wire') this.recomputePower();
     return c;
@@ -201,6 +215,10 @@ export class Connections {
         c.a.noCollide?.delete(c.b);
         c.b.noCollide?.delete(c.a);
       }
+    }
+    for (const [p, q] of c.ignored ?? []) {
+      p.noCollide?.delete(q);
+      q.noCollide?.delete(p);
     }
     if (c.kind === 'wire') this.recomputePower();
   }

@@ -91,7 +91,6 @@ export class Game {
 
   // ---- entities -------------------------------------------------------------
 
-  /** Replaces an entity with its mirror image (about its center). */
   /** Re-creates an entity (and anything it holds) mirrored around its center. */
   flipEntity(e: Entity): Entity | null {
     const group = [e, ...e.attachedEntities()];

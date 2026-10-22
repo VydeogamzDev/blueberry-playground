@@ -218,6 +218,9 @@ export abstract class Entity {
 
   restoreLinks(_links: Record<string, unknown>, _get: (i: number) => Entity | undefined): void {}
 
+  /** Parts welded/hinged to this entity don't collide with any of its parts (motors). */
+  attachIgnoresBody = false;
+
   /** Entities that should move with this one when it is flipped (held items). */
   attachedEntities(): Entity[] {
     return [];

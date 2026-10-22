@@ -81,8 +81,9 @@ export class Button extends Prop {
 
   onImpact(info: ImpactInfo): void {
     // pressed by something landing on top
+    // the contact normal points from the other body into the button
     const up = this.main.localDir(0, 1);
-    const fromAbove = -(info.normal.x * up.x + info.normal.y * up.y) < -0.5;
+    const fromAbove = info.normal.x * up.x + info.normal.y * up.y < -0.5;
     if (info.otherSpeed > 1.3 && fromAbove) this.activate();
   }
 
@@ -246,6 +247,7 @@ export class Motor extends Entity {
     super(game, def, opts.flip ?? false);
     this.cfg = cfg;
     this.activatable = true;
+    this.attachIgnoresBody = true;
     const ang = opts.angle ?? 0;
     this.housing = this.addPart({
       name: 'Housing', art: cfg.housing(), material: MAT.metal, x, y, angle: ang, density: 120, textureKey: def.id + ':h', layer: cfg.hubOnTop ? 3 : 0,
@@ -269,8 +271,9 @@ export class Motor extends Entity {
     const sig = `${run}:${this.dir}`;
     if (sig === this.applied || !this.joint.isValid()) return;
     this.applied = sig;
-    // target velocity is the rotor relative to the housing
-    if (run) this.joint.configureMotorVelocity(this.cfg.speed * this.dir * (this.flipped ? -1 : 1), this.cfg.torque * 0.6);
+    // target velocity is the rotor relative to the housing; by default rotors turn
+    // clockwise, so wheels drive the way the motor faces
+    if (run) this.joint.configureMotorVelocity(-this.cfg.speed * this.dir * (this.flipped ? -1 : 1), this.cfg.torque * 0.6);
     else this.joint.configureMotorVelocity(0, 0.02);
     this.rotor.body.wakeUp();
     this.housing.body.wakeUp();

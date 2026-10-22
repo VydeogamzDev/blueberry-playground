@@ -4,6 +4,7 @@ import type { Human } from '../entities/Human';
 import type { Firearm } from '../entities/Firearm';
 import type { Explosive } from '../entities/Explosive';
 import type { Blade } from '../entities/Melee';
+import type { Motor } from '../entities/Machines';
 import { getItem } from '../catalog/items';
 import { makeTestKit } from './testkit';
 import { saveToString, loadFromString } from '../world/SaveLoad';
@@ -278,6 +279,47 @@ export function makeSelfTest(game: Game, controls: Controls) {
       controls.duplicate([a, b]);
       kit.advance(0.5);
       if (conns() !== 2) return `connections after duplicate: ${conns()}`;
+      return true;
+    }],
+    ['extra: contraptions: car, button-fired gun, powered rotor', () => {
+      kit.reset();
+      const tool = (id: string, ax: number, ay: number, bx: number, by: number) => {
+        controls.arm(getItem(id)!);
+        kit.down(ax, ay);
+        kit.move(bx, by);
+        kit.up(bx, by);
+        controls.arm(null);
+      };
+      // a plank on two motor wheels drives off
+      const plank = kit.spawn('plank', -8, 0.9);
+      const w1 = kit.spawn('motor-wheel', -8.7, 0.4) as Motor;
+      const w2 = kit.spawn('motor-wheel', -7.3, 0.4) as Motor;
+      kit.advance(0.6);
+      tool('tool-weld', w1.housing.x, w1.housing.y, w1.housing.x, plank.parts[0].y);
+      tool('tool-weld', w2.housing.x, w2.housing.y, w2.housing.x, plank.parts[0].y);
+      w1.activate();
+      w2.activate();
+      // a button wired to a frozen pistol, pressed by a falling brick
+      const btn = kit.spawn('button', 4, 0.1);
+      const gun = kit.spawn('pistol', 5, 1.2) as Firearm;
+      gun.setFrozen(true);
+      kit.advance(0.5);
+      tool('tool-wire', btn.parts[0].x, btn.parts[0].y, gun.parts[0].x, gun.parts[0].y);
+      kit.spawn('brick', btn.parts[0].x, 1.2);
+      // a battery powering a motor with a plank welded to its rotor
+      const bat = kit.spawn('battery', 9, 0.3);
+      const mot = kit.spawn('motor', 12, 3.5) as Motor;
+      mot.housing.setFrozen(true);
+      kit.advance(0.3);
+      const blade = kit.spawn('plank', 13.15, 3.5);
+      blade.setFrozen(true);
+      tool('tool-weld', 11.95, 3.5, 12.5, 3.5);
+      blade.setFrozen(false);
+      tool('tool-wire', bat.parts[0].x, bat.parts[0].y, 11.85, 3.55);
+      kit.advance(3);
+      if (plank.parts[0].x < -5) return `car did not drive right (x ${plank.parts[0].x.toFixed(2)})`;
+      if (!gun.shots) return 'falling brick did not fire the wired gun';
+      if (Math.abs(mot.rotor.body.angvel()) < 1) return 'powered motor did not spin its blade';
       return true;
     }],
     ['extra: thrown knife lodges and pulls out', () => {
