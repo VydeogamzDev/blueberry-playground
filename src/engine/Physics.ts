@@ -1,10 +1,55 @@
-import RAPIER from '@dimforge/rapier2d-compat';
+import type R from '@dimforge/rapier2d-compat';
 import { FIXED_DT, GRAVITY } from './constants';
 import type { Part } from '../world/Part';
 
-export { RAPIER };
+/**
+ * Rapier, as loaded by initPhysics(): its SIMD build wherever the browser runs
+ * WebAssembly SIMD (every current one: steps of crowded scenes take ~40% less
+ * time), the plain build elsewhere (?nosimd forces it). The two have the same
+ * API; the types come from the plain one.
+ */
+export let RAPIER: typeof R = undefined as unknown as typeof R;
+// eslint-disable-next-line @typescript-eslint/no-namespace
+export declare namespace RAPIER {
+  export type World = R.World;
+  export type RigidBody = R.RigidBody;
+  export type RigidBodyDesc = R.RigidBodyDesc;
+  export type RigidBodyType = R.RigidBodyType;
+  export type Collider = R.Collider;
+  export type ColliderDesc = R.ColliderDesc;
+  export type Cuboid = R.Cuboid;
+  export type Ball = R.Ball;
+  export type ImpulseJoint = R.ImpulseJoint;
+  export type RevoluteImpulseJoint = R.RevoluteImpulseJoint;
+  export type PrismaticImpulseJoint = R.PrismaticImpulseJoint;
+  export type JointData = R.JointData;
+  export type MotorModel = R.MotorModel;
+  export type Ray = R.Ray;
+  export type RayColliderHit = R.RayColliderHit;
+  export type EventQueue = R.EventQueue;
+  export type PhysicsHooks = R.PhysicsHooks;
+  export type ActiveHooks = R.ActiveHooks;
+  export type ActiveEvents = R.ActiveEvents;
+  export type SolverFlags = R.SolverFlags;
+}
+
+/** Does this browser run WebAssembly SIMD? (Validates a function using one v128 instruction.) */
+function simdSupported(): boolean {
+  try {
+    return WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11]));
+  } catch {
+    return false;
+  }
+}
+
+/** Which build of Rapier initPhysics() loaded. */
+export let rapierBuild: 'simd' | 'plain' = 'plain';
 
 export async function initPhysics(): Promise<void> {
+  rapierBuild = new URLSearchParams(location.search).has('nosimd') || !simdSupported() ? 'plain' : 'simd';
+  RAPIER = rapierBuild === 'plain'
+    ? (await import('@dimforge/rapier2d-compat')).default
+    : ((await import('@dimforge/rapier2d-simd-compat')).default as unknown as typeof R);
   await RAPIER.init();
 }
 

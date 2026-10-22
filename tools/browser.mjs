@@ -44,13 +44,14 @@ const vsync = (hz) => `(() => {
 })();`;
 
 /**
- * @param {{ width?: number, height?: number, phone?: boolean, still?: boolean, gpu?: boolean, vsync?: number }} opts
+ * @param {{ width?: number, height?: number, phone?: boolean, still?: boolean, gpu?: boolean, vsync?: number, query?: string }} opts
  *   phone: emulate a 390x844 touch phone
  *   still: the game's real-time loop never runs, not even while the page loads
  *     (how many steps it takes then depends on the machine, and the physics
  *     world keeps that history), so a seeded run replays exactly
  *   gpu: draw on the machine's graphics card rather than in software
  *   vsync: hold frames to a display of this refresh rate (Hz)
+ *   query: added to the page's URL (e.g. 'nosimd')
  */
 export async function openGame(opts = {}) {
   const browser = candidates.find((p) => existsSync(p));
@@ -130,7 +131,7 @@ export async function openGame(opts = {}) {
     }
     if (opts.still) await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.requestAnimationFrame = () => 0;' });
     else if (opts.vsync) await send('Page.addScriptToEvaluateOnNewDocument', { source: vsync(opts.vsync) });
-    await send('Page.navigate', { url });
+    await send('Page.navigate', { url: opts.query ? `${url}?${opts.query}` : url });
     // wait for the game to boot (physics WASM, sprites, sounds' manifest)
     let ready = false;
     for (let i = 0; i < 600 && !ready; i++) {

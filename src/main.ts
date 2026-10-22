@@ -1,5 +1,5 @@
 import './style.css';
-import { initPhysics, RAPIER } from './engine/Physics';
+import { initPhysics, RAPIER, rapierBuild } from './engine/Physics';
 import { Game } from './world/Game';
 import { Controls, DRAG } from './tools/Controls';
 import { UI } from './ui/UI';
@@ -29,7 +29,7 @@ async function boot(): Promise<void> {
   game.start();
   document.getElementById('loading')?.remove();
   // exposed for debugging and automated tests in the browser console
-  (window as unknown as { bp: unknown }).bp = { game, controls, ui, getItem, kit: makeTestKit(game, controls), selftest: makeSelfTest(game, controls), bench: makeBench(game, controls), benchLive: makeLiveBench(game, controls), mixcheck: makeMixCheck(game, controls), BALANCE, GAIT, RAPIER, DRAG };
+  (window as unknown as { bp: unknown }).bp = { game, controls, ui, getItem, kit: makeTestKit(game, controls), selftest: makeSelfTest(game, controls), bench: makeBench(game, controls), benchLive: makeLiveBench(game, controls), mixcheck: makeMixCheck(game, controls), BALANCE, GAIT, RAPIER, rapierBuild, DRAG };
 }
 
 boot().catch((e) => {

@@ -12,12 +12,12 @@ const COLORED = Array.from({ length: COLORS }, (_, c) => {
 /** Room (m) kept between two entities of one color: more than Rapier's contact prediction distance. */
 const MARGIN = 0.15;
 /** The contact-filter hook: Rapier calls it about every pair of nearby colliders either of which has it. */
-const HOOK = RAPIER.ActiveHooks.FILTER_CONTACT_PAIRS;
+let HOOK: RAPIER.ActiveHooks;
 /**
  * A hook for sensor pairs, of which there are none: no calls, but the pair counts as hooked, and
  * Rapier never reuses the contacts of a hooked pair (see the class comment).
  */
-const NO_CALLS = RAPIER.ActiveHooks.FILTER_INTERSECTION_PAIRS;
+let NO_CALLS: RAPIER.ActiveHooks;
 
 interface Box {
   id: number;
@@ -56,7 +56,11 @@ export class ContactGroups {
   private colorOf = new Map<number, number>();
   private byGroup = new Map<number, Part[]>();
 
-  constructor(private game: Game) {}
+  constructor(private game: Game) {
+    // (Rapier is only loaded once the game starts)
+    HOOK = RAPIER.ActiveHooks.FILTER_CONTACT_PAIRS;
+    NO_CALLS = RAPIER.ActiveHooks.FILTER_INTERSECTION_PAIRS;
+  }
 
   /** Runs just before each physics step, after anything that moves or regroups parts. */
   update(): void {

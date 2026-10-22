@@ -4,6 +4,7 @@
  *   npm test                 every test
  *   npm test -- liquids      only tests whose name contains "liquids"
  *   SEED=7 npm test          with Math.random seeded, to replay a failure
+ *   npm test -- --nosimd     on the plain build of Rapier (browsers without WebAssembly SIMD)
  *   npm run bench            time crowded scenes instead (npm run bench -- pile: one scene)
  *   npm run bench -- --live  run 100 people in real time on the graphics card, frames held to
  *                            a 60 Hz display (--hz=144 for another), and report the speed
@@ -23,6 +24,7 @@ const hz = Number(args.find((a) => a.startsWith('--hz='))?.slice(5) ?? 60);
 const mixMode = args.includes('--mix');
 const wavMode = args.includes('--wav');
 const filter = args.find((a) => !a.startsWith('--')) ?? '';
+const query = args.includes('--nosimd') ? 'nosimd' : undefined;
 const seed = process.env.SEED ? Number(process.env.SEED) >>> 0 : null;
 
 let exitCode = 1;
@@ -30,7 +32,7 @@ let page;
 try {
   // the bench times the CPU: headless Chrome draws in software, and a full-size
   // window's drawing slows the physics steps beside it (by up to half)
-  page = await openGame({ still: seed !== null, ...(liveMode ? { gpu: true, vsync: hz } : benchMode ? { width: 320, height: 200 } : {}) });
+  page = await openGame({ still: seed !== null, query, ...(liveMode ? { gpu: true, vsync: hz } : benchMode ? { width: 320, height: 200 } : {}) });
   const { evaluate, errors } = page;
 
   if (seed !== null) {
@@ -64,7 +66,7 @@ try {
     exitCode = errors.length ? 1 : 0;
   } else if (liveMode) {
     const gpu = await evaluate(`(() => { const gl = bp.game.renderer.gl.getContext(); const x = gl.getExtension('WEBGL_debug_renderer_info'); return x ? gl.getParameter(x.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER); })()`);
-    console.log(`Running crowded scenes in real time on ${gpu}, frames held to ${hz} Hz...\n`);
+    console.log(`Running crowded scenes in real time on ${gpu} (${await evaluate('bp.rapierBuild')} Rapier), frames held to ${hz} Hz...\n`);
     const rows = JSON.parse(await evaluate(`bp.benchLive(${JSON.stringify(filter || 'pile battle')}).then((r) => JSON.stringify(r))`, 15 * 60 * 1000));
     console.log('Each 3 s: speed (% of real time) / frames a second / step ms (L: the long step)\n');
     for (const r of rows) {
@@ -87,7 +89,7 @@ try {
     if (errors.length) console.log(`\nPage errors:\n  ${errors.join('\n  ')}`);
     exitCode = errors.length ? 1 : 0;
   } else {
-    console.log(`Running self-tests${filter ? ` matching "${filter}"` : ''} in ${page.browser} (headless)...\n`);
+    console.log(`Running self-tests${filter ? ` matching "${filter}"` : ''} in ${page.browser} (headless, ${await evaluate('bp.rapierBuild')} Rapier)...\n`);
     const t0 = Date.now();
     const results = JSON.parse(await evaluate(`bp.selftest(${JSON.stringify(filter)}).then((r) => JSON.stringify(r))`, 15 * 60 * 1000));
     let failed = 0;
