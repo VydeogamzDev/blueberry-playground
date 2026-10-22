@@ -260,6 +260,12 @@ export class Creature extends Entity {
   private motorSig = '';
   private t = Math.random() * 100;
   private blendFrom: Map<Limb, number> | null = null;
+  /** In a leap: legs tucked up on the way up, then reaching for the ground (it stays reaching once over the top). */
+  private legPose: '' | 'tuck' | 'reach' = '';
+  /** Joint angles eased out of into the legs' next pose over easeDur s (snapped, the paws whip round). */
+  private easeFrom: Map<Limb, number> | null = null;
+  private easeT = 0;
+  private easeDur = 0;
   /**
    * Seconds left of collapsing: four straight legs hold a body up like a table
    * even when limp, so a body that drops where it stands folds them first.
@@ -411,6 +417,16 @@ export class Creature extends Entity {
     return good >= 3 && this.ok('hips');
   }
 
+  /** Eases the joints from where they are now into their next targets over `dur` s, instead of snapping them there. */
+  private startEase(dur: number): void {
+    this.easeFrom = new Map();
+    this.easeT = 0;
+    this.easeDur = dur;
+    for (const l of this.order) {
+      if (l.joint && l.parent && !l.gone) this.easeFrom.set(l, wrapAngle(l.part.body.rotation() - l.parent.part.body.rotation()));
+    }
+  }
+
   private setState(s: State): void {
     if (this.state === s) return;
     if (s === 'down' && this.state !== 'down') this.foldT = 0.6;
@@ -441,7 +457,18 @@ export class Creature extends Entity {
     // limp or relaxed joints only have friction: how strong it is doesn't matter
     // (and re-sending motors wakes the body)
     const tone = standing || (conscious && !relaxed) ? Math.round(str * 50) : -1;
-    const sig = `${standing}:${conscious}:${tone}:${Math.round(ramp * 20)}:${folding}:${relaxed}`;
+    // (the body's own velocity: the part's copy is from the last step, from before the
+    // spring. A little hop down off something doesn't tuck: the legs couldn't reach for
+    // the floor again in time, and it would land on its nose)
+    const vy = this.L('chest').part.body.linvel().y;
+    const legPose = this.jumpT > 0 && standing ? (this.legPose === 'reach' || vy <= 0.3 || (!this.legPose && vy < 1.8) ? 'reach' : 'tuck') : '';
+    if (legPose !== this.legPose) {
+      // (only tucking up and letting go of it change the targets)
+      if (standing && (legPose === 'tuck' || this.legPose === 'tuck')) this.startEase(0.12);
+      this.legPose = legPose;
+    }
+    const ease = this.easeFrom ? smoothstep(0, 1, this.easeT / this.easeDur) : 1;
+    const sig = `${standing}:${conscious}:${tone}:${Math.round(ramp * 20)}:${folding}:${relaxed}:${legPose}:${Math.round(ease * 20)}`;
     if (!force && !wagging && sig === this.motorSig) return;
     this.motorSig = wagging ? '' : sig;
     for (const l of this.order) {
@@ -453,10 +480,14 @@ export class Creature extends Entity {
       if (key === 'tail' && standing) target = this.wag > 0 ? Math.sin(this.t * 14) * 0.45 : this.species.tail;
       if (this.gaitAmt > 0 && standing && /^(upper|lower)/.test(key)) target = this.step(key);
       // legs tucked up on the way up, reaching for the ground on the way down
-      if (this.jumpT > 0 && standing && this.L('chest').part.vy > 0.3 && /^(upper|lower)/.test(key)) target = TUCK[key.replace(/[FB]$/, '')] ?? target;
+      if (legPose === 'tuck' && /^(upper|lower)/.test(key)) target = TUCK[key.replace(/[FB]$/, '')] ?? target;
       target *= f;
       const from = this.blendFrom?.get(l);
       if (from !== undefined) target = from + (target - from) * smoothstep(0, 1, this.stateT / 0.9);
+      else if (ease < 1) {
+        const e = this.easeFrom?.get(l);
+        if (e !== undefined) target = e + (target - e) * ease;
+      }
       // just come down from a leap: legs that give with the landing, firming up
       // again gradually (landing on stiff legs it bounces and pitches over more
       // often; snapped back to full strength they spring it off again)
@@ -633,7 +664,8 @@ export class Creature extends Entity {
 
     this.motorTimer -= dt;
     // stepping legs follow their gait every step
-    if (this.motorTimer <= 0 || this.gaitAmt > 0 || this.jumpT > 0) {
+    if (this.easeFrom && (this.easeT += dt) > this.easeDur) this.easeFrom = null;
+    if (this.motorTimer <= 0 || this.gaitAmt > 0 || this.jumpT > 0 || this.easeFrom) {
       this.motorTimer = 0.05;
       this.updateMotors(false);
     }

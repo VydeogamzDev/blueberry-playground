@@ -1037,17 +1037,31 @@ export class Human extends Entity implements Holder {
     const feet = this.ok('footF') ? this.L('footF').part.y : c.y - 1.05;
     const head = this.ok('head') ? this.L('head').part.y : c.y + 0.3;
     this.blocker = null;
-    for (const y of [head, c.y, c.y - 0.45, feet + 0.32, feet + 0.12]) {
+    const other = (o: RAPIER.Collider) => {
+      const p = this.game.physics.partOf(o);
+      if (!p) return true;
+      if (p.entity === this) return false;
+      // what they hold goes along with them
+      return !this.grips.some((g) => g.item === p.entity);
+    };
+    const cast = (y: number, range: number) => {
       ray.origin = { x: c.x, y };
-      const hit = world.castRay(ray, 0.22 + margin, true, undefined, undefined, undefined, undefined, (o) => {
-        const p = this.game.physics.partOf(o);
-        if (!p) return true;
-        if (p.entity === this) return false;
-        // what they hold goes along with them
-        return !this.grips.some((g) => g.item === p.entity);
-      });
+      return world.castRay(ray, range, true, undefined, undefined, undefined, undefined, other);
+    };
+    for (const y of [head, c.y, c.y - 0.45, feet + 0.32, feet + 0.12]) {
+      const hit = cast(y, 0.22 + margin);
       if (hit) {
         this.blocker = this.game.physics.partOf(hit.collider) ?? null;
+        return true;
+      }
+    }
+    // something lower than the knee (a brick): seen a stride further off, or the
+    // foot reaching out in front kicks it along before the body gets that close
+    if (!back) {
+      const reach = 0.22 + margin + 0.25;
+      const low = cast(feet + 0.12, reach);
+      if (low && !cast(feet + 0.32, reach)) {
+        this.blocker = this.game.physics.partOf(low.collider) ?? null;
         return true;
       }
     }
