@@ -30,29 +30,32 @@ export class Impacts {
     phys.events.drainContactForceEvents((ev) => {
       const h1 = ev.collider1();
       const h2 = ev.collider2();
+      const p1 = phys.partOf(h1) ?? null;
+      const p2 = phys.partOf(h2) ?? null;
+      if (!p1 && !p2) return;
+      if ((p1 && p1.destroyed) || (p2 && p2.destroyed)) return;
+
+      // quick reject using body-center velocities: first however they're moving
+      // (bodies pressed together in a heap, going nowhere: most events there)...
+      const v1x = p1 ? p1.vx : 0;
+      const v1y = p1 ? p1.vy : 0;
+      const v2x = p2 ? p2.vx : 0;
+      const v2y = p2 ? p2.vy : 0;
+      const maxAng = Math.max(p1 ? Math.abs(p1.av) : 0, p2 ? Math.abs(p2.av) : 0);
+      if (Math.hypot(v1x - v2x, v1y - v2y) + maxAng * 0.6 < MIN_SPEED) return;
       // one impact per collider pair per step
       // (handles are opaque f64 bit patterns, so build a string key)
       const key = h1 < h2 ? `${h1}|${h2}` : `${h2}|${h1}`;
       if (seen.has(key)) return;
       seen.add(key);
-      const p1 = phys.partOf(h1) ?? null;
-      const p2 = phys.partOf(h2) ?? null;
-      if (!p1 && !p2) return;
-      if ((p1 && p1.destroyed) || (p2 && p2.destroyed)) return;
       const force = ev.totalForceMagnitude();
       const dir = ev.maxForceDirection();
       const dl = Math.hypot(dir.x, dir.y);
       if (dl < 1e-6) return;
       const nx = dir.x / dl;
       const ny = dir.y / dl;
-
-      // quick reject using body-center velocities
-      const v1x = p1 ? p1.vx : 0;
-      const v1y = p1 ? p1.vy : 0;
-      const v2x = p2 ? p2.vx : 0;
-      const v2y = p2 ? p2.vy : 0;
+      // ...then toward each other
       const quick = Math.abs((v1x - v2x) * nx + (v1y - v2y) * ny);
-      const maxAng = Math.max(p1 ? Math.abs(p1.av) : 0, p2 ? Math.abs(p2.av) : 0);
       if (quick + maxAng * 0.6 < MIN_SPEED) return;
 
       // contact point

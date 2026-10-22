@@ -198,6 +198,15 @@ interface Limb {
 
 type State = 'stand' | 'down' | 'getup';
 
+/** How the body stands over its feet: the tilt of the line from the feet (sx, sy) to the center of mass, and how fast it turns. */
+interface Column {
+  theta: number;
+  omega: number;
+  sx: number;
+  sy: number;
+  grounded: boolean;
+}
+
 interface Variant {
   kind: BodyKind;
   skin: Skin;
@@ -246,6 +255,9 @@ export class Human extends Entity implements Holder {
   /** Where the trunk was at the last look while crawling, and how many looks in a row it hadn't moved. */
   private crawlX = 0;
   private crawlStuck = 0;
+  /** When pinned() last looked (by `t`), and what it found. */
+  private pinnedAt = -Infinity;
+  private wasPinned = false;
   /** How long they've spent letting their legs down onto the floor this time (see lowerFeet()). */
   private feetT = 0;
   private motorTimer = 0;
@@ -626,6 +638,10 @@ export class Human extends Entity implements Holder {
 
   /** Is something heavy lying on this person's head or torso? */
   private pinned(): boolean {
+    // asked every step by someone lying waiting to get up, and it goes through
+    // every contact of the trunk: it looks a few times a second
+    if (this.t - this.pinnedAt < 0.25) return this.wasPinned;
+    this.pinnedAt = this.t;
     const world = this.game.physics.world;
     let load = 0;
     for (const k of ['head', 'upperTorso', 'midTorso', 'lowerTorso'] as LimbKey[]) {
@@ -641,7 +657,8 @@ export class Human extends Entity implements Holder {
         });
       }
     }
-    return load > 6;
+    this.wasPinned = load > 6;
+    return this.wasPinned;
   }
 
   /** Limbs moving dangerously fast while trying to stand. */
@@ -758,10 +775,14 @@ export class Human extends Entity implements Holder {
     const conscious = str > 0.15;
 
     // ---- state machine
-    const col = this.column();
+    // (how the body stands over its feet: worked out when wanted, which someone
+    // lying down only does when about to get up)
+    let colNow: Column | null = null;
+    const column = () => (colNow ??= this.column());
     if (!conscious || this.held) {
       if (this.state !== 'down') this.setState('down');
     } else if (this.state === 'stand' || this.state === 'getup') {
+      const col = column();
       this.airT = col.grounded ? 0 : this.airT + dt;
       const tilt = Math.abs(col.theta);
       // only standing for a while counts as having got up (not toppling off a pile again)
@@ -816,6 +837,7 @@ export class Human extends Entity implements Holder {
         this.crawlStuck = 0;
         this.stateT = Math.min(this.stateT, 1);
       } else if (!this.gaveUp && this.stateT > wait && rest && this.legsWork() && str > 0.7 && this.pain < 0.6 && !this.pinned()) {
+        const col = column();
         if (col.grounded && this.grounded(true)) {
           this.getupBest = Math.abs(col.theta);
           this.getupProgressT = 0;
@@ -835,7 +857,7 @@ export class Human extends Entity implements Holder {
     this.climbCool -= dt;
     if (this.settleFrom && (this.settleT += dt) > this.settleDur) this.settleFrom = null;
     if (conscious && this.state === 'stand' && !this.held && this.climbing) this.climb(dt);
-    else if (conscious && this.state === 'stand' && !this.held && this.jumping) this.jumpStep(dt, col.grounded);
+    else if (conscious && this.state === 'stand' && !this.held && this.jumping) this.jumpStep(dt, column().grounded);
     else if (conscious && this.state === 'stand' && !this.held) this.think(dt);
     else {
       this.speed = 0;
@@ -854,13 +876,14 @@ export class Human extends Entity implements Holder {
 
     // ---- balance
     const flying = this.jumping && this.jumping.t >= 0 && this.jumping.landed < 0;
-    if ((this.state === 'stand' || this.state === 'getup') && conscious && col.grounded && !this.climbing && !flying) {
+    if ((this.state === 'stand' || this.state === 'getup') && conscious && column().grounded && !this.climbing && !flying) {
       if (this.state === 'getup') {
         const ramp = clamp(this.stateT / 1.2, 0, 1);
-        this.balance(col, 16 * str, 9 * str, 4 + 14 * ramp, dt);
-      } else this.balance(col, BALANCE.kp * str, BALANCE.kd * str, BALANCE.amax, dt);
+        this.balance(column(), 16 * str, 9 * str, 4 + 14 * ramp, dt);
+      } else this.balance(column(), BALANCE.kp * str, BALANCE.kd * str, BALANCE.amax, dt);
     }
-    this.walk(dt, col.grounded);
+    // (only someone on their feet walks)
+    this.walk(dt, this.state === 'stand' && column().grounded);
   }
 
   // ---------------------------------------------------------------- getting about
@@ -1528,7 +1551,7 @@ export class Human extends Entity implements Holder {
    * Whole-body "column" state: tilt of the center of mass about the support point
    * (the feet). Standing balance rotates the body rigidly about that point.
    */
-  private column(): { theta: number; omega: number; sx: number; sy: number; grounded: boolean } {
+  private column(): Column {
     let sx = 0;
     let n = 0;
     let sy = Infinity;
@@ -1570,7 +1593,7 @@ export class Human extends Entity implements Holder {
    * Balance: drives the column tilt to zero by applying the forces/torques that
    * would rotate the whole body rigidly about the feet (muscles + reflexes).
    */
-  private balance(col: { theta: number; omega: number; sx: number; sy: number }, kp: number, kd: number, amax: number, dt: number): void {
+  private balance(col: Column, kp: number, kd: number, amax: number, dt: number): void {
     // the feet support the body passively while the center of mass stays over them,
     // so only push back once the body actually starts to tip (deadband)
     const theta = col.theta;
@@ -1623,6 +1646,11 @@ export class Human extends Entity implements Holder {
     // ---- joint stress: limbs tear off when stretched too far
     for (const l of this.order) {
       if (!l.joint || l.severed || !l.joint.isValid() || !l.parent) continue;
+      // nothing is pulling at a joint between two sleeping bodies
+      if (l.part.body.isSleeping() && l.parent.part.body.isSleeping()) {
+        l.stress = Math.max(0, l.stress - dt);
+        continue;
+      }
       const pa = l.parent.part.localToWorld(l.a1.x, l.a1.y);
       const pb = l.part.localToWorld(l.a2.x, l.a2.y);
       const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
