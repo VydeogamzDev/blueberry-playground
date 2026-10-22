@@ -5,6 +5,7 @@ import { lerp, type V2 } from '../engine/math';
 import type { Game } from '../world/Game';
 import type { Part } from '../world/Part';
 import type { Entity } from '../world/Entity';
+import { KHAKI, RED, ORANGE, STEEL, STEEL_LT, BRASS, GUNMETAL, type Ramp } from '../art/palette';
 
 export type ConnKind = 'rope' | 'weld' | 'spring' | 'hinge' | 'pin' | 'wire';
 
@@ -87,13 +88,14 @@ export class LineBatch {
   }
 }
 
-const COLORS: Record<ConnKind, number> = {
-  rope: 0x9b8160,
-  weld: 0xc7ccd1,
-  spring: 0xa9b2bb,
-  hinge: 0xd8c27a,
-  pin: 0xd8c27a,
-  wire: 0xb53a2e,
+/** Connections use the same material ramps as the sprites (0 = outline ... 4 = highlight). */
+const RAMPS: Record<ConnKind, Ramp> = {
+  rope: KHAKI,
+  weld: STEEL_LT,
+  spring: STEEL_LT,
+  hinge: BRASS,
+  pin: BRASS,
+  wire: RED,
 };
 
 export class Connections {
@@ -313,21 +315,24 @@ export class Connections {
       if (c.kind === 'wire' && !this.showWires) continue;
       const pa = this.anchorRender(c.a, c.la, alpha);
       const pb = this.anchorRender(c.b, c.lb, alpha);
-      const col = COLORS[c.kind];
+      const R = RAMPS[c.kind];
       switch (c.kind) {
         case 'rope': {
           const d = Math.hypot(pb.x - pa.x, pb.y - pa.y);
           const sag = d < c.rest ? Math.sqrt(Math.max(0, c.rest * c.rest - d * d)) * 0.5 : 0;
-          this.curve(pa, pb, sag, PX * 1.5, col);
-          L.quad(pa.x, pa.y, PX * 2, 0x6b5a43);
-          L.quad(pb.x, pb.y, PX * 2, 0x6b5a43);
+          this.curve(pa, pb, sag, PX * 2.5, R[0]);
+          this.curve(pa, pb, sag, PX * 1.5, R[2]);
+          this.knot(pa, PX * 3, R);
+          this.knot(pb, PX * 3, R);
           break;
         }
         case 'wire': {
           const d = Math.hypot(pb.x - pa.x, pb.y - pa.y);
-          this.curve(pa, pb, d * 0.08, PX, this.powered.has(c.a.entity) ? 0xd9573f : col);
-          L.quad(pa.x, pa.y, PX * 2, 0x2b2b2b);
-          L.quad(pb.x, pb.y, PX * 2, 0x2b2b2b);
+          const W = this.powered.has(c.a.entity) ? ORANGE : R;
+          this.curve(pa, pb, d * 0.08, PX * 2, W[0]);
+          this.curve(pa, pb, d * 0.08, PX, W[this.powered.has(c.a.entity) ? 3 : 2]);
+          this.knot(pa, PX * 2.5, GUNMETAL);
+          this.knot(pb, PX * 2.5, GUNMETAL);
           break;
         }
         case 'spring': {
@@ -337,36 +342,40 @@ export class Connections {
           const d = Math.hypot(dx, dy) || 1;
           const nx = -dy / d;
           const ny = dx / d;
-          let px = pa.x;
-          let py = pa.y;
-          for (let k = 1; k <= coils; k++) {
-            const t = k / coils;
-            const off = k === coils ? 0 : (k % 2 ? 1 : -1) * PX * 3;
-            const x = pa.x + dx * t + nx * off;
-            const y = pa.y + dy * t + ny * off;
-            L.seg(px, py, x, y, PX, col);
-            px = x;
-            py = y;
+          for (const [w, col] of [[PX * 2, R[0]], [PX, R[2]]] as const) {
+            let px = pa.x;
+            let py = pa.y;
+            for (let k = 1; k <= coils; k++) {
+              const t = k / coils;
+              const off = k === coils ? 0 : (k % 2 ? 1 : -1) * PX * 3;
+              const x = pa.x + dx * t + nx * off;
+              const y = pa.y + dy * t + ny * off;
+              L.seg(px, py, x, y, w, col);
+              px = x;
+              py = y;
+            }
           }
-          L.quad(pa.x, pa.y, PX * 2, 0x55595e);
-          L.quad(pb.x, pb.y, PX * 2, 0x55595e);
+          this.knot(pa, PX * 3, STEEL);
+          this.knot(pb, PX * 3, STEEL);
           break;
         }
         case 'weld':
-          L.quad(pa.x, pa.y, PX * 3, 0x3c4045);
-          L.quad(pa.x, pa.y, PX * 1.5, col);
+          L.quad(pa.x, pa.y, PX * 4, STEEL[0]);
+          L.quad(pa.x, pa.y, PX * 3, STEEL[2]);
+          L.quad(pa.x, pa.y, PX * 1.5, R[4]);
           break;
         case 'hinge':
         case 'pin':
-          L.quad(pa.x, pa.y, PX * 4, 0x3c3424);
-          L.quad(pa.x, pa.y, PX * 2.5, col);
-          L.quad(pa.x, pa.y, PX, 0x3c3424);
+          L.quad(pa.x, pa.y, PX * 5, R[0]);
+          L.quad(pa.x, pa.y, PX * 4, R[2]);
+          L.quad(pa.x - PX * 0.5, pa.y + PX * 0.5, PX * 2, R[3]);
+          L.quad(pa.x, pa.y, PX * 1.5, R[0]);
           break;
       }
     }
     if (this.preview) {
       const p = this.preview;
-      const col = COLORS[p.kind];
+      const col = RAMPS[p.kind][3];
       const dx = p.x1 - p.x0;
       const dy = p.y1 - p.y0;
       const d = Math.hypot(dx, dy);
@@ -379,6 +388,13 @@ export class Connections {
       L.quad(p.x0, p.y0, PX * 3, col);
     }
     L.end();
+  }
+
+  /** A small outlined square where a rope/wire/spring meets an object. */
+  private knot(p: V2, size: number, r: Ramp): void {
+    this.lines.quad(p.x, p.y, size + PX, r[0]);
+    this.lines.quad(p.x, p.y, size, r[1]);
+    this.lines.quad(p.x - PX * 0.5, p.y + PX * 0.5, size * 0.4, r[3]);
   }
 
   private curve(a: V2, b: V2, sag: number, w: number, col: number): void {
