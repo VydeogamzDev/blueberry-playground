@@ -60,7 +60,7 @@ function registerChainsaw(): void {
 }
 
 /** The spear's point: it stabs and lodges as a knife does, deeper; both edges cut a little. */
-const SPEAR_BLADE = { blade: [44, 53] as [number, number], tipLen: 5, edge: 'both' as const, sharpness: 0.8, stab: true, maxDepth: 0.35, grip: 380 };
+const SPEAR_BLADE = { blade: [44, 53] as [number, number], tipLen: 5, edge: 'both' as const, sharpness: 0.8, stab: true, maxDepth: 0.8, grip: 380 };
 
 function registerMeleeGear(): void {
   const spear = lazyArt(G.spearArt);

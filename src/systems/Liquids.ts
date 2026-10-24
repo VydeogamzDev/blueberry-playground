@@ -38,9 +38,12 @@ const BLOOD_DARK = 0x5a0808;
 
 /** Something that holds liquid poured into it (a bucket). */
 export interface LiquidCatcher {
-  /** A drop hit `part` at (x, y): returns whether it went in (and is used up there). */
-  catchDrop(liquid: Liquid, part: Part, x: number, y: number): boolean;
+  /** A drop (`amount` drops: a particle of water, see Fluid) hit `part` at (x, y): returns whether it went in (and is used up there). */
+  catchDrop(liquid: Liquid, part: Part, x: number, y: number, amount?: number): boolean;
 }
+
+/** A drop of water this near (m) water that flows joins it (else, on the floor, it pools up). */
+const FLOWS_NEAR = 0.3;
 
 const lastSound = new Map<string, number>();
 
@@ -65,9 +68,11 @@ export function landDroplet(game: Game, liquid: Liquid, part: Part | null, x: nu
   if (part && !gorse && (part.entity as Entity & Partial<LiquidCatcher>).catchDrop?.(liquid, part, x, y)) return true;
   const ix = x - nx * PX * 0.5;
   const iy = y - ny * PX * 0.5;
-  // drops landing on the floor pool up (on a map's ground they stain it, as on a wall)
+  // drops landing on the floor pool up (on a map's ground they stain it, as on a wall);
+  // water poured on something, or into water, is water that flows (see Fluid)
   const floor = !part && ny > 0.7 && y < WORLD.floor + PX * 6 && game.puddles.open(x);
-  if (floor && liquid !== Liquid.Blood && !gorse) {
+  const flows = liquid === Liquid.Water && (!!part || game.fluid.near(x, y, FLOWS_NEAR));
+  if (floor && liquid !== Liquid.Blood && !gorse && !flows) {
     game.puddles.add(liquid, x);
     liquidSound(game, 'liquid/drip', x, 0.18, 0.09);
   }
@@ -86,7 +91,12 @@ export function landDroplet(game: Game, liquid: Liquid, part: Part | null, x: nu
         game.fire.douse(part, 0.02);
         game.fire.splash(part, x, y);
         part.oil = Math.max(0, part.oil - 0.04);
-      } else if (!floor && Math.random() < 0.25) floorStain(game, ix, iy, ny, r * 0.5, g * 0.5, b * 0.6, 0.22);
+      }
+      if (flows) {
+        game.fluid.fromDrop(x + nx * PX, y + ny * PX, vx, vy);
+        return true;
+      }
+      if (!floor && Math.random() < 0.25) floorStain(game, ix, iy, ny, r * 0.5, g * 0.5, b * 0.6, 0.22);
       return false;
     case Liquid.Acid:
       if (part) {

@@ -13,9 +13,10 @@ import { Human } from './Human';
 import { getItem } from '../catalog/items';
 import { ACID_SCAR, Liquid, LIQUID_COLORS, liquidSound, paintWound, seep, woundSpot } from '../systems/Liquids';
 import { PK } from '../systems/Particles';
-import { FLESH, breakUp, blastEnergy, takeChunk } from '../systems/Chunks';
+import { FLESH, breakUp, blastEnergy, sliceLimb, takeChunk } from '../systems/Chunks';
 import { isFighter, isLiving, land, onFeet, stillUp, type Fighter } from '../systems/Fighting';
 import { allies, dress, dye, enemies, isTeamId, nearestEnemy, undead, type TeamId } from '../systems/Teams';
+import { LUNGS } from '../systems/Fluid';
 
 interface CLimbSpec {
   key: string;
@@ -520,6 +521,7 @@ export class Creature extends Entity {
         forceThreshold: 20,
         textureKey: `${species.kind}:${s.key}`,
       });
+      if (s.key === 'chest') part.buoyancy = LUNGS;
       // light links get extra inertia so they don't buzz when squeezed in a pile
       if (s.key.startsWith('lower') || s.key === 'tail' || species.kind === 'cat') {
         part.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, part.body.principalInertia() * 2, true);
@@ -2434,7 +2436,17 @@ export class Creature extends Entity {
     this.injure(l, amt, kind, point, dir);
   }
 
-  private injure(l: Limb, dmg: number, kind: DamageKind, point?: V2, dir?: V2): void {
+  /** A blade's cut, as a person takes one (see Human.slice()). */
+  slice(part: Part, amount: number, point: V2, dir: V2, depth: number, back?: number): void {
+    const l = this.limbOf(part);
+    if (!l || l.gone || this.cooked) return;
+    const amt = amount / this.species.toughness;
+    this.addWound(l, point.x, point.y, -dir.x, -dir.y, 0.25 + amt * 0.03, 'cut', dir);
+    this.injure(l, amt, 'cut', point, dir, false);
+    if (!l.gone) sliceLimb(this, l, point, dir, depth / this.species.toughness, FLESH, back);
+  }
+
+  private injure(l: Limb, dmg: number, kind: DamageKind, point?: V2, dir?: V2, sever = true): void {
     const p = l.part;
     p.hp -= dmg;
     // a real hit (not the knocks of flopping back down) makes it try again, and get away
@@ -2465,7 +2477,7 @@ export class Creature extends Entity {
       }
     }
     if ((l.spec.key === 'head' || l.spec.key === 'chest') && p.hp <= 0) this.die();
-    if ((kind === 'cut' || kind === 'stab') && p.hp <= 0 && l.joint && !l.severed) this.sever(l, 'cut');
+    if (sever && kind === 'cut' && p.hp <= 0 && l.joint && !l.severed) this.sever(l, 'cut');
   }
 
   /** Nearest solid sprite pixel to (ix, iy). */

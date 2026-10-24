@@ -140,13 +140,13 @@ const MELEE: MeleeDef[] = [
   {
     id: 'knife', name: 'Knife', desc: 'A sharp knife. Stabs, slices and sticks into things.', art: I.knifeArt, w: 15, h: 3,
     rects: [[0, 0.5, 5, 2], [5, 0, 10, 3]], mass: 0.3, material: MAT.metal, hold: { grip: [2, 1] },
-    blade: { blade: [6, 14], tipLen: 4, edge: 'bottom', sharpness: 1, stab: true, maxDepth: 0.22, grip: 260 },
+    blade: { blade: [6, 14], tipLen: 4, edge: 'bottom', sharpness: 1, stab: true, maxDepth: 0.25, grip: 260 },
     tags: ['blade', 'stab', 'sharp'],
   },
   {
     id: 'sword', name: 'Sword', desc: 'A long double-edged blade. Can take limbs off.', art: I.swordArt, w: 42, h: 5,
     rects: [[0, 1, 8, 2], [7, 0, 1, 5], [8, 1, 33, 2]], mass: 1.4, material: MAT.metal, hold: { grip: [3, 1], angle: 0.5 },
-    blade: { blade: [8, 41], tipLen: 5, edge: 'both', sharpness: 1.7, stab: true, maxDepth: 0.6, grip: 420 },
+    blade: { blade: [8, 41], tipLen: 5, edge: 'both', sharpness: 1.7, stab: true, maxDepth: 1, grip: 420 },
     tags: ['blade', 'katana', 'sharp'],
   },
   {

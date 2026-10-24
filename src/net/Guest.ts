@@ -182,6 +182,7 @@ export class NetClient {
     if (m.fx || m.gone || m.cut) this.due.push({ ht: m.ht, fx: m.fx, gone: m.gone, cut: m.cut });
     if (m.holds) this.fx.hold(m.holds);
     if (m.puddles) this.setPuddles(m.puddles);
+    if (m.fluid) this.game.fluid.unpack(m.fluid.n, floats(m.fluid.xy), new Int16Array(fromBase64(m.fluid.v).buffer));
     if (m.time) this.setTime(m.time);
     // the host's music, its start put on our clock (which the ticks keep comparing with the host's)
     if (this.hostMusic) this.game.music.follow({ seed: this.hostMusic.seed, start: this.hostMusic.start + this.offset });

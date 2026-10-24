@@ -163,6 +163,12 @@ export interface Grab {
   turn: number;
   /** The angle a rigid thing is held at (it doesn't swing round the hand); null for people and animals, which dangle. */
   hold: number | null;
+  /**
+   * A/D used while it's held: from then until it's let go, it keeps to its angle
+   * whirled or flung about, turned only by A/D (as in People Playground); till
+   * then it swings and spins in the hand (see holdRigid()).
+   */
+  locked?: boolean;
   /** The rest of the selection, dragged along: each held at its middle, kept `off` from the cursor (see grabAlong()). */
   along?: (Grab & { off: V2 })[];
   /** Moved with time paused: only what's held (Ctrl as it was taken), not everything joined to it. */
@@ -438,8 +444,10 @@ function wrapAngle(a: number): number {
  * A rigid thing in the hand: the held point keeps with the hand (its motion
  * relative to the hand damped by `f`), but the thing turns about it. Whirled,
  * a knife held by its handle swings and spins round; let be, the spin dies away
- * and it comes back to the angle it's held at (A/D turn that). It weighs nothing
- * in the hand: carried, not hung, so it doesn't tip over.
+ * and it comes back to the angle it's held at. Once A/D have turned it, it's
+ * locked to its angle till it's let go: whirled or flung, it doesn't swing,
+ * and only A/D turn it. It weighs nothing in the hand: carried, not hung, so it
+ * doesn't tip over.
  */
 function holdRigid(g: Grab, hx: number, hy: number, f: number, rot: number, dt: number): void {
   const b = g.part.body;
@@ -467,11 +475,16 @@ function holdRigid(g: Grab, hx: number, hy: number, f: number, rot: number, dt: 
   let vy = v.y + jy / m;
   w += (rx * jy - ry * jx) / I;
   // a damped swing back to the held angle, turning it about the held point
-  // (which stays where it is)
+  // (which stays where it is); locked by A/D, kept to it
+  if (rot !== 0 && !g.locked) {
+    g.locked = true;
+    // (from where it is now: a swing under way isn't snapped back first)
+    g.hold = b.rotation();
+  }
   g.hold! += rot * 5 * dt;
   const off = wrapAngle(g.hold! - b.rotation());
   let w1 = w;
-  if (rot !== 0) w1 = off * DRAG.holdRate;
+  if (g.locked) w1 = off * DRAG.holdRate;
   else w1 += (DRAG.spin.freq * DRAG.spin.freq * off - 2 * DRAG.spin.ratio * DRAG.spin.freq * w1) * dt;
   w1 = clamp(w1, -DRAG.spin.most, DRAG.spin.most);
   vx += (w1 - w) * ry;

@@ -1700,7 +1700,7 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (stood < 2) return `only ${stood} of 4 dropped on a body got up again`;
       return true;
     }],
-    ['extra: dragging: things follow the cursor; whirled, a held thing swings round, then settles back to its angle', () => {
+    ['extra: dragging: things follow the cursor; whirled, a held thing swings round, then settles back to its angle; turned with A/D first, it keeps to its angle', () => {
       const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
       /**
        * Grabs a part off its middle, lifts it, whirls the cursor round a circle for
@@ -1708,8 +1708,8 @@ export function makeSelfTest(game: Game, controls: Controls) {
        * far the held point still wanders from the cursor once it should have caught
        * up, and how far from its first angle it is, and how fast it turns, 3 s on.
        */
-      const whirl = (p: Part, off: number) => {
-        const a0 = p.a;
+      const whirl = (p: Part, off: number, lock = false) => {
+        let a0 = p.a;
         const g = p.localToWorld(off, 0);
         const local = p.worldToLocal(g.x, g.y);
         kit.down(g.x, g.y);
@@ -1718,6 +1718,15 @@ export function makeSelfTest(game: Game, controls: Controls) {
         for (let i = 1; i <= lift; i++) {
           kit.move(g.x + ((cx + R - g.x) * i) / lift, g.y + ((cy - g.y) * i) / lift);
           game.advance(1 / 60);
+        }
+        // (A held a moment: from then on it's locked to its angle, as in People Playground)
+        if (lock) {
+          controls.holdRotate(1, true);
+          game.advance(4 / 60);
+          controls.holdRotate(1, false);
+          // (come round to where A left it)
+          game.advance(20 / 60);
+          a0 = p.a;
         }
         let spin = 0;
         let trail = 0;
@@ -1760,6 +1769,11 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (r.back > 0.15 || r.still > 0.5) return `3 s after the whirl the rifle is ${r.back.toFixed(2)} rad off its angle, turning at ${r.still.toFixed(2)} rad/s`;
       if (r.wander > 0.06) return `the rifle still swung ${r.wander.toFixed(2)} m about the cursor after it stopped`;
       if (r.trail > 0.5) return `the rifle trailed ${r.trail.toFixed(2)} m behind the cursor`;
+      kit.reset();
+      const locked = kit.spawn('rifle', 0, 0.3).parts[0];
+      kit.advance(1);
+      const l = whirl(locked, 0.35, true);
+      if (l.spin > 0.2 || l.back > 0.1) return `turned with A first, the rifle still swung ${l.spin.toFixed(2)} rad off its angle as it was whirled (${l.back.toFixed(2)} rad after)`;
       kit.reset();
       const crate = kit.spawn('crate', 0, 0.45).parts[0];
       kit.advance(1);

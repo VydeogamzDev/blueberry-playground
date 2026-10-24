@@ -85,14 +85,14 @@ export class Bucket extends Prop implements LiquidCatcher {
     return this.total / this.capacity;
   }
 
-  catchDrop(liquid: Liquid, part: Part, x: number, y: number): boolean {
+  catchDrop(liquid: Liquid, part: Part, x: number, y: number, amount = 1): boolean {
     if (part !== this.main) return false;
     // only drops that come in at the top: below the rim, between the walls
     const l = part.worldToLocal(x, y);
     const lx = l.x / PX;
     const ly = l.y / PX;
     if (ly > RIM + 0.5 || ly < FLOOR - 1 || Math.abs(lx) > innerHalf(ly) + 1) return false;
-    this.contents[liquid] += 1;
+    this.contents[liquid] += amount;
     this.weigh();
     return true;
   }

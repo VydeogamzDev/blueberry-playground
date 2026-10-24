@@ -316,6 +316,12 @@
     "sfx/machine/thruster_loop_1.ogg",
     "sfx/machine/thruster_loop_2.ogg"
   ],
+  "machine/jet_whine_loop": [
+    "sfx/machine/jet_whine_loop_1.ogg"
+  ],
+  "machine/jet_roar_loop": [
+    "sfx/machine/jet_roar_loop_1.ogg"
+  ],
   "machine/turret_loop": [
     "sfx/machine/turret_loop.ogg"
   ],
@@ -663,6 +669,8 @@
     "fire/crackle_loop",
     "machine/motor_loop",
     "machine/thruster_loop",
+    "machine/jet_whine_loop",
+    "machine/jet_roar_loop",
     "machine/turret_loop",
     "machine/fan_loop",
     "machine/siren_loop",

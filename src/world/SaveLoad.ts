@@ -26,12 +26,20 @@ interface SavedPuddles {
   oil?: string;
 }
 
+/** Water (see FluidState): each particle's x, y, vx, vy as float32s, in base64. */
+interface SavedFluid {
+  n: number;
+  xv: string;
+}
+
 interface SaveData extends Snapshot {
   version: 1;
   camera: { x: number; y: number; zoom: number };
   /** The floor's stains and puddles (saves from before they were kept have none). */
   stains?: SavedStains;
   puddles?: SavedPuddles;
+  /** The water (saves from before water flowed have none). */
+  fluid?: SavedFluid;
   /** The map, in full, so that a custom one travels with the save (saves from before maps have none: the lab). */
   map?: MapSpec;
   /** The weather and the world's light (saves from before weather have none: it's left as it is). */
@@ -42,12 +50,14 @@ export function saveToString(game: Game): string {
   const r = game.renderer;
   const st = game.stains.capture();
   const pu = game.puddles.capture();
+  const fl = game.fluid.capture();
   const data: SaveData = {
     version: 1,
     ...capture(game, game.entities),
     camera: { x: r.camX, y: r.camY, zoom: r.zoom },
     stains: { n: st.n, head: st.head, xy: arrayToBase64(st.xy), ...(st.xy instanceof Int32Array ? { wide: true } : {}), rgba: arrayToBase64(st.rgba) },
     puddles: { lo: pu.lo, hi: pu.hi, h: arrayToBase64(pu.h), kind: arrayToBase64(pu.kind), burn: arrayToBase64(pu.burn), ...(pu.oil ? { oil: arrayToBase64(pu.oil) } : {}) },
+    ...(fl.n ? { fluid: { n: fl.n, xv: arrayToBase64(fl.xv) } } : {}),
     map: game.map,
     weather: { ...game.weather.state },
   };
@@ -87,5 +97,8 @@ export function loadFromString(game: Game, json: string, o: { camera?: boolean }
     const oil = pu.oil ? new Float32Array(fromBase64(pu.oil).buffer) : undefined;
     game.puddles.restore({ lo: pu.lo, hi: pu.hi, h: new Float32Array(fromBase64(pu.h).buffer), kind: fromBase64(pu.kind), burn: new Float32Array(fromBase64(pu.burn).buffer), oil });
   } else game.puddles.clear();
+  const fl = data.fluid;
+  if (fl?.n) game.fluid.restore({ n: fl.n, xv: new Float32Array(fromBase64(fl.xv).buffer) });
+  else game.fluid.clear();
   return made;
 }

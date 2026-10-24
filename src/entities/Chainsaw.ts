@@ -7,6 +7,7 @@ import type { PropConfig } from './Prop';
 import type { Part } from '../world/Part';
 import type { Game } from '../world/Game';
 import type { Entity } from '../world/Entity';
+import { CUT_PER_PX, type Sliceable } from './Melee';
 import type { V2 } from '../engine/math';
 import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
 
@@ -245,8 +246,16 @@ export class Chainsaw extends Item {
     }
     if (!bite || !q || q.destroyed) return;
     const rate = flesh ? CUT_FLESH : mat === 'Synthetic' ? CUT_SYNTH : soft ? CUT_SOFT : CUT_HARD;
-    const who = q.entity;
-    who.damage(q, rate * TICK * power, 'cut', at, run);
+    const who = q.entity as Entity & Partial<Sliceable>;
+    const dmg = rate * TICK * power;
+    if (flesh && who.slice) {
+      // a limb is sawn through across it: along the bar where the bar crosses it, or
+      // in from the side the bar's on where it lies along it (see Chunks.sliceLimb())
+      const long = q.h >= q.w ? q.localDir(0, 1) : q.localDir(1, 0);
+      const into = below ? { x: -up.x, y: -up.y } : up;
+      const across = Math.abs(run.x * long.x + run.y * long.y) < Math.abs(into.x * long.x + into.y * long.y);
+      who.slice(q, dmg, at, across ? run : into, dmg / CUT_PER_PX, across ? Math.max(q.w, q.h) : 3);
+    } else who.damage(q, dmg, 'cut', at, run);
     if (flesh) {
       game.particles.blood(at.x, at.y, run.x, run.y + 0.3, 7, 3.5, q.destroyed ? null : q.body);
       if (Math.random() < 0.35) game.particles.debris(at.x, at.y, run.x, run.y + 0.5, 2, 0x8e1a1a, 3);

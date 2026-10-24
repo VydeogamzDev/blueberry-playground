@@ -3,6 +3,7 @@ import { registerWeapons, registerMelee, registerExplosives, registerMedical, re
 import { registerVehicles } from './vehicles';
 import { registerArsenal } from './arsenal';
 import { registerMachines2 } from './machines2';
+import { registerFloats } from './floats';
 import { Human, VARIANTS, HUMAN_HALF_HEIGHT } from '../entities/Human';
 import { figurePreview } from '../art/human';
 import { Creature, SPECIES, creaturePreview, creatureHalfHeight } from '../entities/Creature';
@@ -69,4 +70,5 @@ export function registerAll(): void {
   registerTools();
   registerArsenal();
   registerMachines2();
+  registerFloats();
 }

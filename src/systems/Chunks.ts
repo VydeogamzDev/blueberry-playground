@@ -14,7 +14,9 @@ import type { Part } from '../world/Part';
  * bone runs, and bits of flesh fly off with the blood. A limb shot clean through
  * breaks there, not at a joint: the smaller side comes off as a piece of its own
  * (see entities/Gore), what hung from it still hanging from it. One mostly shot
- * away, or blown apart, breaks up into pieces (breakUp()). The trunk only loses chunks.
+ * away, or blown apart, breaks up into pieces (breakUp()). A blade cuts a line
+ * into a limb (sliceLimb()), and one cut through comes apart there the same way.
+ * The trunk only loses chunks, and takes gashes.
  */
 
 /** What a chunk needs of a limb (a person's or an animal's). */
@@ -186,6 +188,109 @@ export function takeChunk<L extends ChunkLimb>(body: ChunkBody<L>, l: L, at: V2,
     return;
   }
   splitOff(body, l, look, out);
+}
+
+/**
+ * A cut into a gash made before goes on from where that one stopped, if it goes
+ * in within `near` px of where that one went in, near enough the same way (`turn`:
+ * the cosine between them): so slash after slash at a limb hacks through it.
+ */
+const GASH = { near: 3, turn: 0.75, keep: 6 };
+
+interface Gash {
+  /** Where it went in, and the way it goes (pixel coordinates), and how deep (px). */
+  x: number;
+  y: number;
+  ux: number;
+  uy: number;
+  len: number;
+}
+
+/** Each part's gashes, newest last. */
+const gashes = new WeakMap<Part, Gash[]>();
+
+/**
+ * A blade's cut into `l`: `depth` px in from where its edge struck (`at`, world),
+ * the way it was going (`dir`), from where that line meets it (`back` px before
+ * `at` at the furthest). A line of it a pixel wide comes away, raw either side
+ * (bone where it runs); one cut clean through takes the limb apart there, not at
+ * its joint (see splitOff()), and the trunk only takes the gash. A cut into a gash
+ * made before deepens it (see GASH). Whether it cut anything.
+ */
+export function sliceLimb<L extends ChunkLimb>(body: ChunkBody<L>, l: L, at: V2, dir: V2, depth: number, look: ChunkLook, back = 3): boolean {
+  const p = l.part;
+  if (l.gone || p.destroyed || !(depth > 0)) return false;
+  // the way it goes in pixel coordinates (the sprite's y runs down, and may be mirrored)
+  const c = p.worldToPixelF(at.x, at.y);
+  const c1 = p.worldToPixelF(at.x + dir.x * PX, at.y + dir.y * PX);
+  const ul = Math.hypot(c1.x - c.x, c1.y - c.y) || 1;
+  const ux = (c1.x - c.x) / ul;
+  const uy = (c1.y - c.y) / ul;
+  // (in from where it meets the limb along the way it goes: the edge struck a pixel or two off it, or into a gash)
+  let x = c.x - ux * back;
+  let y = c.y - uy * back;
+  for (let k = 0; k < (back + 9) * 2 && !p.solidAt(Math.floor(x), Math.floor(y)); k++) {
+    x += ux * 0.5;
+    y += uy * 0.5;
+  }
+  if (!p.solidAt(Math.floor(x), Math.floor(y))) {
+    x = c.x;
+    y = c.y;
+  }
+  let list = gashes.get(p);
+  if (!list) gashes.set(p, (list = []));
+  let g = list.find((q) => Math.hypot(q.x - x, q.y - y) < GASH.near && q.ux * ux + q.uy * uy > GASH.turn);
+  if (g) g.len += depth;
+  else {
+    list.push((g = { x, y, ux, uy, len: depth }));
+    if (list.length > GASH.keep) list.shift();
+  }
+  // (from a pixel and a half outside, so it starts at the outline)
+  const px = line(p, g.x - g.ux * 1.5, g.y - g.uy * 1.5, g.x + g.ux * g.len, g.y + g.uy * g.len);
+  if (!px.length) return false;
+  const rim = rimOf(l, px, look);
+  const lost0 = p.lost();
+  p.carve(px, rim);
+  const g0 = body.game;
+  const end = p.pixelToWorld(px[px.length - 2], px[px.length - 1]);
+  const n = px.length / 2;
+  if (look.bleeds) g0.particles.splatter(end.x, end.y, dir.x, dir.y + 0.15, 4 + n * 2, 3 + n * 0.3, 0.3, p.body);
+  else g0.particles.sparks(end.x, end.y, dir.x, dir.y, 3 + n, 4);
+  p.hp -= p.maxHp * (p.lost() - lost0) * 0.8;
+  // (the trunk, that everything hangs from, is left to its wounds)
+  if (!l.parent) return true;
+  // mostly cut away: what's left breaks up
+  if (p.lost() > CHUNK.gib) body.gib(l, dir);
+  else splitOff(body, l, look, dir);
+  return true;
+}
+
+/** The solid pixels (x, y pairs) on a line from (x0, y0) to (x1, y1) (pixel coordinates), joined corner to corner: enough to part what's either side. */
+function line(p: Part, x0: number, y0: number, x1: number, y1: number): number[] {
+  const px: number[] = [];
+  let x = Math.floor(x0);
+  let y = Math.floor(y0);
+  const xe = Math.floor(x1);
+  const ye = Math.floor(y1);
+  const dx = Math.abs(xe - x);
+  const dy = -Math.abs(ye - y);
+  const sx = x < xe ? 1 : -1;
+  const sy = y < ye ? 1 : -1;
+  let err = dx + dy;
+  for (let k = 0; k <= p.w + p.h + 4; k++) {
+    if (p.solidAt(x, y)) px.push(x, y);
+    if (x === xe && y === ye) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) {
+      err += dy;
+      x += sx;
+    }
+    if (e2 <= dx) {
+      err += dx;
+      y += sy;
+    }
+  }
+  return px;
 }
 
 /** Is any of it within `r` of (cx, cy) (pixel coordinates) shot away already? */

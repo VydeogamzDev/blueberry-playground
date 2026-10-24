@@ -3,9 +3,11 @@ import { PX, WORLD } from '../engine/constants';
 import { UNIT_QUAD } from '../engine/Renderer';
 import { PK } from './Particles';
 import { liquidSound, LIQUID_COLORS, Liquid } from './Liquids';
+import { carriedMass, quadDrag } from './Fluid';
 import type { Game } from '../world/Game';
 import type { MapSpec } from '../world/Maps';
 import type { Part } from '../world/Part';
+import type { Entity } from '../world/Entity';
 
 /**
  * The sea's density, as Materials' (kg per m² of sprite): flesh (95) sinks
@@ -70,6 +72,8 @@ export class Water {
   private drawn: MapSpec | null = null;
   private t = 0;
   private fallT = 0;
+  /** What moves with each thing in the sea, as of this step (see carriedMass()). */
+  private carried = new Map<Entity, number>();
 
   constructor(game: Game) {
     this.game = game;
@@ -116,6 +120,7 @@ export class Water {
     const w = g.map.water;
     if (!w) return;
     const up = -g.gravity;
+    this.carried.clear();
     for (const e of g.entities) {
       if (e.destroyed) continue;
       for (const p of e.parts) {
@@ -130,9 +135,12 @@ export class Water {
         const under = Math.min(1, (w.level - bottom) / (2 * hy));
         if (p.vy < -SPLASH_SPEED && p.py - hy >= w.level) this.splash(p, w.level, -p.vy);
         const m = p.mass;
-        const lift = p.weightless ? 0 : DENSITY * p.w * p.h * PX * PX * under * up;
+        const lift = p.weightless ? 0 : DENSITY * p.buoyancy * p.w * p.h * PX * PX * under * up;
         const k = Math.min(1, DRAG * under * dt);
-        b.applyImpulse({ x: -p.vx * m * k, y: lift * dt - p.vy * m * k }, true);
+        const mm = carriedMass(g, p, this.carried);
+        const uy = p.vy + (lift / mm + g.gravity * b.gravityScale()) * dt;
+        const q = quadDrag(p, p.vx, uy, under, dt, mm);
+        b.applyImpulse({ x: -p.vx * (m * k + q), y: lift * dt - p.vy * m * k - uy * q }, true);
         b.setAngvel(p.av * (1 - Math.min(1, SPIN_DRAG * under * dt)), true);
         if (p.burning > 0 && under > 0.3) g.fire.douse(p, 1);
       }

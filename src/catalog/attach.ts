@@ -1,6 +1,8 @@
 import type { AttachPoint } from '../world/Part';
 import type { Part } from '../world/Part';
 import { MACHINES2_ATTACH } from '../art/machines2';
+import { BALLOON_KNOT } from '../art/gear';
+import { BIG_BALLOON_KNOT } from '../art/floats';
 
 /**
  * The points connections snap to on machines and devices (see tools/AnchorSnap),
@@ -25,6 +27,10 @@ const ATTACH: Record<string, Record<string, AttachPoint[]>> = {
     Rod: [{ name: 'plate', x: 40.5, y: 7, role: 'plate' }],
   },
   thruster: { Thruster: [{ name: 'mount', x: 13.5, y: 5, role: 'mount' }] },
+  'jet-engine': { 'Jet Engine': [{ name: 'pylon', x: 23, y: 1, role: 'mount' }] },
+  tap: { 'Water Tap': [{ name: 'flange', x: 0.5, y: 4.5, role: 'mount' }] },
+  balloon: { Balloon: [{ name: 'knot', x: BALLOON_KNOT[0], y: BALLOON_KNOT[1], role: 'mount' }] },
+  'big-balloon': { 'Big Balloon': [{ name: 'knot', x: BIG_BALLOON_KNOT[0], y: BIG_BALLOON_KNOT[1], role: 'mount' }] },
   battery: { Battery: [{ name: 'base', x: 5, y: 15.5, role: 'mount' }] },
   button: { Button: [{ name: 'base', x: 7, y: 5.5, role: 'mount' }] },
   switch: { Switch: [{ name: 'base', x: 7, y: 11.5, role: 'mount' }] },

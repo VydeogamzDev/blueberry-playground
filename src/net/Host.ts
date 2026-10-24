@@ -23,6 +23,8 @@ const TICK_MS = 50;
 /** Part states and how people are go every this many ticks (they change slowly, or don't show much). */
 const STATE_EVERY = 4;
 const PUDDLES_EVERY = 5;
+/** The water goes every this many ticks (the guests' own moves it on between). */
+const FLUID_EVERY = 8;
 /** The game's statistics, looked at every this many ticks (sent when they've changed). */
 const STATS_EVERY = 20;
 /** Players' colours, the host's first. */
@@ -109,6 +111,8 @@ export class NetHost {
   private n = 0;
   private conns = '';
   private puddles = '';
+  /** How much water there was when it was last sent. */
+  private fluidN = 0;
   private time = '';
   private stats = '';
   private scene: number;
@@ -252,6 +256,7 @@ export class NetHost {
       m.conns = this.connList();
     }
     if (force || this.n % PUDDLES_EVERY === 0) this.puddleState(m);
+    if (force || this.n % FLUID_EVERY === 0) this.fluidState(m, force);
     if (fx.length) m.fx = fx;
     if (holds.length) m.holds = holds;
     if (this.game.map !== this.map) {
@@ -432,6 +437,15 @@ export class NetHost {
     if (sig === this.puddles) return;
     this.puddles = sig;
     m.puddles = { lo: s.lo, hi: s.hi, h: arrayToBase64(s.h), kind: arrayToBase64(s.kind), burn: arrayToBase64(s.burn), ...(s.oil ? { oil: arrayToBase64(s.oil) } : {}) };
+  }
+
+  /** The water, while there's any (and once more when it's all gone). */
+  private fluidState(m: Tick, force: boolean): void {
+    const f = this.game.fluid;
+    if (!f.n && !this.fluidN && !force) return;
+    this.fluidN = f.n;
+    const s = f.pack();
+    m.fluid = { n: s.n, xy: arrayToBase64(s.xy), v: arrayToBase64(s.v) };
   }
 
   // ---- what guests do -------------------------------------------------------------------

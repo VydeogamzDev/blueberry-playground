@@ -35,6 +35,13 @@ export interface NetConn {
 }
 
 /** The puddles on the floor (see PuddleState), their arrays as base64. */
+/** The water (see Fluid.pack()): x, y as float32s, vx, vy as int16s, each in base64. */
+export interface NetFluid {
+  n: number;
+  xy: string;
+  v: string;
+}
+
 export interface NetPuddles {
   lo: number;
   hi: number;
@@ -94,6 +101,7 @@ export interface Tick {
   /** Part states that changed: net id, part, hp, burning, charred, flags (PART_FLAGS) (Float32, base64). */
   ps?: string;
   puddles?: NetPuddles;
+  fluid?: NetFluid;
   fx?: Fx[];
   holds?: Hold[];
   time?: NetTime;

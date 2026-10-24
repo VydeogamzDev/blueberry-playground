@@ -15,6 +15,7 @@ import { Connections } from '../systems/Connections';
 import { Fire } from '../systems/Fire';
 import { Weather } from '../systems/Weather';
 import { Water } from '../systems/Water';
+import { Fluid } from '../systems/Fluid';
 import { stats } from './Stats';
 import { Puddles } from '../systems/Puddles';
 import { ContactGroups } from '../systems/ContactGroups';
@@ -62,6 +63,7 @@ export class Game {
   readonly fire: Fire;
   /** A map's sea, and the void's drop (see systems/Water). */
   readonly water: Water;
+  readonly fluid: Fluid;
   /** Rain, snow, fog and lightning, and the world's light (Settings > World). */
   readonly weather: Weather;
   /** What players do, counted (the pause menu's statistics). */
@@ -182,6 +184,7 @@ export class Game {
     this.fire = new Fire(this);
     // (the sea first: the weather's drops stop at its surface)
     this.water = new Water(this);
+    this.fluid = new Fluid(this);
     this.weather = new Weather(this);
     this.frameHandlers.push((dt) => this.stats.frame(dt));
     this.sound.panFor = (x) => {
@@ -399,6 +402,7 @@ export class Game {
     this.clearAll();
     this.stains.clear();
     this.puddles.clear();
+    this.fluid.clear();
     this.fire.clear();
     this.explosions.clear();
   }
@@ -875,6 +879,9 @@ export class Game {
     this.fire.step(dt);
     this.weather.step(dt);
     this.water.step(dt);
+    lap?.('step: effects');
+    this.fluid.step(dt);
+    lap?.('step: fluid');
     this.explosions.step(dt);
     this.particles.step(dt);
     this.casings.step(dt);
@@ -907,6 +914,7 @@ export class Game {
     for (const e of this.entities) for (const p of e.parts) if (!p.destroyed) p.sync();
     this.fire.showStep(dt);
     this.puddles.showStep(dt);
+    this.fluid.step(dt, true);
     this.particles.step(dt);
     this.casings.step(dt);
     this.projectiles.step(dt);

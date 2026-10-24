@@ -51,7 +51,7 @@ interface Sized {
   cfg?: (w: number, h: number) => Partial<PropConfig>;
 }
 
-function prop(
+export function prop(
   id: string, name: string, category: Category, description: string,
   art: () => PixelArt, cfg: Omit<PropConfig, 'art'>, tags: string[] = [], sized?: Sized,
 ): ItemDef {

@@ -12,11 +12,12 @@ import type { Item, Holder } from './Item';
 import { adrenalineRush, type Drug } from './Syringe';
 import { washBlood } from './Medical';
 import { Tendons } from '../systems/Tendons';
-import { FLESH, PLATING, breakUp, blastEnergy, takeChunk } from '../systems/Chunks';
+import { FLESH, PLATING, breakUp, blastEnergy, sliceLimb, takeChunk } from '../systems/Chunks';
 import { isFighter, isLiving, land, onFeet, stillUp, strikePoint, type Fighter } from '../systems/Fighting';
 import { allies, bombNear, dress, dye, enemies, isTeamId, lyingNear, nearestEnemy, TEAMS, undead, type TeamId } from '../systems/Teams';
 import type { PixelArt } from '../art/PixelArt';
 import { ACID_SCAR, Liquid, liquidSound, paintWound, seep, woundSpot } from '../systems/Liquids';
+import { LUNGS } from '../systems/Fluid';
 
 interface LimbSpec {
   key: LimbKey;
@@ -635,6 +636,7 @@ export class Human extends Entity implements Holder {
         forceThreshold: 30,
         textureKey: `${variant.kind}:${variant.skinKey}:${s.key}`,
       });
+      if (s.key === 'upperTorso' && variant.material === MAT.flesh) part.buoyancy = LUNGS;
       const limb: Limb = {
         spec: s, part, joint: null, parent: null, children: [], a1: { x: 0, y: 0 }, a2: { x: 0, y: 0 },
         severed: false, gone: false, broken: false, loose: false, attached: true, wounds: [], stress: 0, phase: Math.random() * 10, extraI: 0,
@@ -3888,8 +3890,23 @@ export class Human extends Entity implements Holder {
     this.injure(l, amt, kind, point, dir);
   }
 
-  /** Applies trauma to a limb and handles fractures, gibbing and death. */
-  private injure(l: Limb, dmg: number, kind: DamageKind, point?: V2, dir?: V2): void {
+  /**
+   * A blade's cut (see entities/Melee): it hurts as a cut does, and goes `depth` px
+   * into the limb the way it went (from where that meets it, `back` px before `point`
+   * at the furthest: see Chunks.sliceLimb()). A limb cut through comes apart where it
+   * was cut, not at its joint, however hurt it is.
+   */
+  slice(part: Part, amount: number, point: V2, dir: V2, depth: number, back?: number): void {
+    const l = this.limbOf(part);
+    if (!l || l.gone) return;
+    const amt = amount / this.variant.toughness;
+    this.addWound(l, point.x, point.y, -dir.x, -dir.y, 0.25 + amt * 0.03, false, dir);
+    this.injure(l, amt, 'cut', point, dir, false);
+    if (!l.gone) sliceLimb(this, l, point, dir, depth / this.variant.toughness, this.variant.bleeds ? FLESH : PLATING, back);
+  }
+
+  /** Applies trauma to a limb and handles fractures, gibbing and death (and, for a cut, `sever`s a limb with nothing left at its joint: a stab only wounds). */
+  private injure(l: Limb, dmg: number, kind: DamageKind, point?: V2, dir?: V2, sever = true): void {
     const p = l.part;
     p.hp -= dmg;
     // a real hit (not the knocks of flopping back down) makes it try again
@@ -3922,7 +3939,7 @@ export class Human extends Entity implements Holder {
     }
     if (l.spec.key === 'head' && p.hp <= 0) this.die();
     if (l.spec.key === 'upperTorso' && p.hp <= 0) this.die();
-    if ((kind === 'cut' || kind === 'stab') && p.hp <= 0 && l.joint && !l.severed) this.sever(l, 'cut');
+    if (sever && kind === 'cut' && p.hp <= 0 && l.joint && !l.severed) this.sever(l, 'cut');
   }
 
   private addBleedTo(l: Limb, amount: number): void {

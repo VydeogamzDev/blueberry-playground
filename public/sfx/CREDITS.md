@@ -8,7 +8,7 @@ Where a row says so, a second pass removed rumble (two-pole high-pass at the giv
 
 Freesound files were taken from the publicly accessible high-quality preview (`-hq`) of each sound, since original downloads need a login.
 
-Total: 367 files from 163 sources.
+Total: 369 files from 165 sources.
 
 ## Kenney
 
@@ -2025,6 +2025,26 @@ Total: 367 files from 163 sources.
 |---|---|---|
 | `machine/tick_1.ogg` | freesound #262867 (HQ preview) | @ 0.92 s; one tick; high-pass 150 Hz, levelled |
 | `machine/tick_2.ogg` | freesound #262867 (HQ preview) | @ 1.39 s; one tick; high-pass 150 Hz, levelled |
+
+### F16 fighter jet start up.aif
+
+- Source: https://freesound.org/people/ikbenraar/sounds/322178/
+- Author: ikbenraar
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `machine/jet_whine_loop_1.ogg` | freesound #322178 (HQ preview) | @ 22 s (idle); 4 s seamless loop (0.4 s crossfade); high-pass 100 Hz, levelled |
+
+### Jet Engine
+
+- Source: https://freesound.org/people/m_cel/sounds/534856/
+- Author: m_cel
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `machine/jet_roar_loop_1.ogg` | freesound #534856 (HQ preview) | @ 1 s; 4 s seamless loop (0.4 s crossfade); high-pass 40 Hz, levelled |
 
 ## Music
 

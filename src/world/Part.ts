@@ -105,6 +105,8 @@ export class Part {
   frozen = false;
   /** Ignores gravity ("Make weightless" in the context menu). */
   weightless = false;
+  /** How much more than its size water holds it up (see Fluid, Water): an air-filled tube's more. */
+  buoyancy = 1;
   /** Self-collision group: parts with the same non-zero group never collide. */
   group = 0;
   /** Parts that should never generate contacts with this part. */

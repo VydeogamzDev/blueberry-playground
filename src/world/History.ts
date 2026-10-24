@@ -2,6 +2,7 @@ import type { Game } from './Game';
 import { capture, instantiate, type SavedConnection, type Snapshot } from './Snapshot';
 import type { StainState } from '../systems/Particles';
 import type { PuddleState } from '../systems/Puddles';
+import type { FluidState } from '../systems/Fluid';
 import type { EntityState } from './types';
 import type { MapSpec } from './Maps';
 
@@ -15,6 +16,7 @@ interface Entry {
   snap: Snapshot;
   stains: StainState;
   puddles: PuddleState;
+  fluid: FluidState;
   /** The map it was on (undoing a switch of maps, or a load, switches back). */
   map: MapSpec;
   /** Taken as time started again after building (see record()): undoing it pauses time again. */
@@ -158,7 +160,7 @@ export class History {
 
   private capture(label: string): Entry {
     const g = this.game;
-    return { label, snap: capture(g, g.entities, true), stains: g.stains.capture(), puddles: g.puddles.capture(), map: g.map, at: performance.now() };
+    return { label, snap: capture(g, g.entities, true), stains: g.stains.capture(), puddles: g.puddles.capture(), fluid: g.fluid.capture(), map: g.map, at: performance.now() };
   }
 
   private restore(e: Entry): void {
@@ -177,6 +179,7 @@ export class History {
     }
     g.stains.restore(e.stains);
     g.puddles.restore(e.puddles);
+    g.fluid.restore(e.fluid);
     // (back to build: the next Play keeps the scene again, to come back to again)
     if (e.paused) this.dirtySincePause = true;
   }
