@@ -13,4 +13,4 @@ export function fromBase64(str: string): Uint8Array {
 }
 
 /** A typed array's bytes as base64 (little-endian, as every browser keeps them). */
-export const arrayToBase64 = (a: Int16Array | Float32Array | Uint8Array): string => toBase64(new Uint8Array(a.buffer, a.byteOffset, a.byteLength));
+export const arrayToBase64 = (a: Int16Array | Int32Array | Float32Array | Uint8Array): string => toBase64(new Uint8Array(a.buffer, a.byteOffset, a.byteLength));

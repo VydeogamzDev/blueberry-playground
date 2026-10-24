@@ -1,0 +1,41 @@
+import type { Test, TestCtx } from './types';
+import vehicles from './vehicles';
+import explosives from './explosives';
+import tweaks from './tweaks';
+import creatures from './creatures';
+import fire from './fire';
+import overlays from './overlays';
+import fighting from './fighting';
+import armies from './armies';
+import maps from './maps';
+import infinite from './infinite';
+import multiplayer from './multiplayer';
+import friends from './friends';
+import music from './music';
+import bugsSim from './bugs-sim';
+import bugsUi from './bugs-ui';
+import menu from './menu';
+import fixes from './fixes';
+import machines from './machines';
+import tutorial from './tutorial';
+import medical from './medical';
+import weapons2 from './weapons2';
+import logicItems from './logic-items';
+import logicMachines from './logic-machines';
+import crossbow from './crossbow';
+import tanks from './tanks';
+import items2 from './items2';
+import systemsFixes from './systems-fixes';
+import sync from './sync';
+import building2 from './building2';
+import layout from './layout';
+import world2 from './world2';
+import machines2 from './machines2';
+import medical2 from './medical2';
+import machinery3 from './machinery3';
+import chunks from './chunks';
+
+/** Tests kept in their own files (one per area), run after the ones in selftest.ts. */
+export function areaTests(t: TestCtx): Test[] {
+  return [...vehicles(t), ...explosives(t), ...tweaks(t), ...creatures(t), ...fire(t), ...overlays(t), ...fighting(t), ...armies(t), ...maps(t), ...infinite(t), ...multiplayer(t), ...friends(t), ...music(t), ...menu(t), ...fixes(t), ...machines(t), ...tutorial(t), ...medical(t), ...weapons2(t), ...crossbow(t), ...tanks(t), ...items2(t), ...logicItems(t), ...logicMachines(t), ...bugsSim(t), ...bugsUi(t), ...systemsFixes(t), ...building2(t), ...sync(t), ...layout(t), ...world2(t), ...machines2(t), ...medical2(t), ...machinery3(t), ...chunks(t)];
+}

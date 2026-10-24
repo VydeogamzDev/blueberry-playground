@@ -1,5 +1,5 @@
 import { RAPIER } from '../engine/Physics';
-import { GRAVITY, PX, WORLD } from '../engine/constants';
+import { PX, WORLD } from '../engine/constants';
 import { clamp, rotate, smoothstep, wrapAngle, type V2 } from '../engine/math';
 import { Entity } from '../world/Entity';
 import type { Part, ShapeSpec } from '../world/Part';
@@ -7,8 +7,15 @@ import type { Game } from '../world/Game';
 import { MAT } from '../world/Materials';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
 import { creatureArt, creatureFigure, CREATURE_EYE, type CreatureKind } from '../art/creatures';
-import type { Drug } from './Syringe';
+import { adrenalineRush, type Drug } from './Syringe';
+import { washBlood } from './Medical';
 import { Human } from './Human';
+import { getItem } from '../catalog/items';
+import { ACID_SCAR, Liquid, LIQUID_COLORS, liquidSound, paintWound, seep, woundSpot } from '../systems/Liquids';
+import { PK } from '../systems/Particles';
+import { FLESH, breakUp, blastEnergy, takeChunk } from '../systems/Chunks';
+import { isFighter, isLiving, land, onFeet, stillUp, type Fighter } from '../systems/Fighting';
+import { allies, dress, dye, enemies, isTeamId, nearestEnemy, undead, type TeamId } from '../systems/Teams';
 
 interface CLimbSpec {
   key: string;
@@ -58,6 +65,18 @@ interface Species {
   /** How fast its wounds drain it (a small animal has less blood to lose). */
   bleedRate: number;
   sounds: { hurt: string; bad: string; pain: string; idle: string; die: string; alarm: string };
+  /** Lowers its head to graze while it stands about (cows). */
+  grazes?: boolean;
+  /** Kicks out behind when something scares it from there (cows). */
+  kicks?: boolean;
+  /** What a big blast blows it into instead of gore: an item id (pigs: bacon; see cook()). */
+  blastInto?: string;
+  /** Hostile: goes for people on sight, spitting its blood at them (a gorse: see spit()). */
+  spits?: boolean;
+  /** Can't catch the zombie infection; acid doesn't hurt it; fire hurts it this much more (a gorse). */
+  immune?: boolean;
+  acidproof?: boolean;
+  flammable?: number;
 }
 
 const box = (w: number, h: number, r: number, x = 0, y = 0): ShapeSpec => ({ kind: 'box', w, h, r, x, y });
@@ -148,6 +167,7 @@ const PIG: Species = {
   shy: false,
   tail: 0,
   bleedRate: 0.45,
+  blastInto: 'bacon',
   sounds: { hurt: 'creature/pig_squeal', bad: 'creature/pig_squeal', pain: 'creature/pig_grunt', idle: 'creature/pig_oink', die: 'creature/pig_die', alarm: 'creature/pig_squeal' },
   specs: [
     { key: 'chest', name: 'Chest', cx: 4, cy: 11, layer: 6, density: 110, hp: 150, shape: box(13, 11, 3.5), muscle: 0, fragility: 0.9 },
@@ -181,7 +201,68 @@ const FOX: Species = {
   ],
 };
 
-export const SPECIES: Record<CreatureKind, Species> = { dog: DOG, cat: CAT, pig: PIG, fox: FOX };
+/** A big, heavy farm animal on long legs: slow, sturdy, and it kicks out behind when startled. */
+const COW: Species = {
+  kind: 'cow',
+  midY: 16,
+  toughness: 1.5,
+  friction: 3,
+  airRight: false,
+  hipY: 17,
+  gait: { walk: 0.8, run: 2.6, swing: 0.32, lift: 0.8 },
+  jump: 0.25,
+  social: false,
+  shy: false,
+  tail: 0,
+  bleedRate: 0.3,
+  grazes: true,
+  kicks: true,
+  sounds: { hurt: 'creature/cow_bellow', bad: 'creature/cow_bellow', pain: 'creature/cow_moan', idle: 'creature/cow_moo', die: 'creature/cow_die', alarm: 'creature/cow_moo' },
+  specs: [
+    { key: 'chest', name: 'Chest', cx: 8, cy: 23, layer: 6, density: 200, hp: 220, shape: box(20, 13, 3), muscle: 0, fragility: 0.9 },
+    { key: 'head', name: 'Head', cx: 24.5, cy: 25, layer: 7, density: 120, hp: 110, shape: box(12, 10, 3, 0.5, -0.5), parent: 'chest', jx: 18, jy: 26, lo: -0.6, hi: 0.4, muscle: 1600, fragility: 1.4 },
+    { key: 'hips', name: 'Hindquarters', cx: -10, cy: 23, layer: 5, density: 200, hp: 200, shape: box(18, 13, 3), parent: 'chest', jx: -1.5, jy: 23, lo: -0.3, hi: 0.3, muscle: 9000, fragility: 0.9 },
+    { key: 'tail', name: 'Tail', cx: -20.5, cy: 21, layer: 4, density: 25, hp: 25, shape: box(3, 14, 1), parent: 'hips', jx: -20, jy: 28, lo: -0.6, hi: 0.8, muscle: 8, fragility: 0.8 },
+    // (stiff legs: they carry three times a pig's weight on twice the length)
+    ...legs(9000, 13, -14, 17, [5, 10, 12], [4, 8, 4, 7.5], 150, 110, 110, 80),
+  ],
+};
+
+/**
+ * The gorse: a hostile thing on four long, thin legs, all chitin, a fat abdomen and a
+ * stinger. It goes for people (and androids) on sight, spitting its blood, which eats
+ * through flesh, from a few metres off, and bites anyone who comes close. Its head
+ * broken, it can't spit. Acid doesn't touch it (its blood is worse), but it burns well.
+ */
+const GORSE: Species = {
+  kind: 'gorse',
+  midY: 12.5,
+  toughness: 1.15,
+  friction: 2,
+  airRight: false,
+  hipY: 15,
+  gait: { walk: 1.1, run: 2.8, swing: 0.5, lift: 1.0 },
+  jump: 0.5,
+  social: false,
+  shy: false,
+  tail: 0.5,
+  bleedRate: 0.4,
+  spits: true,
+  immune: true,
+  acidproof: true,
+  flammable: 1.8,
+  sounds: { hurt: 'creature/gorse_hiss', bad: 'creature/gorse_screech', pain: 'creature/gorse_hiss', idle: 'creature/gorse_hiss', die: 'creature/gorse_screech', alarm: 'creature/gorse_screech' },
+  specs: [
+    { key: 'chest', name: 'Thorax', cx: 4, cy: 18.5, layer: 6, density: 80, hp: 110, shape: box(11, 8, 2), muscle: 0, fragility: 1 },
+    { key: 'head', name: 'Head', cx: 13, cy: 19, layer: 7, density: 60, hp: 55, shape: box(8, 7, 2), parent: 'chest', jx: 9.5, jy: 19, lo: -0.6, hi: 0.5, muscle: 300, fragility: 1.6 },
+    { key: 'hips', name: 'Abdomen', cx: -6, cy: 19, layer: 5, density: 70, hp: 100, shape: box(12, 11, 3), parent: 'chest', jx: -1, jy: 18.5, lo: -0.35, hi: 0.35, muscle: 1800, fragility: 1 },
+    { key: 'tail', name: 'Stinger', cx: -13.5, cy: 22.5, layer: 4, density: 40, hp: 25, shape: box(5, 4, 1), parent: 'hips', jx: -11.5, jy: 22, lo: -0.6, hi: 0.8, muscle: 20, fragility: 0.8 },
+    // (long thin legs: knees well up under the body, as a spider's)
+    ...legs(1300, 7, -8, 15, [3, 10, 10.5], [2.5, 9, 4.5, 8.5], 50, 35, 55, 40),
+  ],
+};
+
+export const SPECIES: Record<CreatureKind, Species> = { dog: DOG, cat: CAT, pig: PIG, fox: FOX, cow: COW, gorse: GORSE };
 
 /** Catalog picture of a standing animal. */
 export function creaturePreview(kind: CreatureKind): HTMLCanvasElement {
@@ -198,7 +279,36 @@ const POSE_DOWN: Record<string, number> = { head: -0.25, tail: -0.3, upperFront:
 const STAND = { kp: 40, kd: 7, amax: 9, dead: 0.04 };
 /** Legs folded up under the body in a leap (facing right). */
 const TUCK: Record<string, number> = { upperFront: -0.4, lowerFront: 1.3, upperBack: 0.5, lowerBack: -1.2 };
+/**
+ * A kick out behind with the near hind leg (facing right; the other three stay
+ * planted to hold it up), how long it lasts (s) and when it lands (s in).
+ */
+const KICK = { pose: { upperBackF: -0.9, lowerBackF: -0.15 } as Record<string, number>, dur: 0.45, hit: 0.12 };
+/** The head lowered to graze (rad, facing right). */
+const GRAZE = -0.55;
+/**
+ * Fighting (see fight()): a lunge at the foe head first, how long it lasts (s);
+ * how near the snout gets before lunging (m); the pause between lunges (s); and
+ * how long a foe stays down before it's beaten (s).
+ */
+const LUNGE = { dur: 0.35, near: 0.35, pause: 0.6, beaten: 4 };
+/** How long it takes to bolt at a fright (s). */
+const STARTLE = 0.12;
+/** Kinds that bite (the rest butt with the head). */
+const BITERS = new Set<CreatureKind>(['dog', 'cat', 'fox', 'gorse']);
 const RIGHT = { kp: 28, kd: 7, amax: 14 };
+/** How fast a cat landing from a fall runs off its speed (m/s^2: see runOff()). */
+const RUN_OFF = 14;
+/**
+ * A gorse spitting (see spit()): how far off it sees someone to go for (m), from how far
+ * it spits and how near it comes (m), how fast its spit flies (m/s), how many drops, and
+ * the pause between spits (s, and up to `jitter` more).
+ */
+const SPIT = { sight: 9, far: 5.5, near: 2.5, speed: 7, drops: 14, pause: 1.6, jitter: 1 };
+/** Zombie animals (see Human's zombies): how fast they get about, of their own pace, and how much worse a mauling it takes to stop one. */
+const UNDEAD = { pace: 0.6, trauma: 8, incubate: 10 };
+/** What still works on a zombie animal (see Human's UNDEAD_DRUGS). */
+const UNDEAD_DRUGS = new Set<Drug>(['healing', 'life', 'cure', 'freeze', 'bone', 'acid', 'strength']);
 
 interface Wound {
   ix: number;
@@ -276,16 +386,57 @@ export class Creature extends Entity {
   private idleT = 8 + Math.random() * 20;
   private voiceT = 0;
   private faceState = 2;
-  readonly drugs = { adrenaline: 0, knockout: 0, poison: 0 };
+  readonly drugs = { adrenaline: 0, knockout: 0, poison: 0, painkiller: 0, strength: 0, freeze: 0, bone: 0, acid: 0, coagulation: 0 };
   private mendDose = 0;
   private lifeDose = 0;
+  /** Seconds left out cold from a jolt (see stun()). */
+  stunned = 0;
+  /** Infected (0: not; at 1 it turns: see rise()), and turned: an undead animal, on the zombies' side (see Teams). */
+  infection = 0;
+  zombie = false;
+  private cureDose = 0;
+  /** Lying still where it is (Flat pose in the menu). */
+  pose: 'flat' | null = null;
+  /** Frozen stiff (the Freeze drug): every joint locked where it was. */
+  private stiff = false;
+  /** Until the next bone gives way to Bone Eating, and until a gorse may spit again (s). */
+  private boneT = 0;
+  private spitT = 1;
+
+  /** Something a zombie goes for: an animal on a team (one left to itself is left be), alive and not infected. */
+  get prey(): boolean {
+    return this.alive && !this.zombie && this.infection === 0 && this.team !== null;
+  }
+
+  /** How much stronger Ultra Strength has it (1: no stronger). */
+  private get might(): number {
+    return this.alive && this.drugs.strength > 0 ? 2.5 : 1;
+  }
+
+  /** Knocked out for `secs` by a jolt (see Human.stun()): no drug, so it shows as none. */
+  stun(secs: number): void {
+    if (!this.alive) return;
+    this.stunned = Math.max(this.stunned, secs);
+  }
+
+  /** How much faster adrenaline has it walking, running, getting up and looking about (1: no faster; a zombie is slower). */
+  get rush(): number {
+    return (this.alive ? adrenalineRush(this.drugs.adrenaline) : 1) * (this.zombie ? UNDEAD.pace : 1);
+  }
+
+  /** Strides lengthen with the rush, so the legs don't have to make up all the extra speed by stepping faster. */
+  private get reach(): number {
+    return 1 + (this.rush - 1) * 0.3;
+  }
 
   // behaviour (see think())
-  private goal: 'idle' | 'walk' | 'flee' = 'idle';
+  private goal: 'idle' | 'walk' | 'flee' | 'fight' = 'idle';
   /** Seconds left of standing about, walking somewhere or running. */
   private goalT = 2 + Math.random() * 4;
   private targetX = 0;
   private following: Human | null = null;
+  /** Told to stay put (see stay()): not off after its people till its while is up. */
+  private kept = false;
   private fleeFrom = 0;
   /** Direction it last walked into something, to try the other way next. */
   private blocked = 0;
@@ -315,6 +466,32 @@ export class Creature extends Entity {
   private jumpCool = 0;
   /** Seconds since it last landed from a leap. */
   private landT = 9;
+  /** Landed from a fall, not a leap (see runOff()). */
+  private fellT = false;
+  /** Head down grazing while it stands about (see decide()), and whether the muscles have it so. */
+  private grazing = false;
+  private grazed = false;
+  /** Seconds into a kick out behind (0: not kicking), and until it may kick again. */
+  private kickT = 0;
+  private kickCool = 0;
+
+  // ---- fighting (see fight())
+  /** Who it's going for (null: nobody). */
+  foe: Entity | null = null;
+  /** Seconds into a lunge at the foe (0: not lunging), whether it has landed, and until the next (s). */
+  private lungeT = 0;
+  private bit = false;
+  private lungeCool = 0;
+  /** How long the foe has been down (s): long enough, and it's won. */
+  private foeDownT = 0;
+  /** The side it fights for (see Teams): it goes for anyone on another, and leaves its own be (null: none). */
+  team: TeamId | null = null;
+  /** Until it next looks about for an enemy, on a team (s; see scan()). */
+  private scanT = Math.random() * 0.3;
+  /** A fright heard and not yet reacted to: where from, how long to run for, and until it bolts (s). */
+  private startle: { x: number; secs: number; t: number } | null = null;
+  /** Blown to bacon (or whatever its kind turns into): gone at the end of the step (see cook()). */
+  private cooked = false;
 
   constructor(game: Game, def: ItemDef, species: Species, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -381,7 +558,8 @@ export class Creature extends Entity {
     return this.limbs.get(k)!;
   }
 
-  private limbOf(p: Part): Limb | undefined {
+  /** The limb a part is (a chainsaw tears cut-off ones to bits: see gib()). */
+  limbOf(p: Part): Limb | undefined {
     for (const l of this.order) if (l.part === p) return l;
     return undefined;
   }
@@ -402,7 +580,7 @@ export class Creature extends Entity {
   }
 
   private strength(): number {
-    if (!this.alive || this.limp) return 0;
+    if (!this.alive || this.limp || this.stiff) return 0;
     return clamp(this.consciousness * (1 - this.shock * 0.6), 0, 1);
   }
 
@@ -452,8 +630,8 @@ export class Creature extends Entity {
     const ramp = this.state === 'getup' ? clamp(this.stateT / 1.0, 0.15, 1) : 1;
     const wagging = (this.wag > 0 || this.gaitAmt > 0 || this.jumpT > 0) && standing;
     const folding = this.foldT > 0 && !conscious;
-    // lying still it relaxes (see Human.updateMotors)
-    const relaxed = !standing && conscious && this.pain < 0.35 && this.stateT > 4;
+    // lying still it relaxes (see Human.updateMotors); posed lying flat, at once
+    const relaxed = !standing && conscious && (this.pose === 'flat' || (this.pain < 0.35 && this.stateT > 4));
     // limp or relaxed joints only have friction: how strong it is doesn't matter
     // (and re-sending motors wakes the body)
     const tone = standing || (conscious && !relaxed) ? Math.round(str * 50) : -1;
@@ -467,8 +645,16 @@ export class Creature extends Entity {
       if (standing && (legPose === 'tuck' || this.legPose === 'tuck')) this.startEase(0.12);
       this.legPose = legPose;
     }
+    // head down grazing, lowered and raised slowly (snapped, a cow's heavy head whips about)
+    const grazing = standing && this.grazing && this.goal === 'idle';
+    if (grazing !== this.grazed) {
+      if (standing) this.startEase(0.8);
+      this.grazed = grazing;
+    }
+    const kicking = standing && this.kickT > 0;
     const ease = this.easeFrom ? smoothstep(0, 1, this.easeT / this.easeDur) : 1;
-    const sig = `${standing}:${conscious}:${tone}:${Math.round(ramp * 20)}:${folding}:${relaxed}:${legPose}:${Math.round(ease * 20)}`;
+    const might = this.might;
+    const sig = `${standing}:${conscious}:${tone}:${Math.round(ramp * 20)}:${folding}:${relaxed}:${legPose}:${Math.round(ease * 20)}:${grazing}:${kicking}:${might}`;
     if (!force && !wagging && sig === this.motorSig) return;
     this.motorSig = wagging ? '' : sig;
     for (const l of this.order) {
@@ -476,11 +662,12 @@ export class Creature extends Entity {
       if (!j || !j.isValid() || l.severed) continue;
       const key = l.spec.key;
       let target = standing ? 0 : POSE_DOWN[key.replace(/[FB]$/, '')] ?? 0;
-      if (key === 'head' && standing) target = 0.05;
+      if (key === 'head' && standing) target = grazing ? GRAZE : 0.05;
       if (key === 'tail' && standing) target = this.wag > 0 ? Math.sin(this.t * 14) * 0.45 : this.species.tail;
       if (this.gaitAmt > 0 && standing && /^(upper|lower)/.test(key)) target = this.step(key);
       // legs tucked up on the way up, reaching for the ground on the way down
       if (legPose === 'tuck' && /^(upper|lower)/.test(key)) target = TUCK[key.replace(/[FB]$/, '')] ?? target;
+      if (kicking) target = KICK.pose[key] ?? target;
       target *= f;
       const from = this.blendFrom?.get(l);
       if (from !== undefined) target = from + (target - from) * smoothstep(0, 1, this.stateT / 0.9);
@@ -492,7 +679,7 @@ export class Creature extends Entity {
       // again gradually (landing on stiff legs it bounces and pitches over more
       // often; snapped back to full strength they spring it off again)
       const soft = this.landT < 0.4 && /^(upper|lower)/.test(key) ? 0.35 + 0.65 * smoothstep(0.05, 0.4, this.landT) : 1;
-      const K = l.spec.muscle * soft * (l.broken ? 0.05 : 1) * (l.attached ? 1 : 0);
+      const K = l.spec.muscle * soft * might * (l.broken ? 0.05 : 1) * (l.attached ? 1 : 0);
       if (folding && K > 0) {
         // going limp where it stands: the legs give way
         j.setMotorMaxForce(1e6);
@@ -603,10 +790,17 @@ export class Creature extends Entity {
     let airborne = false;
 
     // ---- state machine
-    if (!conscious || this.held) {
+    // (posed lying flat, it stays down)
+    if (!conscious || this.held || this.pose === 'flat') {
       if (this.state !== 'down') this.setState('down');
     } else if (this.state === 'stand' || this.state === 'getup') {
       airborne = !paws && !this.touching();
+      // a cat down from a fall (thrown, dropped) has a moment to catch itself, as after a
+      // leap: landing on its feet going fast, it would pitch onto its nose and be down
+      if (this.species.airRight && !airborne && this.airT > 0.3) {
+        this.landT = 0;
+        this.fellT = true;
+      }
       this.airT = airborne ? this.airT + dt : 0;
       // leaning on something for a while counts as fallen too
       this.leanT = tilt > 0.5 && !airborne ? this.leanT + dt : 0;
@@ -618,6 +812,7 @@ export class Creature extends Entity {
         if ((paws >= 2 && this.jumpT > 0.2) || this.jumpT > 1.4) {
           this.jumpT = 0;
           this.landT = 0;
+          this.fellT = false;
         }
       }
       // (pitching onto its front paws as it lands, it still has a moment to catch itself)
@@ -642,7 +837,7 @@ export class Creature extends Entity {
     } else {
       const c = this.L('chest').part;
       const rest = Math.hypot(c.vx, c.vy) < 0.6;
-      const wait = 1.6 + this.getupFails * 1.5 + this.pain * 4;
+      const wait = (1.6 + this.getupFails * 1.5 + this.pain * 4) / this.rush;
       if (this.gaveUp && this.retries < 2 && Math.hypot(c.x - this.gaveUp.x, c.y - this.gaveUp.y) > 0.4) this.retry();
       const inAir = this.species.airRight && !paws && this.stateT > 0.3 && !this.touching();
       airborne = inAir;
@@ -657,6 +852,33 @@ export class Creature extends Entity {
     if (this.foldT > 0) {
       this.foldT -= dt;
       if (this.foldT <= 0) this.updateMotors(true);
+    }
+    // ---- a kick out behind: the blow lands as the leg straightens
+    this.kickCool -= dt;
+    if (this.kickT > 0) {
+      const was = this.kickT;
+      this.kickT += dt;
+      if (this.state !== 'stand' || this.kickT > KICK.dur) {
+        this.kickT = 0;
+        this.updateMotors(true);
+      } else if (was < KICK.hit && this.kickT >= KICK.hit) this.kickHit();
+    }
+    // ---- a fright heard a moment ago: off it goes
+    if (this.startle && (this.startle.t -= dt) <= 0) {
+      const s = this.startle;
+      this.startle = null;
+      if (this.alive) this.scare(s.x, s.secs);
+    }
+    // ---- a lunge at a foe: the bite (or butt) lands when the head gets there
+    // (knocked out, or killed, the fight is over for it)
+    if (this.foe && !stillUp(this)) this.stopFighting();
+    this.lungeCool -= dt;
+    if (this.lungeT > 0) {
+      this.lungeT += dt;
+      if (this.state !== 'stand' || !this.foe || this.lungeT > LUNGE.dur) {
+        this.lungeT = 0;
+        this.lungeCool = (LUNGE.pause + Math.random() * 0.5) / this.rush;
+      } else if (!this.bit) this.bite();
     }
     // ---- what to do on its feet
     if (conscious && this.state === 'stand' && !this.held) this.think(dt);
@@ -689,6 +911,7 @@ export class Creature extends Entity {
       // (only really in the air: propped on a heap with no paw finding footing, it
       // would push every step, never sleep, and keep waking the heap it's on)
       else if (this.species.airRight && airborne) this.right(RIGHT.kp, RIGHT.kd, RIGHT.amax * 1.5, 0, false, dt);
+      if (this.fellT && this.landT < 0.8 && paws) this.runOff(dt);
     }
 
     this.walk(dt, paws);
@@ -724,8 +947,9 @@ export class Creature extends Entity {
     if (torqueOnly) {
       const tau = I * alpha;
       // small corrections leave a still body alone so it can fall asleep, and
-      // asleep there is nothing to correct until something wakes it (see Human.balance)
-      if (Math.abs(tau) < 1 || this.L('chest').part.body.isSleeping()) return;
+      // asleep there is nothing to correct until something wakes it (see Human.balance).
+      // (Small for its size: a cow's least correction is a big torque)
+      if (Math.abs(tau) < Math.max(1, I * 0.2) || this.L('chest').part.body.isSleeping()) return;
       for (const k of ['chest', 'hips']) {
         const l = this.L(k);
         if (l.gone || !l.attached || l.part.frozen) continue;
@@ -748,6 +972,23 @@ export class Creature extends Entity {
    * part of the body's weight until it is back on its feet. Never enough to lift
    * it clear, and it stops once the body is rising.
    */
+  /**
+   * Down from a fall going fast, it runs the speed off: slowed all over at once, not
+   * only at the paws (stopped there, it would pitch over onto its nose).
+   */
+  private runOff(dt: number): void {
+    let vx = 0;
+    let m = 0;
+    for (const l of this.order) {
+      if (l.gone || !l.attached) continue;
+      vx += l.part.vx * l.part.mass;
+      m += l.part.mass;
+    }
+    if (!m) return;
+    const dv = Math.sign(vx) * Math.min(Math.abs(vx / m), RUN_OFF * dt);
+    for (const l of this.order) if (!l.gone && l.attached && !l.part.frozen) l.part.body.applyImpulse({ x: -dv * l.part.mass, y: 0 }, true);
+  }
+
   private lift(k: number, dt: number): void {
     if (Math.abs(this.tilt().err) < 0.3) return;
     const trunk = ['chest', 'hips'].map((key) => this.L(key)).filter((l) => !l.gone && l.attached && !l.part.frozen);
@@ -760,7 +1001,7 @@ export class Creature extends Entity {
     }
     if (!trunk.length || vy / m > 0.5) return;
     const tm = trunk.reduce((a, l) => a + l.part.mass, 0);
-    const F = m * -GRAVITY * 0.7 * k;
+    const F = m * -this.game.gravity * 0.7 * k;
     for (const l of trunk) l.part.body.applyImpulse({ x: 0, y: F * (l.part.mass / tm) * dt }, true);
   }
 
@@ -779,19 +1020,29 @@ export class Creature extends Entity {
     const c = this.L('chest').part;
     const look = this.lookT <= 0;
     if (look) {
-      this.lookT = 0.1;
+      this.lookT = 0.1 / this.rush;
       this.leapWait = false;
       const fire = this.game.fire.near(c.x, c.y, 2.5, this);
       if (fire) this.scare(fire.x, 2.5);
       // a fox won't let anyone near it
-      const near = this.species.shy && this.goal !== 'flee' ? this.nearestPerson(c.x, c.y, 3.5) : null;
+      const near = this.species.shy && !this.zombie && this.goal !== 'flee' ? this.nearestPerson(c.x, c.y, 3.5) : null;
       if (near) this.scare(near.limbs.get('upperTorso')!.part.x, 2);
+      // a dog keeps an eye on its people: one gone a good way off, it soon trots after them
+      // (rather than standing about the rest of its while first)
+      if (this.species.social && !this.zombie && this.goal === 'idle' && !this.kept && this.goalT > 0.8) {
+        const h = this.nearestPerson(c.x, c.y, 18);
+        if (h && Math.abs(h.limbs.get('upperTorso')!.part.x - c.x) > 3.5) this.goalT = 0.3 + Math.random() * 0.5;
+      }
     }
+    // on a team (or a zombie): an eye out for the enemy to go for (and the next, once
+    // one is beaten); a gorse, for anyone at all
+    if ((this.team || this.zombie) && (this.scanT -= dt) <= 0) this.scan(c);
+    else if (this.species.spits && !this.foe && (this.scanT -= dt) <= 0) this.hunt(c);
     const g = this.species.gait;
     let speed = 0;
     if (this.goal === 'flee') {
       if (this.goalT <= 0) this.rest();
-      else speed = (Math.sign(c.x - this.fleeFrom) || this.f) * g.run;
+      else speed = (Math.sign(c.x - this.fleeFrom) || this.f) * g.run * this.rush;
     } else if (this.goal === 'walk') {
       const h = this.following;
       const tx = h ? (h.alive && h.state === 'stand' && !h.destroyed ? h.limbs.get('upperTorso')!.part.x : NaN) : this.targetX;
@@ -801,8 +1052,12 @@ export class Creature extends Entity {
         // glad to see them
         if (h && Math.abs(dx) < near * 1.5) this.wag = 1.5 + Math.random() * 1.5;
         this.rest();
-      } else speed = Math.sign(dx) * g.walk * clamp(Math.abs(dx) / 0.6, 0.4, 1);
+      } else speed = Math.sign(dx) * g.walk * this.rush * clamp(Math.abs(dx) / 0.6, 0.4, 1);
+    } else if (this.goal === 'fight') {
+      speed = this.closeIn(c, dt);
     } else if (this.goalT <= 0) this.decide();
+    // mid-kick it stays put until the leg is back down
+    if (this.kickT > 0) speed = 0;
     // it can only walk forwards: facing the wrong way, turn round first
     if (speed && Math.sign(speed) !== this.f && !this.turn()) {
       // no room to turn (someone at their heels): after a while, give up and go
@@ -810,7 +1065,7 @@ export class Creature extends Entity {
       this.turnWait += dt;
       if (this.turnWait > 1.5 && this.goal !== 'flee') {
         this.blocked = Math.sign(speed);
-        this.rest();
+        this.halt();
       }
       speed = 0;
     } else this.turnWait = 0;
@@ -841,8 +1096,10 @@ export class Creature extends Entity {
       this.pacing = 0;
       this.blocked = this.f;
       speed = 0;
-      if (this.goal === 'flee') this.cornered = true;
-      else this.rest();
+      // (running scared or fighting, it's kept stopped until it next looks: going on in
+      // between, it would creep on over the edge of a drop a little at a time)
+      if (this.goal === 'flee' || this.goal === 'fight') this.cornered = true;
+      else this.halt();
     } else if (look) {
       this.cornered = false;
       this.pacing = 0;
@@ -858,7 +1115,7 @@ export class Creature extends Entity {
       this.stuckT = 0;
       this.blocked = Math.sign(speed);
       speed = 0;
-      this.rest();
+      this.halt();
     }
     // hung up on the ledge it hopped off: a hop the rest of the way
     if (this.landT > 0.3 && this.landT < 1 && this.jumpT <= 0 && this.perched()) this.hopDown(0);
@@ -880,6 +1137,7 @@ export class Creature extends Entity {
   stay(secs: number): void {
     this.rest();
     this.goalT = secs;
+    this.kept = true;
   }
 
   /** Facing left (-1) or right (1). */
@@ -903,7 +1161,7 @@ export class Creature extends Entity {
   /** Done standing about: off somewhere, or stays put a while longer. */
   private decide(): void {
     const c = this.L('chest').part;
-    const h = this.species.social ? this.nearestPerson(c.x, c.y, 18) : null;
+    const h = this.species.social && !this.zombie ? this.nearestPerson(c.x, c.y, 18) : null;
     const hx = h ? h.limbs.get('upperTorso')!.part.x : 0;
     if (h && Math.abs(hx - c.x) > 2.2 && this.clearTo(Math.sign(hx - c.x))) {
       this.goal = 'walk';
@@ -933,7 +1191,11 @@ export class Creature extends Entity {
       this.following = null;
       this.targetX = clamp(c.x + dir * dist, WORLD.left + 2, WORLD.right - 2);
       this.goalT = 6 + dist * 2;
-    } else this.rest();
+    } else {
+      this.rest();
+      // a cow stands about with its head down, grazing
+      this.grazing = !!this.species.grazes;
+    }
   }
 
   /** Room to set off that way, turning round first if it has to? */
@@ -943,8 +1205,192 @@ export class Creature extends Entity {
 
   private rest(): void {
     this.goal = 'idle';
+    this.kept = false;
     this.following = null;
+    this.grazing = false;
     this.goalT = 3 + Math.random() * 8;
+  }
+
+  /** Stopped by something in the way: stands about a while (in a fight, it waits for its chance). */
+  private halt(): void {
+    if (this.goal !== 'fight') this.rest();
+  }
+
+  /**
+   * Sets it on `foe` (someone, or another animal): it runs at it and lunges,
+   * biting (or butting, a pig or a cow), until it's dead or out cold (waiting
+   * while it's down). `back`: the foe fights back.
+   */
+  fight(foe: Entity, back = true): boolean {
+    // (never one of its own side: see Teams)
+    if (foe === this || !this.alive || !isLiving(foe) || !foe.alive || allies(this, foe)) return false;
+    this.foe = foe;
+    this.goal = 'fight';
+    // (a win in an earlier fight doesn't count towards this one)
+    this.foeDownT = 0;
+    this.following = null;
+    this.grazing = false;
+    this.lungeCool = 0.2 + Math.random() * 0.6;
+    if (back && isFighter(foe) && !foe.foe) foe.fight(this, false);
+    return true;
+  }
+
+  /** Leaves off fighting. */
+  stopFighting(): void {
+    this.foe = null;
+    this.lungeT = 0;
+    // (on a team, it looks for the next straight away)
+    this.scanT = 0;
+    if (this.goal === 'fight') this.rest();
+  }
+
+  /**
+   * On a team: looks about for the enemy to go for (see Teams.nearestEnemy()) and
+   * goes for it, unless already fighting one about as near (or something it was set
+   * on that isn't on another side: it sees that through).
+   */
+  private scan(c: Part): void {
+    this.scanT = 0.4 * (0.7 + Math.random() * 0.6);
+    const foe = this.foe;
+    const e = nearestEnemy(this, c.x, c.y, 30);
+    if (!e || e === foe) return;
+    const swap = !foe || !stillUp(foe) || (enemies(this, foe) && ((!onFeet(foe as Fighter) && onFeet(e)) || Math.abs(e.center().x - c.x) + 2 < Math.abs(foe.center().x - c.x)));
+    if (swap) this.fight(e, false);
+  }
+
+  /** Puts it on a side (see Teams), in its colour: a coat over its back. Null: on none. */
+  setTeam(team: TeamId | null): void {
+    this.team = team;
+    const kind = this.species.kind;
+    for (const k of ['chest', 'hips']) {
+      const l = this.limbs.get(k);
+      if (!l || l.gone) continue;
+      const base = creatureArt(kind, k);
+      dress(l.part, team ? dye(`${kind}:${k}`, base, team, 0, Math.ceil(base.h * 0.45)) : base);
+    }
+    // (its own side is left be)
+    if (this.foe && allies(this, this.foe)) this.stopFighting();
+    this.scanT = 0;
+  }
+
+  /**
+   * Fighting: runs at the foe and, with its snout near enough and facing it,
+   * lunges. Waits while the foe is down, and stops once it's out of it. Returns
+   * the speed wanted.
+   */
+  private closeIn(c: Part, dt: number): number {
+    const foe = this.foe;
+    // (knocked down and staying down: beaten; a zombie goes on at them until they're bitten)
+    this.foeDownT = foe && isLiving(foe) && !onFeet(foe) ? this.foeDownT + dt : 0;
+    if (!foe || !stillUp(this) || (this.zombie ? foe.destroyed || !isLiving(foe) || !foe.alive || undead(foe) : !stillUp(foe) || this.foeDownT > LUNGE.beaten)) {
+      this.stopFighting();
+      return 0;
+    }
+    const dir = Math.sign(foe.center().x - c.x) || this.f;
+    // a gorse spits from a few metres off (its head whole), and only comes in close to bite
+    const away = Math.abs(foe.center().x - c.x);
+    if (this.species.spits && this.canSpit() && away > SPIT.near * 0.6) {
+      if (dir !== this.f || away > SPIT.far) return dir * this.species.gait.walk * this.rush;
+      if ((this.spitT -= dt) <= 0) this.spit(foe);
+      return away > SPIT.near ? 0 : dir * this.species.gait.walk * 0.5;
+    }
+    // how far the snout is from the nearest bit of the foe
+    const head = this.L('head').part;
+    let near = Infinity;
+    for (const p of foe.parts) if (!p.destroyed) near = Math.min(near, Math.abs(p.x - head.x) - Math.min(p.w, p.h) * PX * 0.5);
+    const g = this.species.gait;
+    // (the foe in the way counts as near enough: walking on, it would stop short)
+    const close = near <= LUNGE.near || (near < 1 && this.blockedAhead() && this.blocker?.entity === foe);
+    if (dir !== this.f || !close) return dir * (near > 1.5 ? g.run : g.walk) * this.rush;
+    if (this.lungeT <= 0 && this.lungeCool <= 0 && (this.zombie || onFeet(foe as Entity & { alive: boolean; consciousness: number; upright: boolean }))) this.lunge();
+    return 0;
+  }
+
+  /** A gorse looking about for someone (a person or an android) near enough, in sight, to go for. */
+  private hunt(c: Part): void {
+    this.scanT = 0.5 * (0.7 + Math.random() * 0.6);
+    const h = this.nearestPerson(c.x, c.y, SPIT.sight);
+    if (h && !h.zombie) this.fight(h, true);
+  }
+
+  /** Can it spit? Not with its head broken, gone or badly hurt. */
+  private canSpit(): boolean {
+    const head = this.L('head');
+    return this.ok('head') && !head.broken && head.part.hp > head.part.maxHp * 0.35;
+  }
+
+  /**
+   * A gorse spits a gob of its blood at the foe (aimed high enough for it to drop on
+   * them on its way): it eats through flesh where it lands (see Liquids).
+   */
+  private spit(foe: Entity): void {
+    this.spitT = SPIT.pause + Math.random() * SPIT.jitter;
+    const head = this.L('head').part;
+    const mouth = head.pixelToWorld(head.w - 1, head.h - 2);
+    const at = foe.center();
+    const x = Math.abs(at.x - mouth.x);
+    const y = at.y + 0.15 - mouth.y;
+    const v = SPIT.speed;
+    const g = this.pull;
+    const disc = v ** 4 - g * (g * x * x + 2 * y * v * v);
+    const angle = disc >= 0 ? Math.atan2(v * v - Math.sqrt(disc), g * x) : Math.PI / 4;
+    const dir = Math.sign(at.x - mouth.x) || this.f;
+    for (let i = 0; i < SPIT.drops; i++) {
+      const a = angle + (Math.random() - 0.5) * 0.08;
+      const s = v * (0.94 + Math.random() * 0.1);
+      this.game.particles.emit(PK.Blood, mouth.x, mouth.y, {
+        vx: dir * Math.cos(a) * s, vy: Math.sin(a) * s, life: 3, size: PX * (Math.random() < 0.4 ? 2 : 1),
+        color: LIQUID_COLORS[Liquid.GorseBlood][i % 3], alpha: 1, gravity: 1, drag: 0.05, ignore: head.body, liquid: Liquid.GorseBlood,
+      });
+    }
+    this.game.sound.play('creature/gorse_spit', { gain: 0.6, x: mouth.x, vary: 0.1 });
+    // (the head snaps forward with it)
+    if (!head.frozen) head.body.applyImpulse({ x: dir * head.mass * 1.2, y: 0 }, true);
+  }
+
+  /** Springs at the foe head first: a hop for the light ones, a shove forward for the heavy. */
+  private lunge(): void {
+    if (this.jumpT > 0 || this.kickT > 0 || !this.ok('head')) return;
+    this.lungeT = 1e-3;
+    this.bit = false;
+    const v = this.species.jump ? 2.4 : 1.4;
+    const up = this.species.jump ? 1.2 : 0.2;
+    for (const p of this.parts) if (!p.destroyed && !p.frozen) p.body.applyImpulse({ x: this.f * p.mass * v, y: p.mass * up }, true);
+    if (this.voiceT <= 0) {
+      this.voiceT = 2;
+      this.game.sound.play(this.species.sounds.alarm, { gain: 0.35, x: this.L('chest').part.x });
+    }
+  }
+
+  /**
+   * The lunge under way: the head is driven at the foe, and the bite (or butt)
+   * hurts it where the head lands, by the animal's weight.
+   */
+  private bite(): void {
+    const foe = this.foe!;
+    const head = this.L('head').part;
+    const at = foe.center();
+    const d = Math.hypot(at.x - head.x, at.y - head.y) || 1;
+    const u = { x: (at.x - head.x) / d, y: (at.y - head.y) / d };
+    const v = head.body.linvel();
+    const short = 5 * this.strength() - (v.x * u.x + v.y * u.y);
+    if (short > 0) {
+      const j = short * head.mass * 0.3;
+      head.body.applyImpulse({ x: u.x * j, y: u.y * j }, true);
+      const chest = this.L('chest').part;
+      if (!chest.frozen) chest.body.applyImpulse({ x: -u.x * j, y: -u.y * j }, true);
+    }
+    const m = this.totalMass();
+    const biter = BITERS.has(this.species.kind);
+    const dmg = (biter ? 3 + 0.2 * m : 2 + 0.14 * m) * this.strength() * this.might;
+    if (land(this.game, this, head, foe, dmg, biter ? 'cut' : 'blunt', u, 0.06 * m * this.might)) {
+      this.bit = true;
+      // (a zombie's bite passes the infection on)
+      if (this.zombie) {
+        (foe as Entity & { infect?(): void }).infect?.();
+        this.game.sound.play('creature/zombie_bite', { gain: 0.5, x: head.x, vary: 0.1 });
+      }
+    }
   }
 
   private nearestPerson(x: number, y: number, r: number): Human | null {
@@ -964,7 +1410,8 @@ export class Creature extends Entity {
 
   /** Runs away from x for a few seconds. */
   private scare(fromX: number, secs: number): void {
-    if (!this.alive) return;
+    // (a zombie fears nothing)
+    if (!this.alive || this.zombie || this.goal === 'fight') return;
     if (this.goal !== 'flee') {
       this.goalT = 0;
       if (this.voiceT <= 0 && this.consciousness > 0.5 && this.state === 'stand') {
@@ -976,6 +1423,45 @@ export class Creature extends Entity {
     this.following = null;
     this.fleeFrom = fromX;
     this.goalT = Math.max(this.goalT, secs);
+    // startled from behind with something right there: a kick at it first
+    if (this.species.kicks && (fromX - this.L('chest').part.x) * this.f < 0) this.kick();
+  }
+
+  /** Lashes out behind with a hind leg, if something is within reach there (see KICK). */
+  private kick(): void {
+    if (this.kickT > 0 || this.kickCool > 0 || this.state !== 'stand' || this.jumpT > 0 || this.held || !this.ok('hips') || !this.behind()) return;
+    this.kickT = 1e-3;
+    this.kickCool = 2;
+    this.updateMotors(true);
+  }
+
+  /** What is right behind the hindquarters, from the rump down to the hocks, within a kick's reach. */
+  private behind(): Part | null {
+    const h = this.L('hips');
+    const half = h.spec.shape.kind === 'box' ? h.spec.shape.w / 2 : 6;
+    const ray = new RAPIER.Ray({ x: h.part.x, y: h.part.y }, { x: -this.f, y: 0 });
+    for (const dy of [0, -this.species.hipY * 0.6 * PX]) {
+      ray.origin = { x: h.part.x, y: h.part.y + dy };
+      const hit = this.game.physics.world.castRay(ray, half * PX + 0.5, true, undefined, undefined, undefined, undefined, (o) => this.game.physics.partOf(o)?.entity !== this);
+      const p = hit && this.game.physics.partOf(hit.collider);
+      if (p && !p.frozen && !p.destroyed) return p;
+    }
+    return null;
+  }
+
+  /** The kick lands: whatever is behind is knocked away (someone their own weight off their feet) and hurt. */
+  private kickHit(): void {
+    const p = this.behind();
+    if (!p) return;
+    const e = p.entity;
+    // (the heavier it is, the less it moves)
+    const v = 4.5 * Math.min(1, 120 / Math.max(1, e.totalMass()));
+    for (const q of e.parts) {
+      if (q.destroyed || q.frozen) continue;
+      q.body.applyImpulse({ x: -this.f * q.mass * v, y: q.mass * v * 0.35 }, true);
+    }
+    e.damage(p, 18, 'blunt', { x: p.x, y: p.y }, { x: -this.f, y: 0 });
+    this.game.sound.impact(p.mat.sound, 0.8, p.x);
   }
 
   onAlarm(x: number, y: number, radius: number): void {
@@ -985,7 +1471,10 @@ export class Creature extends Entity {
     if (d > radius) return;
     // close by, it scrambles up off the floor to get away
     if (this.state === 'down' && d < radius * 0.6) this.rouse();
-    this.scare(x, 2.5 + 4 * (1 - d / radius));
+    // (it bolts a moment later: turned round at once, it would take the bullet
+    // that set it off in the rump)
+    const secs = 2.5 + 4 * (1 - d / radius);
+    if (!this.startle || this.startle.secs < secs) this.startle = { x, secs, t: STARTLE };
   }
 
   /**
@@ -1091,7 +1580,7 @@ export class Creature extends Entity {
     // above the top from when the front ones reach the near edge until the hind
     // ones are past the near edge (onto it) or the far one (over it): the arc
     // through those two points, a little higher, peaking between them.
-    const g = -GRAVITY;
+    const g = this.pull;
     // (only seen once right up against it, it springs from where it stands too)
     const runUp = faceD - front - 0.08;
     const x1 = close || runUp < 0.05 ? Math.max(0.15, runUp) : runUp;
@@ -1184,7 +1673,7 @@ export class Creature extends Entity {
     // (straight after landing on a narrow top too: no waiting about on the edge)
     if (this.pawsDown() < 1 || this.tethered()) return false;
     // the hind paws over the edge before it has come back down to the ledge's height
-    const g = -GRAVITY;
+    const g = this.pull;
     const vy = 1.5;
     const tOver = (vy + Math.sqrt(vy * vy - 2 * g * 0.05)) / g;
     const vx = clamp((edge + this.pawSpan().back + 0.12) / tOver, 1, 3.5) * this.f;
@@ -1203,7 +1692,7 @@ export class Creature extends Entity {
   jump(): boolean {
     const J = this.species.jump;
     if (!J || this.state !== 'stand' || this.held || this.jumpT > 0 || this.pawsDown() < 2 || this.tethered()) return false;
-    const vy = Math.sqrt(2 * -GRAVITY * Math.min(J, 0.5));
+    const vy = Math.sqrt(2 * this.pull * Math.min(J, 0.5));
     for (const l of this.order) {
       if (l.gone || !l.attached || l.part.frozen) continue;
       const v = l.part.body.linvel();
@@ -1226,7 +1715,7 @@ export class Creature extends Entity {
     const rise = Math.min(J, 0.25);
     const roof = this.game.physics.world.castRay(new RAPIER.Ray({ x: c.x, y: c.y }, { x: 0, y: 1 }), rise + 0.2, true, undefined, undefined, undefined, undefined, (o) => this.game.physics.partOf(o)?.entity !== this);
     if (roof) return false;
-    const vy = Math.sqrt(2 * -GRAVITY * rise);
+    const vy = Math.sqrt(2 * this.pull * rise);
     const vx = 1.3 * this.f;
     for (const l of this.order) {
       if (l.gone || !l.attached || l.part.frozen) continue;
@@ -1257,7 +1746,7 @@ export class Creature extends Entity {
     const g = this.species.gait;
     const ph = this.stride + (key.endsWith('FrontF') || key.endsWith('BackB') ? 0 : Math.PI);
     const run = clamp((this.pace - g.walk) / (g.run - g.walk), 0, 1);
-    if (key.startsWith('upper')) return this.gaitAmt * g.swing * (1 + 0.25 * run) * Math.sin(ph);
+    if (key.startsWith('upper')) return this.gaitAmt * g.swing * (1 + 0.25 * run) * this.reach * Math.sin(ph);
     const flex = this.gaitAmt * g.lift * Math.max(0, Math.cos(ph));
     return key.startsWith('lowerFront') ? flex : -flex;
   }
@@ -1279,7 +1768,7 @@ export class Creature extends Entity {
     this.pace = want ? clamp(this.trunkVx() + 0.5, 0.5 * Math.min(want, g.walk), want) : Math.max(0, this.trunkVx());
     const run = clamp((this.pace - g.walk) / (g.run - g.walk), 0, 1);
     // each diagonal pair carries the body one sweep of the legs per half step
-    const sweep = 2 * this.species.hipY * PX * Math.sin(g.swing * (1 + 0.25 * run));
+    const sweep = 2 * this.species.hipY * PX * Math.sin(g.swing * (1 + 0.25 * run) * this.reach);
     this.stride = (this.stride + 2 * Math.PI * Math.max(1.2, this.pace / (2 * sweep)) * dt) % (2 * Math.PI);
     if (paws < 2) return;
     // (stopping, it brakes rather than coasting on into whatever stopped it)
@@ -1374,10 +1863,11 @@ export class Creature extends Entity {
     this.idleT -= dt;
     if (this.idleT > 0) return;
     this.idleT = 15 + Math.random() * 35;
-    if (this.species.kind === 'dog') this.wag = 2 + Math.random() * 2;
+    if (this.species.kind === 'dog' && !this.zombie) this.wag = 2 + Math.random() * 2;
     if (Math.random() < 0.6 && this.voiceT <= 0) {
       this.voiceT = 2;
-      this.game.sound.play(this.species.sounds.idle, { gain: 0.35, x });
+      // (an undead one's voice low and slow)
+      this.game.sound.play(this.species.sounds.idle, { gain: 0.35, x, rate: this.zombie ? 0.7 : 1 });
     }
   }
 
@@ -1432,7 +1922,7 @@ export class Creature extends Entity {
       const pa = l.parent.part.localToWorld(l.a1.x, l.a1.y);
       const pb = l.part.localToWorld(l.a2.x, l.a2.y);
       const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
-      const limit = (0.09 + 0.1 * clamp(l.part.hp / l.part.maxHp, 0, 1)) * (this.species.kind === 'cat' ? 0.8 : 1);
+      const limit = (0.09 + 0.1 * clamp(l.part.hp / l.part.maxHp, 0, 1)) * (this.species.kind === 'cat' ? 0.8 : 1) * (this.drugs.strength > 0 ? 1.4 : 1);
       if (d > limit) {
         l.stress += dt;
         if (l.stress > 0.03) this.sever(l, 'tear');
@@ -1447,21 +1937,28 @@ export class Creature extends Entity {
     d.adrenaline = Math.max(0, d.adrenaline - dt);
     d.knockout = Math.max(0, d.knockout - dt);
     d.poison = Math.max(0, d.poison - dt);
-    if (!this.alive) return;
-    if (d.adrenaline > 0) {
+    this.stunned = Math.max(0, this.stunned - dt);
+    this.afflict(dt);
+    if (!this.alive) {
+      this.deathT += dt;
+      return;
+    }
+    if (d.adrenaline > 0 || this.zombie) {
       this.pain = 0;
       this.shock = 0;
     }
+    if (d.painkiller > 0) this.pain = 0;
+    // poison drains the blood (and shows, greener the worse it gets: see tone())
     if (d.poison > 0) this.blood -= dt * 3;
     const head = this.L('head');
     const headF = head.gone ? 0 : head.part.hp / head.part.maxHp;
     let target = 1;
     if (headF < 0.5) target = Math.min(target, headF * 1.2);
-    if (this.blood < 65) target = Math.min(target, (this.blood - 40) / 25);
+    if (this.blood < 65 && !this.zombie) target = Math.min(target, (this.blood - 40) / 25);
     if (this.pain > 0.9) target = Math.min(target, 0.4);
-    if (d.knockout > 0) target = Math.min(target, 0.05);
+    if (d.knockout > 0 || this.stunned > 0) target = Math.min(target, 0.05);
     target = clamp(target, 0, 1);
-    const up = d.adrenaline > 0 ? 0.03 : 0.004;
+    const up = d.adrenaline > 0 || this.zombie ? 0.03 : 0.004;
     this.consciousness += (target - this.consciousness) * (target < this.consciousness ? 0.2 : up);
     this.shock = Math.max(0, this.shock - dt * 0.012);
     if (this.consciousness < 0.15 && this.state !== 'down') this.setState('down');
@@ -1471,11 +1968,13 @@ export class Creature extends Entity {
   private checkDeath(): void {
     const head = this.L('head');
     const chest = this.L('chest');
-    if (head.gone || head.part.hp <= 0 || !head.attached || chest.part.hp <= 0 || this.blood < 35) this.die();
+    // (a zombie doesn't need its blood, and takes a far worse mauling)
+    if (head.gone || head.part.hp <= 0 || !head.attached || chest.part.hp <= 0 || (this.blood < 35 && !this.zombie)) this.die();
     else {
       let trauma = 0;
-      for (const l of this.order) if (!l.gone) trauma += Math.max(0, 1 - l.part.hp / l.part.maxHp) * (l.children.length > 1 || !l.parent ? 1.2 : 0.6);
-      if (trauma > 5) this.die();
+      // (a mangled limb counts as badly as a lost one, however far below nothing its health went)
+      for (const l of this.order) if (!l.gone) trauma += clamp(1 - l.part.hp / l.part.maxHp, 0, 1.5) * (l.children.length > 1 || !l.parent ? 1.2 : 0.6);
+      if (trauma > (this.zombie ? UNDEAD.trauma : 5)) this.die();
     }
   }
 
@@ -1483,6 +1982,7 @@ export class Creature extends Entity {
     if (!this.alive) return;
     const loud = this.consciousness > 0.3;
     this.alive = false;
+    this.deathT = 0;
     this.consciousness = 0;
     this.wag = 0;
     if (loud) this.game.sound.play(this.species.sounds.die, { gain: 0.6, x: this.L('chest').part.x });
@@ -1495,21 +1995,234 @@ export class Creature extends Entity {
     const head = this.L('head');
     if (head.gone) return;
     const e = CREATURE_EYE[this.species.kind];
-    head.part.paintPixel(e.x, e.y, !this.alive ? e.dead : this.consciousness < 0.3 ? e.closed : e.open);
+    // (a zombie's eye stares, pale)
+    head.part.paintPixel(e.x, e.y, !this.alive ? e.dead : this.consciousness < 0.3 ? e.closed : this.zombie ? 0xd8d27a : e.open);
   }
 
   frame(): void {
-    const want = !this.alive ? 0 : this.consciousness < 0.3 ? 1 : 2;
+    const want = !this.alive ? 0 : this.consciousness < 0.3 ? 1 : this.zombie ? 3 : 2;
     if (want !== this.faceState) {
       this.faceState = want;
       this.setFace();
     }
+    this.tone();
+  }
+
+  /**
+   * Its colour shows what's in it (as each frame is drawn, on every screen; see
+   * Human.tone()): frozen stiff, pale and blue; poison a sickly green; an infection
+   * greying it as it takes hold, and a zombie grey-green and drained of colour.
+   */
+  private tone(): void {
+    const d = this.drugs;
+    let r = 1;
+    let g = 1;
+    let b = 1;
+    if (d.freeze > 0) {
+      r = 0.84;
+      g = 0.95;
+      b = 1.14;
+    } else {
+      const k = this.zombie ? 1 : Math.round(this.infection * 8) / 8;
+      r -= 0.22 * k;
+      g -= 0.08 * k;
+      b -= 0.26 * k;
+      if (d.poison > 0 && this.alive) {
+        const s = Math.round((0.45 + 0.55 * clamp((100 - this.blood) / 50, 0, 1)) * 8) / 8;
+        r *= 1 - 0.24 * s;
+        g *= 1 - 0.03 * s;
+        b *= 1 - 0.32 * s;
+      }
+      if (d.strength > 0 && this.alive) {
+        r *= 1.1;
+        g *= 0.93;
+        b *= 0.9;
+      }
+    }
+    for (const l of this.order) {
+      if (l.gone || l.part.frozen || l.part.noCollideAll) continue;
+      l.part.setTint(r, g, b);
+    }
+  }
+
+  /** Infected with the zombie virus (a syringe, a zombie's bite): it turns a few seconds later (not a gorse). */
+  infect(): void {
+    if (this.species.immune || this.zombie || this.infection > 0) return;
+    this.infection = 1e-3;
+  }
+
+  /**
+   * The infection has taken hold: it turns (the dead, their head still on, rise), and
+   * goes for people (see scan()); a zombie's bite passes it on (see bite()).
+   */
+  private rise(): void {
+    const head = this.L('head');
+    if (this.zombie || head.gone || !head.attached || head.part.hp <= 0) return;
+    this.zombie = true;
+    this.infection = 1;
+    this.stopFighting();
+    this.pose = null;
+    const d = this.drugs;
+    d.knockout = d.poison = d.painkiller = d.coagulation = d.adrenaline = 0;
+    if (!this.alive) {
+      this.alive = true;
+      this.deathT = 0;
+      this.consciousness = 0.35;
+      for (const l of this.order) if (!l.gone) l.part.hp = Math.max(l.part.hp, l.part.maxHp * 0.4);
+    } else this.stun(2);
+    this.pain = this.shock = 0;
+    this.rouse();
+    this.setFace();
+    this.setState('down');
+    this.scanT = 0;
+    this.game.sound.play(this.species.sounds.bad, { gain: 0.45, x: this.L('chest').part.x, rate: 0.7 });
+  }
+
+  /** The Zombie Cure (see Human.cure()): its infection gone, itself again. */
+  private cure(dose: number): void {
+    if (!this.infection && !this.zombie) return;
+    this.cureDose += dose;
+    if (this.cureDose < 0.3) return;
+    this.cureDose = 0;
+    this.infection = 0;
+    if (!this.zombie) return;
+    this.zombie = false;
+    this.stopFighting();
+    if (this.alive) {
+      this.blood = Math.max(this.blood, 60);
+      this.stun(2);
+    }
+    this.setFace();
+    this.updateMotors(true);
+  }
+
+  /** Frozen stiff (the Freeze drug; false: thawed): every joint locked where it is, its muscles no use. */
+  private stiffen(on: boolean, quiet = false): void {
+    if (this.stiff === on) return;
+    this.stiff = on;
+    for (const l of this.order) {
+      const j = l.joint;
+      if (!j || !j.isValid() || !l.parent) continue;
+      if (on) {
+        const a = wrapAngle(l.part.body.rotation() - l.parent.part.body.rotation());
+        j.setLimits(a - 0.01, a + 0.01);
+      } else if (this.f === 1) j.setLimits(l.spec.lo!, l.spec.hi!);
+      else j.setLimits(-l.spec.hi!, -l.spec.lo!);
+    }
+    const x = this.L('chest').part.x;
+    if (on) {
+      this.stopFighting();
+      this.setState('down');
+      if (!quiet) this.game.sound.play('impact/glass_light', { gain: 0.4, x, rate: 1.5, vary: 0.1 });
+    } else {
+      this.rouse();
+      if (!quiet) liquidSound(this.game, 'liquid/drip', x, 0.3, 0.2);
+    }
+    this.updateMotors(true);
+  }
+
+  /** Breaks a limb's bone (Break bone in the menu, Bone Eating) or mends it (Mend bone). */
+  private setBroken(l: Limb, on: boolean): void {
+    if (l.broken === on || l.gone) return;
+    l.broken = on;
+    if (on) {
+      this.game.sound.bone(l.part.x);
+      if (this.alive && !this.zombie) this.pain = Math.min(1.5, this.pain + 0.35);
+      this.yelp(30);
+      this.rouse();
+    }
+    this.updateMotors(true);
+  }
+
+  /** What's in it at work (some of it on the dead too), and an infection taking hold (see Human.afflict()). */
+  private afflict(dt: number): void {
+    const d = this.drugs;
+    if (d.freeze > 0) {
+      const burnt = this.order.some((l) => !l.gone && l.part.burning > 0);
+      d.freeze = Math.max(0, d.freeze - dt * (burnt ? 8 : 1));
+      if (d.freeze === 0) this.stiffen(false);
+    }
+    d.painkiller = Math.max(0, d.painkiller - dt);
+    d.strength = Math.max(0, d.strength - dt);
+    if (d.coagulation > 0) {
+      d.coagulation = Math.max(0, d.coagulation - dt);
+      for (const l of this.order) for (const w of l.wounds) w.rate *= Math.exp(-dt * 1.2);
+    }
+    if (d.bone > 0) {
+      d.bone = Math.max(0, d.bone - dt);
+      if ((this.boneT -= dt) <= 0) {
+        this.boneT = 0.6 + Math.random() * 0.6;
+        const whole = this.order.filter((l) => !l.gone && l.joint && !l.broken && l.spec.key !== 'head');
+        if (whole.length) this.setBroken(whole[Math.floor(Math.random() * whole.length)], true);
+        else d.bone = 0;
+      }
+    }
+    if (d.acid > 0) {
+      d.acid = Math.max(0, d.acid - dt);
+      this.melt(dt);
+    }
+    if (this.infection > 0 && this.infection < 1) {
+      this.infection = Math.min(1, this.infection + dt / UNDEAD.incubate);
+      if (this.infection >= 1) this.rise();
+    }
+  }
+
+  /** Acid in the blood (see Human.melt()): eaten away limb by limb (not a gorse: acid doesn't touch it). */
+  private melt(dt: number): void {
+    if (this.species.acidproof) return;
+    const ps = this.game.particles;
+    let x = 0;
+    for (const l of this.order) {
+      if (l.gone) continue;
+      const p = l.part;
+      x = p.x;
+      p.hp -= p.maxHp * 0.07 * (0.6 + ((p.w * 7 + p.h * 3) % 10) / 12.5) * dt;
+      if (Math.random() < dt * 5) p.paintPixel(Math.floor(Math.random() * p.w), Math.floor(Math.random() * p.h), ACID_SCAR, 0.8);
+      if (Math.random() < dt * 0.5) ps.liquid(Liquid.Acid, p.x, p.y, 0, -1, 1, 0.4, 0.8, p.body);
+      if (Math.random() < dt * 0.6) ps.smoke(p.x, p.y + 0.05, 1, 0.06);
+      if (p.hp <= 0 && l.joint && !l.severed) this.sever(l, 'cut');
+    }
+    if (this.alive && !this.zombie) this.pain = Math.min(1.5, this.pain + dt * 0.08);
+    liquidSound(this.game, 'liquid/sizzle', x, 0.3, 0.7);
   }
 
   // ---------------------------------------------------------------- drugs
 
   inject(drug: Drug, dose: number): void {
+    if (this.zombie && !UNDEAD_DRUGS.has(drug)) return;
+    // (see Human.inject(): only Life works on the dead, the Zombie virus and the Cure)
+    if (!this.alive && drug !== 'life' && drug !== 'cure' && drug !== 'zombie') return;
+    const d = this.drugs;
     switch (drug) {
+      case 'death':
+        this.die();
+        break;
+      case 'coagulation':
+        d.coagulation = Math.min(60, d.coagulation + dose * 30);
+        break;
+      case 'painkiller':
+        d.painkiller = Math.min(120, d.painkiller + dose * 60);
+        this.pain = 0;
+        break;
+      case 'strength':
+        d.strength = Math.min(120, d.strength + dose * 60);
+        break;
+      case 'freeze':
+        d.freeze = Math.min(90, d.freeze + dose * 30);
+        if (!this.stiff) this.stiffen(true);
+        break;
+      case 'bone':
+        d.bone = Math.min(30, d.bone + dose * 15);
+        break;
+      case 'acid':
+        if (!this.species.acidproof) d.acid = Math.min(40, d.acid + dose * 25);
+        break;
+      case 'zombie':
+        this.infect();
+        break;
+      case 'cure':
+        this.cure(dose);
+        break;
       case 'healing':
         this.mend(dose);
         break;
@@ -1539,12 +2252,17 @@ export class Creature extends Entity {
     }
   }
 
+  /** Healing (see Human.mend): it comes round and gets up again, the blood washed off it. */
   private mend(dose: number): void {
     if (!this.alive) return;
+    this.rouse();
     this.blood = Math.min(100, this.blood + dose * 60);
     this.pain = Math.max(0, this.pain - dose * 2);
+    this.shock = Math.max(0, this.shock - dose * 2);
+    this.consciousness = Math.min(1, this.consciousness + dose * 1.5);
     this.drugs.poison = 0;
     this.mendDose += dose;
+    let face = false;
     for (const l of this.order) {
       if (l.gone) continue;
       const p = l.part;
@@ -1552,15 +2270,39 @@ export class Creature extends Entity {
       if (p.burning > 0) this.game.fire.extinguish(p);
       p.charred = Math.max(0, p.charred - dose * 1.5);
       p.refreshTint();
+      if (washBlood(p, dose * 2.5) && l.spec.key === 'head') face = true;
+      for (const w of l.wounds) w.rate *= Math.max(0, 1 - dose * 4);
       if (this.mendDose >= 0.6) {
         l.wounds.length = 0;
         l.broken = false;
       }
     }
+    if (face) this.setFace();
     if (this.mendDose >= 0.6) {
       this.mendDose = 0;
       this.updateMotors(true);
     }
+  }
+
+  /** Dead this long (s): a defibrillator only restarts a heart that stopped less than a minute ago. */
+  private deathT = 0;
+
+  /** A defibrillator's shock (see Human.restart): back from the dead, weak and still hurt. Whether it worked. */
+  restart(): boolean {
+    const head = this.L('head');
+    const hips = this.L('hips');
+    if (this.alive || this.deathT > 60 || head.gone || !head.attached || head.part.hp <= 0 || this.L('chest').part.hp <= 0 || hips.gone || !hips.attached) return false;
+    this.alive = true;
+    this.lifeDose = 0;
+    this.blood = Math.max(this.blood, 70);
+    this.consciousness = 0.5;
+    this.pain = Math.min(this.pain, 0.5);
+    this.shock = Math.min(this.shock, 0.3);
+    this.rouse();
+    for (const l of this.order) if (!l.gone) l.part.hp = Math.max(l.part.hp, l.part.maxHp * 0.65);
+    this.setFace();
+    this.updateMotors(true);
+    return true;
   }
 
   // ---------------------------------------------------------------- damage
@@ -1581,7 +2323,9 @@ export class Creature extends Entity {
     const l = this.limbOf(info.part);
     if (!l || l.gone) return;
     const mEff = info.part.mass * 2.4;
-    const Eself = 0.5 * Math.min(mEff, info.otherMass) * info.selfSpeed * info.selfSpeed;
+    // (a leg or a tail flung about counts no harder than the body's own fall: see Human.onImpact())
+    const own = l.attached ? Math.min(info.selfSpeed, this.bodySpeed() * 1.5) : info.selfSpeed;
+    const Eself = 0.5 * Math.min(mEff, info.otherMass) * own * own;
     const backing = l.attached ? Math.max(mEff, this.totalMass() * 0.8) : mEff;
     const blunt = (info.other?.entity as { blunt?: number } | undefined)?.blunt ?? 1;
     const Eother = 0.5 * Math.min(info.otherMass, backing) * info.otherSpeed * info.otherSpeed * blunt;
@@ -1589,10 +2333,13 @@ export class Creature extends Entity {
     const frag = l.spec.fragility / this.species.toughness;
     const E0 = (24 * mEff) / frag;
     if (E <= E0) return;
-    const frac = (E - E0) / ((115 * mEff) / frag);
+    // above that, the harm climbs fast (as for people: see Human.onImpact())
+    const frac = (E - E0) / ((55 * mEff) / frag);
     this.injure(l, frac * l.spec.hp, 'blunt', info.point, { x: -info.normal.x, y: -info.normal.y });
+    this.game.sound.fleshHit(frac, info.point.x);
     // a hard hit knocks it off its feet
-    if ((frac > 0.1 || Eother > 3 * this.totalMass()) && this.state === 'stand') this.setState('down');
+    // (a lesser knock just shoves it: four legs keep it up if they can)
+    if ((frac > 0.2 || Eother > 6 * this.totalMass()) && this.state === 'stand') this.setState('down');
   }
 
   onBullet(hit: BulletHit): void {
@@ -1605,8 +2352,14 @@ export class Creature extends Entity {
     if (hit.exit) this.addWound(l, hit.exit.x, hit.exit.y, hit.dir.x, hit.dir.y, 0.3 + dmg * 0.03, 'hole');
     const ps = this.game.particles;
     ps.blood(hit.point.x, hit.point.y, -hit.dir.x + (Math.random() - 0.5), -hit.dir.y + 0.3, 6 + dmg * 0.3, 2.2, hit.part.body);
-    if (hit.exit) ps.blood(hit.exit.x, hit.exit.y, hit.dir.x, hit.dir.y, 10 + dmg * 0.5, 4.5, hit.part.body);
+    ps.mist(hit.point.x, hit.point.y, -hit.dir.x, -hit.dir.y, 2, 0.2);
+    // spatter out of the exit wound (see Human.onBullet())
+    if (hit.exit) ps.splatter(hit.exit.x, hit.exit.y, hit.dir.x, hit.dir.y, 8 + Math.sqrt(hit.energy) * 0.6, 3 + Math.sqrt(hit.energy) / 9, 0.35, hit.part.body);
     this.game.sound.squish(0.3, hit.point.x, 0.5);
+    // a heavy round takes a chunk out (see Chunks)
+    takeChunk(this, l, hit.point, hit.dir, hit.energy, hit.exit ? 'in' : 'stop', FLESH, hit.round);
+    if (hit.exit) takeChunk(this, l, hit.exit, hit.dir, hit.energy, 'out', FLESH, hit.round);
+    if (l.gone) return;
     // a bullet through the brain (a stray fragment or a pellet wounds and stuns)
     if (l.spec.key === 'head' && hit.damage > 16) {
       this.injure(l, dmg, 'bullet', hit.point, hit.dir);
@@ -1620,20 +2373,28 @@ export class Creature extends Entity {
 
   damage(part: Part, amount: number, kind: DamageKind, point?: V2, dir?: V2): void {
     const l = this.limbOf(part);
-    if (!l || l.gone) return;
+    if (!l || l.gone || this.cooked) return;
     const amt = amount / this.species.toughness;
     if (kind === 'fire') {
-      part.hp -= amt * 0.55;
+      // (a gorse burns well: it takes more, and the flames take hold of it sooner)
+      const burns = this.species.flammable ?? 1;
+      part.hp -= amt * 0.55 * burns;
+      if (burns > 1 && part.burning > 0 && part.burning < 0.9) this.game.fire.ignite(part, Math.min(1, part.burning + 0.01 * burns));
       this.pain = Math.min(1.5, this.pain + amt * 0.03);
-      if (this.state !== 'down' && part.burning > 0.35) this.setState('down');
+      // on fire it bolts in a panic, until the flames take hold and it goes down thrashing
+      if (part.burning > 0.45) {
+        if (this.state !== 'down') this.setState('down');
+      } else this.scare(this.L('chest').part.x - this.f, 1.5);
       if (Math.random() < amt * 0.6) {
         const w = part.pixelToWorld(Math.floor(Math.random() * part.w), Math.floor(Math.random() * part.h));
         part.paintAt(w.x, w.y, 0x2a1d17, 0, 0.3);
       }
-      this.yelp(amt * 8);
+      this.yelp(amt * 14);
       return;
     }
     if (kind === 'acid') {
+      // (acid doesn't touch a gorse: its own blood is worse)
+      if (this.species.acidproof) return;
       part.hp -= amt;
       this.pain = Math.min(1.5, this.pain + amt * 0.04);
       this.yelp(amt * 10);
@@ -1646,11 +2407,21 @@ export class Creature extends Entity {
     }
     if (kind === 'explosion') {
       const frac = amt / l.spec.hp;
-      if (frac > 2.6 && l.spec.key !== 'chest') {
-        this.gib(l);
+      // caught full in a big blast (enough to gib a limb, or to tear through most of
+      // its trunk: a grenade going off up against it): a pig is blown to bacon. A
+      // lesser blast only wounds it
+      const trunk = l.spec.key === 'chest' || l.spec.key === 'hips';
+      if (this.species.blastInto && l.attached && l.spec.key !== 'tail' && (frac > 2.6 || (trunk && frac > 0.6))) {
+        this.cook(dir);
+        return;
+      }
+      if (frac > 3.2 && l.spec.key !== 'chest') {
+        this.gib(l, dir);
         return;
       }
       this.injure(l, amt, 'explosion', point, dir);
+      if (point && dir && !l.gone) takeChunk(this, l, point, dir, blastEnergy(frac), 'stop', FLESH);
+      if (l.gone) return;
       if (frac > 1.1 && l.joint && !l.severed && Math.random() < 0.6) this.sever(l, 'blast');
       if (point && Math.random() < Math.min(0.9, frac * 2)) this.addWound(l, point.x, point.y, -(dir?.x ?? 0), -(dir?.y ?? 1), 0.3 + frac, 'blot');
       return;
@@ -1680,13 +2451,16 @@ export class Creature extends Entity {
         this.addWound(l, point.x, point.y, -(dir?.x ?? 0), -(dir?.y ?? 0), dmg * 0.006, 'blot');
         this.game.particles.blood(point.x, point.y, -(dir?.x ?? 0), -(dir?.y ?? 0) + 0.5, dmg * 0.3, 2.2, p.body);
       }
-      if (!l.broken && dmg > l.spec.hp * 0.42 && l.joint && l.spec.key !== 'head') {
+      // fractures: one hard knock, or a lesser one to a limb already badly hurt
+      if (!l.broken && l.joint && l.spec.key !== 'head' && (dmg > l.spec.hp * 0.42 || (dmg > l.spec.hp * 0.15 && p.hp < l.spec.hp * 0.3))) {
         l.broken = true;
         this.game.sound.bone(p.x);
         this.updateMotors(true);
       }
-      if (p.hp < -l.spec.hp * 1.3 && dmg > l.spec.hp * 1.1) {
-        if (l.spec.key === 'head' || l.spec.key === 'chest') this.gib(l);
+      // crushed: a limb already spent, knocked hard again (or one enormous blow)
+      if (p.hp < -l.spec.hp * 0.4 && dmg > l.spec.hp * 0.3) {
+        // (the chest holds the rest together: it stays, as with blasts)
+        if (l.spec.key === 'head') this.gib(l);
         else if (l.joint) this.sever(l, 'blast');
       }
     }
@@ -1710,18 +2484,15 @@ export class Creature extends Entity {
 
   private addWound(l: Limb, wx: number, wy: number, ox: number, oy: number, rate: number, look: 'hole' | 'cut' | 'blot', cutDir?: V2): void {
     const p = l.part;
-    const { ix, iy } = p.worldToPixel(wx, wy);
-    const { x: bx, y: by } = this.snap(p, ix, iy);
-    if (look === 'hole') {
-      p.paintPixel(bx, by, 0x2a0505);
-      for (const [i, j] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) p.paintPixel(bx + i, by + j, 0x8a1212, 0.75);
-    } else if (look === 'cut' && cutDir) {
+    // on the body a pixel or two in from where it struck (not a nick in the outline), on solid pixels
+    const { x: bx, y: by } = woundSpot(p, wx, wy, -ox, -oy);
+    if (look === 'cut' && cutDir) {
       const ld = p.worldToLocal(p.x + cutDir.x, p.y + cutDir.y);
       const len = Math.hypot(ld.x, ld.y) || 1;
       const sx = Math.round((ld.x / len) * this.f);
       const sy = -Math.round(ld.y / len);
       for (let k = -2; k <= 2; k++) p.paintPixel(bx + sx * k, by + sy * k, k === 0 ? 0x3a0606 : 0x7d0e0e);
-    } else p.paintPixel(bx, by, 0x7d0e0e, 0.8);
+    } else paintWound(p, bx, by, rate, look === 'hole');
     const local = rotate(ox, oy, -p.body.rotation());
     const ll = Math.hypot(local.x, local.y) || 1;
     if (l.wounds.length >= 8) {
@@ -1744,6 +2515,8 @@ export class Creature extends Entity {
         total += w.rate;
         w.rate *= Math.exp(-dt * (w.spurt ? 0.02 : 0.045));
         if (this.blood <= 0) continue;
+        // it runs down the body from the wound, too
+        if (this.game.particles.bloodEnabled) seep(p, w, dt);
         if (Math.random() < w.rate * pulse * dt * (w.spurt ? 26 : 12)) {
           const wp = p.pixelToWorld(w.ix, w.iy);
           const d = rotate(w.dx, w.dy, p.body.rotation());
@@ -1799,19 +2572,56 @@ export class Creature extends Entity {
     l.wounds.push({ ix: bx, iy: by, dx: local.x / ll, dy: local.y / ll, rate, spurt });
   }
 
-  /** Destroys a limb in a shower of gore. */
-  gib(l: Limb): void {
+  /** Blows a limb apart into pieces (see Human.gib()), flung `dir` if given. */
+  gib(l: Limb, dir?: V2): void {
     if (l.gone) return;
     const p = l.part;
-    for (const c of l.children) if (!c.severed) this.sever(c, 'blast');
+    const hung = l.children.filter((c) => !c.severed && !c.gone);
+    for (const c of hung) this.sever(c, 'blast');
     if (l.joint) this.sever(l, 'blast');
     const ps = this.game.particles;
-    ps.blood(p.x, p.y, 0, 1, 40, 4.5, null);
-    for (let i = 0; i < 20; i++) ps.debris(p.x, p.y, Math.random() - 0.5, 1, 1, [0x8e1a1a, 0x6b0e0e, 0xc46b6b, 0x8a6a48][i % 4], 5);
+    const d = dir ?? { x: 0, y: 1 };
+    ps.splatter(p.x, p.y, d.x, d.y + 0.3, 40, 6, Math.PI, null);
+    for (let i = 0; i < 10; i++) ps.debris(p.x, p.y, Math.random() - 0.5, 1, 1, [0x8e1a1a, 0x6b0e0e, 0xc46b6b, 0x8a6a48][i % 4], 5);
     this.game.sound.gib(p.x);
+    breakUp(this, l, FLESH, hung, dir);
     l.gone = true;
     if (l.spec.key === 'head' || l.spec.key === 'chest') this.die();
     this.removePart(p);
+  }
+
+  /**
+   * Blown apart by a big blast (`dir`: the way the blast pushes): it turns into
+   * a handful of whatever its kind becomes (strips of bacon), flung out from
+   * where it was with far less gore than a gib, and is gone. Its parts are only
+   * taken out at the end of the step, as the blast may still be going through them.
+   */
+  private cook(dir?: V2): void {
+    const def = getItem(this.species.blastInto!);
+    this.cooked = true;
+    this.alive = false;
+    const c = this.center();
+    const live = this.order.filter((l) => !l.gone);
+    const out = dir ?? { x: 0, y: 1 };
+    const n = def && live.length ? 6 + Math.floor(Math.random() * 3) : 0;
+    for (let i = 0; i < n; i++) {
+      // from all over the body (and clear of the floor: a strip spawned into it gets shot back out)
+      const p = live[i % live.length].part;
+      const x = p.x + (Math.random() - 0.5) * 0.15;
+      const y = Math.max(p.y, WORLD.floor + 0.2) + (Math.random() - 0.5) * 0.1;
+      const strip = this.game.spawn(def!, x, y, { angle: (Math.random() - 0.5) * 1.2, flip: Math.random() < 0.5 });
+      // carried off by the blast, and out from the middle of the body
+      const s = 2.5 + Math.random() * 3;
+      const ox = x - c.x;
+      const oy = y - c.y;
+      const ol = Math.hypot(ox, oy) || 1;
+      strip?.setVelocity(out.x * s + (ox / ol) * 1.5 + (Math.random() - 0.5) * 2, out.y * s + (oy / ol) * 1.5 + 2 + Math.random() * 2.5, (Math.random() - 0.5) * 16);
+    }
+    const ps = this.game.particles;
+    ps.blood(c.x, c.y, 0, 1, 10, 2.5, null);
+    for (let i = 0; i < 6; i++) ps.debris(c.x, c.y, Math.random() - 0.5, 1, 1, [0x8e1a1a, 0xa3412a, 0xe0b27e][i % 3], 4);
+    this.game.sound.squish(0.8, c.x);
+    this.game.remove(this);
   }
 
   removePart(p: Part): void {
@@ -1837,7 +2647,9 @@ export class Creature extends Entity {
 
   heal(): void {
     this.rouse();
-    this.drugs.adrenaline = this.drugs.knockout = this.drugs.poison = 0;
+    for (const k of Object.keys(this.drugs) as (keyof typeof this.drugs)[]) this.drugs[k] = 0;
+    this.stiffen(false);
+    this.stunned = 0;
     this.alive = true;
     this.consciousness = 1;
     this.blood = 100;
@@ -1852,28 +2664,53 @@ export class Creature extends Entity {
       l.part.burning = 0;
       l.part.charred = 0;
       l.part.refreshTint();
+      washBlood(l.part, 1);
     }
     this.setFace();
     this.setState('down');
     this.updateMotors(true);
   }
 
-  contextActions(): ContextAction[] {
+  /** `part`: the limb right-clicked (its bone can be broken or mended). */
+  contextActions(part?: Part): ContextAction[] {
     const acts: ContextAction[] = [];
     if (this.alive) {
       if (this.species.jump) acts.push({ label: 'Jump', hint: 'J', disabled: this.state !== 'stand', action: () => this.jump() });
       acts.push({ label: 'Kill', action: () => this.die() });
       acts.push({ label: 'Limp', checked: this.limp, action: () => { this.limp = !this.limp; this.setState('down'); this.updateMotors(true); } });
+      if (this.foe) acts.push({ label: 'Stop fighting', action: () => this.stopFighting() });
+      // lying down where it is, still (picked again, it's let up)
+      acts.push({ label: 'Flat pose', checked: this.pose === 'flat', action: () => { this.pose = this.pose ? null : 'flat'; this.stopFighting(); this.rouse(); this.setState('down'); this.updateMotors(true); } });
     }
     acts.push({ label: this.alive ? 'Heal' : 'Revive', action: () => this.heal() });
+    // the limb right-clicked: its bone broken, or mended (not the skull: but a gorse's
+    // jaw, broken, stops it spitting)
+    const l = part ? this.limbOf(part) : undefined;
+    if (l && !l.gone && l.joint && (l.spec.key !== 'head' || this.species.spits)) {
+      acts.push(l.broken ? { label: 'Mend bone', action: () => this.setBroken(l, false) } : { label: 'Break bone', action: () => this.setBroken(l, true) });
+    }
     return acts;
+  }
+
+  serializeLinks(ref: (e: Entity) => number): Record<string, unknown> | undefined {
+    const foe = this.foe ? ref(this.foe) : -1;
+    return foe >= 0 ? { foe } : undefined;
+  }
+
+  restoreLinks(links: Record<string, unknown>, get: (i: number) => Entity | undefined): void {
+    const foe = typeof links.foe === 'number' ? get(links.foe) : undefined;
+    if (foe) this.fight(foe, false);
   }
 
   /** Short status line (shown in tooltips/tests). */
   status(): string {
-    const drugs = (Object.keys(this.drugs) as (keyof typeof this.drugs)[]).filter((k) => this.drugs[k] > 0).map((k) => ` · ${k}`).join('');
-    const doing = this.state !== 'stand' ? this.state : this.goal === 'flee' ? 'running' : this.following ? 'following' : this.goal === 'walk' ? 'walking' : 'standing';
-    return `${this.alive ? (this.consciousness > 0.3 ? 'conscious' : 'unconscious') : 'dead'} · blood ${this.blood.toFixed(0)}%${drugs} · ${doing}`;
+    // (on adrenaline: how much faster it has it going)
+    const drugs = (Object.keys(this.drugs) as (keyof typeof this.drugs)[]).filter((k) => this.drugs[k] > 0)
+      .map((k) => ` · ${k}${k === 'adrenaline' && this.rush > 1.05 ? ` ×${this.rush.toFixed(1)}` : ''}`).join('');
+    const doing = this.state !== 'stand' ? this.state : this.kickT > 0 ? 'kicking' : this.goal === 'flee' ? 'running' : this.following ? 'following'
+      : this.goal === 'walk' ? 'walking' : this.grazing ? 'grazing' : 'standing';
+    const undead = this.zombie ? ' · zombie' : this.infection > 0 ? ' · infected' : '';
+    return `${this.alive ? (this.consciousness > 0.3 ? 'conscious' : 'unconscious') : 'dead'} · blood ${this.blood.toFixed(0)}%${drugs}${undead} · ${doing}`;
   }
 
   protected serializeExtra(): Record<string, unknown> {
@@ -1886,6 +2723,11 @@ export class Creature extends Entity {
       broken: this.order.filter((l) => l.broken).map((l) => l.spec.key),
       standing: this.state === 'stand',
       drugs: { ...this.drugs },
+      ...(this.stunned > 0 ? { stunned: this.stunned } : {}),
+      ...(this.infection > 0 ? { infection: this.infection } : {}),
+      ...(this.zombie ? { zombie: true } : {}),
+      ...(this.pose ? { pose: this.pose } : {}),
+      ...(this.team ? { team: this.team } : {}),
     };
   }
 
@@ -1894,6 +2736,12 @@ export class Creature extends Entity {
     this.consciousness = (x.consciousness as number) ?? 1;
     this.limp = !!x.limp;
     Object.assign(this.drugs, (x.drugs as Partial<typeof this.drugs>) ?? {});
+    this.stunned = typeof x.stunned === 'number' ? x.stunned : 0;
+    this.zombie = x.zombie === true && !this.species.immune;
+    this.infection = typeof x.infection === 'number' && Number.isFinite(x.infection) ? clamp(x.infection, 0, 1) : this.zombie ? 1 : 0;
+    this.pose = x.pose === 'flat' ? 'flat' : null;
+    // (in its side's colours before the wounds and blood are painted back on)
+    if (isTeamId(x.team)) this.setTeam(x.team);
     for (const k of (x.severed as string[]) ?? []) {
       const l = this.limbs.get(k);
       if (l && !l.gone) this.sever(l, 'cut');
@@ -1905,5 +2753,6 @@ export class Creature extends Entity {
     if (x.alive === false) this.die();
     this.setState(x.standing && this.alive && this.consciousness > 0.5 ? 'stand' : 'down');
     this.updateMotors(true);
+    if (this.drugs.freeze > 0) this.stiffen(true, true);
   }
 }

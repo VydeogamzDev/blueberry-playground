@@ -1,5 +1,5 @@
 import type { Game } from '../world/Game';
-import type { Controls } from '../tools/Controls';
+import type { Controls, ToolId } from '../tools/Controls';
 import type { Human } from '../entities/Human';
 import type { Firearm } from '../entities/Firearm';
 import type { Explosive } from '../entities/Explosive';
@@ -15,8 +15,11 @@ import type { Part } from '../world/Part';
 import { getItem } from '../catalog/items';
 import { makeTestKit } from './testkit';
 import { saveToString, loadFromString } from '../world/SaveLoad';
+import { capture } from '../world/Snapshot';
+import { Contraptions, thumbnail } from '../world/Contraptions';
 import { COARSE_DT, FIXED_DT, PX } from '../engine/constants';
 import { Liquid } from '../systems/Liquids';
+import { areaTests } from './tests';
 
 interface Result {
   name: string;
@@ -45,7 +48,7 @@ export function makeSelfTest(game: Game, controls: Controls) {
     return h.heldItems()[0] as Firearm | undefined;
   };
 
-  const tests: [string, () => string | true][] = [
+  const tests: [string, () => string | true | Promise<string | true>][] = [
     ['1. spawn a human: stands still', () => {
       kit.reset();
       const h = human(0);
@@ -68,6 +71,42 @@ export function makeSelfTest(game: Game, controls: Controls) {
       const sev = (h.serialize().extra as { severed: string[] }).severed;
       if (lifted < 0.85) return `torso not lifted (${lifted.toFixed(2)})`;
       if (sev.length) return `limbs torn: ${sev.join(',')}`;
+      return true;
+    }],
+    ['3b. slammed into the floor: people die and break, wooden crates smash, steel holds', () => {
+      // lifts what's at (x, y) by hand and whips it down onto the floor, `n` times
+      const slam = (x: number, y: number, n: number, done: () => boolean) => {
+        kit.down(x, y);
+        for (let i = 0; i < n && !done(); i++) {
+          for (let t = 1; t <= 30; t++) {
+            kit.move(0, 1 + (3 * t) / 30);
+            kit.advance(1 / 60);
+          }
+          for (let t = 1; t <= 8; t++) {
+            kit.move(0, 4 - (4 * t) / 8);
+            kit.advance(1 / 60);
+          }
+          kit.advance(0.15);
+        }
+        kit.up(0, 1);
+      };
+      kit.reset();
+      const h = human(0);
+      kit.advance(1);
+      const chest = h.limbs.get('upperTorso')!.part;
+      slam(chest.x, chest.y, 4, () => !h.alive);
+      if (h.alive) return 'still alive after 4 slams by the chest';
+      if (![...h.limbs.values()].some((l) => l.broken || l.gone || l.severed)) return 'dead, but nothing broken or crushed';
+      kit.reset();
+      const crate = kit.spawn('crate', 0, 0.6);
+      kit.advance(1);
+      slam(crate.parts[0].x, crate.parts[0].y, 3, () => crate.destroyed);
+      if (!crate.destroyed) return `crate whole after 3 slams (${Math.round((100 * crate.parts[0].hp) / crate.parts[0].maxHp)}% left)`;
+      kit.reset();
+      const box = kit.spawn('metal-box', 0, 0.6);
+      kit.advance(1);
+      slam(box.parts[0].x, box.parts[0].y, 3, () => box.destroyed);
+      if (box.destroyed) return 'the steel box broke';
       return true;
     }],
     ['3. heavy objects: crate stuns, steel box kills', () => {
@@ -177,11 +216,11 @@ export function makeSelfTest(game: Game, controls: Controls) {
       kit.reset();
       const c = kit.spawn('crate', 0, 0.45);
       kit.advance(0.3);
-      controls.arm(getItem('tool-rope')!);
+      controls.setTool('rope');
       kit.down(0, 0.7);
       kit.move(0, 3.5);
       kit.up(0, 3.5);
-      controls.arm(null);
+      controls.setTool('drag');
       const conn = game.connections.list[0];
       if (!conn) return 'no rope created';
       kit.drag(0, 0.45, 2, 1.5, 0.5, 0.2, true);
@@ -398,11 +437,11 @@ export function makeSelfTest(game: Game, controls: Controls) {
       const a = kit.spawn('crate', -0.5, 0.45);
       const b = kit.spawn('crate', 0.4, 0.45);
       kit.advance(0.3);
-      controls.arm(getItem('tool-weld')!);
+      controls.setTool('weld');
       kit.down(-0.5, 0.45);
       kit.move(0.4, 0.45);
       kit.up(0.4, 0.45);
-      controls.arm(null);
+      controls.setTool('drag');
       const conns = () => game.connections.list.length;
       if (conns() !== 1) return 'weld not made';
       controls.duplicate([a, b]);
@@ -413,11 +452,11 @@ export function makeSelfTest(game: Game, controls: Controls) {
     ['extra: contraptions: car, button-fired gun, powered rotor', () => {
       kit.reset();
       const tool = (id: string, ax: number, ay: number, bx: number, by: number) => {
-        controls.arm(getItem(id)!);
+        controls.setTool(getItem(id)!.tool as ToolId);
         kit.down(ax, ay);
         kit.move(bx, by);
         kit.up(bx, by);
-        controls.arm(null);
+        controls.setTool('drag');
       };
       // a plank on two motor wheels drives off
       const plank = kit.spawn('plank', -8, 0.9);
@@ -728,10 +767,10 @@ export function makeSelfTest(game: Game, controls: Controls) {
     }],
     ['extra: hinge and weld by clicking: to the background or what is behind', () => {
       const click = (id: string, x: number, y: number) => {
-        controls.arm(getItem(id)!);
+        controls.setTool(getItem(id)!.tool as ToolId);
         kit.down(x, y);
         kit.up(x, y);
-        controls.arm(null);
+        controls.setTool('drag');
       };
       // a plank hinged to the background at one end swings down and hangs from it
       kit.reset();
@@ -760,7 +799,10 @@ export function makeSelfTest(game: Game, controls: Controls) {
       const wheel = kit.spawn('tire', 0.3, 0.45)!;
       kit.advance(0.3);
       const w = wheel.parts[0];
+      // (both put back: pushed into each other, they've been shoved apart)
+      crate.parts[0].teleport(0, 0.45, 0);
       w.teleport(0.3, 0.45, 0);
+      game.physics.world.propagateModifiedBodyPositionsToColliders();
       click('tool-hinge', w.x, w.y);
       const h = game.connections.list[0];
       const ends = h ? [h.a.entity, h.b?.entity] : [];
@@ -827,25 +869,93 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (pairs < 1000 || shared < 100) return `checked too little: ${pairs} pairs, ${shared} same-color part pairs nearby`;
       return true;
     }],
+    ['extra: People Playground keys: spawn, take back, copy, tools, powers, moving with time paused', () => {
+      kit.reset();
+      // Q and E spawn the toybox's item at the cursor, facing left and right; a click on empty space doesn't
+      controls.arm(getItem('crate')!);
+      kit.move(-2, 1);
+      kit.press('KeyQ');
+      kit.move(2, 1);
+      kit.press('KeyE');
+      kit.down(0, 3);
+      kit.up(0, 3);
+      const n = () => game.entities.length;
+      const [l, r] = game.entities;
+      if (n() !== 2) return `${n()} spawned`;
+      if (!l.flipped || r.flipped) return `facing: ${l.flipped}, ${r.flipped}`;
+      // Ctrl+Z takes back the newest (Z alone freezes: see the tweaks tests)
+      kit.press('KeyZ', { ctrlKey: true });
+      if (n() !== 1 || !r.destroyed) return 'Ctrl+Z did not remove the newest crate';
+      kit.advance(0.5);
+      // C copies what's under the cursor and V pastes it at the cursor
+      // (the crate left, as undo brought it back)
+      const c = game.entities[0].parts[0];
+      kit.move(c.x, c.y);
+      kit.advance(0);
+      kit.press('KeyC');
+      kit.move(3, 2);
+      kit.press('KeyV');
+      if (n() !== 2 || Math.abs(game.entities[1].parts[0].x - 3) > 0.05) return 'C/V did not copy the crate to the cursor';
+      kit.press('KeyZ', { ctrlKey: true });
+      if (n() !== 1) return 'Ctrl+Z did not take back the paste';
+      // number keys pick a tool; Ctrl alone switches to the powers (Ctrl+Z doesn't)
+      kit.press('Digit2');
+      if (controls.toolKind !== 'rope') return `2 picked ${controls.toolKind}`;
+      kit.press('ControlLeft');
+      kit.press('Digit2');
+      if (controls.powerKind !== 'pull') return `Ctrl, 2 picked ${controls.powerKind}`;
+      kit.press('ControlLeft');
+      kit.press('Digit1');
+      kit.key('ControlLeft');
+      kit.press('KeyZ', { ctrlKey: true });
+      kit.key('ControlLeft', false);
+      if (controls.tab !== 'tools' || controls.toolKind !== null) return `Ctrl, 1, Ctrl+Z left ${controls.tab} / ${controls.toolKind}`;
+      // the push power shoves the crate away from the cursor
+      kit.reset();
+      const crate = kit.spawn('crate', 0.8, 0.45).parts[0];
+      kit.advance(0.5);
+      controls.setPower('push');
+      kit.move(0, 0.5);
+      kit.down(0, 0.5);
+      kit.advance(0.3);
+      kit.up(0, 0.5);
+      if (crate.x < 1.4) return `push moved the crate to ${crate.x.toFixed(2)}`;
+      // with time paused, dragging puts it at the cursor and A turns it there
+      controls.setTool('drag');
+      kit.advance(1);
+      game.paused = true;
+      const a0 = crate.a;
+      kit.down(crate.x, crate.y);
+      kit.move(crate.x - 2, crate.y + 1.5);
+      const want = { x: controls.wx, y: controls.wy };
+      kit.key('KeyA');
+      for (let i = 0; i < 30; i++) game.renderFrame(1 / 60, 1);
+      kit.key('KeyA', false);
+      kit.up(want.x, want.y);
+      game.paused = false;
+      if (Math.hypot(crate.x - want.x, crate.y - want.y) > 0.05) return `paused drag left it at ${crate.x.toFixed(2)}, ${crate.y.toFixed(2)} (cursor ${want.x.toFixed(2)}, ${want.y.toFixed(2)})`;
+      if (Math.abs(crate.a - a0) < 0.3) return `A turned it only ${(crate.a - a0).toFixed(2)} rad`;
+      return true;
+    }],
     ['extra: undo and redo: spawn, rope, delete, freeze and move', () => {
       kit.reset();
       const ids = () => game.entities.map((e) => e.def.id).join(',');
       const ropes = () => game.connections.list.filter((c) => c.kind === 'rope').length;
-      // two crates spawned by clicking, a rope between them, then one deleted
+      // two crates spawned with E at the cursor, a rope between them, then one deleted
       controls.arm(getItem('crate')!);
       for (const x of [-1.5, 1.5]) {
-        kit.down(x, 0.5);
-        kit.up(x, 0.5);
+        kit.move(x, 0.5);
+        kit.press('KeyE');
       }
       controls.arm(null);
       kit.advance(1);
       if (ids() !== 'crate,crate') return `spawned ${ids()}`;
       const [a, b] = game.entities.map((e) => e.parts[0]);
-      controls.arm(getItem('tool-rope')!);
+      controls.setTool('rope');
       kit.down(a.x, a.y);
       kit.move(b.x, b.y);
       kit.up(b.x, b.y);
-      controls.arm(null);
+      controls.setTool('drag');
       if (ropes() !== 1) return `${ropes()} ropes after roping`;
       controls.deleteEntities([a.entity]);
       if (ids() !== 'crate' || ropes()) return `after deleting: ${ids()}, ${ropes()} ropes`;
@@ -1045,7 +1155,7 @@ export function makeSelfTest(game: Game, controls: Controls) {
       g.fire();
       kit.advance(1);
       if (!(cat.blood < 100)) return `shot cat is not bleeding (${cat.status()})`;
-      g.destroy();
+      game.remove(g);
       // a headshot kills the dog
       const head = dog.limbs.get('head')!.part;
       const g2 = kit.spawn('pistol', head.x + 2.5, head.y - 0.02, { flip: true }) as Firearm;
@@ -1056,7 +1166,7 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (dog.alive) return `headshot dog survived (${dog.status()})`;
       // and it drops where it stood instead of staying up on stiff legs
       if (dog.limbs.get('chest')!.part.y > 0.45) return `dead dog still standing (chest at ${dog.limbs.get('chest')!.part.y.toFixed(2)} m)`;
-      g2.destroy();
+      game.remove(g2);
       // a life syringe in the chest brings it back
       const t = dog.limbs.get('chest')!.part;
       const s = kit.spawn('syringe-life', t.x, t.y + 0.9, { angle: -Math.PI / 2 }) as Syringe;
@@ -1185,8 +1295,9 @@ export function makeSelfTest(game: Game, controls: Controls) {
           if (i % 2 === 0) peak = Math.max(peak, kit.maxSpeed());
         });
         if (peak > 20) return `run ${run}: launch at ${peak.toFixed(1)} m/s`;
-        const dead = hs.filter((h) => !h.alive).length;
-        if (dead) return `run ${run}: ${dead} died lying in the pile`;
+        // (crushed hands may bleed someone out; a launch kills outright)
+        const dead = hs.filter((h) => !h.alive && h.blood > 50).length;
+        if (dead) return `run ${run}: ${dead} killed lying in the pile`;
       }
       return true;
     }],
@@ -1589,6 +1700,471 @@ export function makeSelfTest(game: Game, controls: Controls) {
       if (stood < 2) return `only ${stood} of 4 dropped on a body got up again`;
       return true;
     }],
+    ['extra: dragging: things follow the cursor; whirled, a held thing swings round, then settles back to its angle', () => {
+      const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+      /**
+       * Grabs a part off its middle, lifts it, whirls the cursor round a circle for
+       * two seconds, then holds still: how far it turned, how far it trailed, how
+       * far the held point still wanders from the cursor once it should have caught
+       * up, and how far from its first angle it is, and how fast it turns, 3 s on.
+       */
+      const whirl = (p: Part, off: number) => {
+        const a0 = p.a;
+        const g = p.localToWorld(off, 0);
+        const local = p.worldToLocal(g.x, g.y);
+        kit.down(g.x, g.y);
+        const [cx, cy, R] = [0, 2.2, 1];
+        const lift = 30;
+        for (let i = 1; i <= lift; i++) {
+          kit.move(g.x + ((cx + R - g.x) * i) / lift, g.y + ((cy - g.y) * i) / lift);
+          game.advance(1 / 60);
+        }
+        let spin = 0;
+        let trail = 0;
+        let x = cx + R;
+        let y = cy;
+        for (let i = 1; i <= 120; i++) {
+          const t = (i / 60) * Math.PI * 2;
+          x = cx + Math.cos(t) * R;
+          y = cy + Math.sin(t) * R;
+          kit.move(x, y);
+          game.advance(1 / 60);
+          spin = Math.max(spin, Math.abs(wrap(p.a - a0)));
+          const h = p.localToWorld(local.x, local.y);
+          trail = Math.max(trail, Math.hypot(h.x - x, h.y - y));
+        }
+        let wander = 0;
+        // how far the rest of it turns round the hand meanwhile (a person's feet)
+        const far = p.entity.parts.reduce((a, q) => (Math.hypot(q.x - p.x, q.y - p.y) > Math.hypot(a.x - p.x, a.y - p.y) ? q : a), p);
+        let ang = Math.atan2(far.y - y, far.x - x);
+        let turns = 0;
+        for (let i = 1; i <= 180; i++) {
+          game.advance(1 / 60);
+          const h = p.localToWorld(local.x, local.y);
+          if (i > 25 && i <= 75) wander = Math.max(wander, Math.hypot(h.x - x, h.y - y));
+          const a = Math.atan2(far.y - y, far.x - x);
+          if (i > 20) turns += wrap(a - ang);
+          ang = a;
+        }
+        const back = Math.abs(wrap(p.a - a0));
+        const still = Math.abs(p.body.angvel());
+        kit.up(x, y);
+        return { spin, trail, wander, turns: Math.abs(turns), back, still };
+      };
+      kit.reset();
+      const gun = kit.spawn('rifle', 0, 0.3).parts[0];
+      kit.advance(1);
+      const r = whirl(gun, 0.35);
+      // (it swings round as it's whirled, but the swing dies away: it isn't left spinning)
+      if (r.spin < 0.5) return `the rifle turned only ${r.spin.toFixed(2)} rad while whirled: held rigidly`;
+      if (r.back > 0.15 || r.still > 0.5) return `3 s after the whirl the rifle is ${r.back.toFixed(2)} rad off its angle, turning at ${r.still.toFixed(2)} rad/s`;
+      if (r.wander > 0.06) return `the rifle still swung ${r.wander.toFixed(2)} m about the cursor after it stopped`;
+      if (r.trail > 0.5) return `the rifle trailed ${r.trail.toFixed(2)} m behind the cursor`;
+      kit.reset();
+      const crate = kit.spawn('crate', 0, 0.45).parts[0];
+      kit.advance(1);
+      const c = whirl(crate, 0.3);
+      if (c.spin < 0.5) return `the crate turned only ${c.spin.toFixed(2)} rad while whirled: held rigidly`;
+      if (c.back > 0.15 || c.still > 0.5) return `3 s after the whirl the crate is ${c.back.toFixed(2)} rad off its angle, turning at ${c.still.toFixed(2)} rad/s`;
+      if (c.wander > 0.06) return `the crate still swung ${c.wander.toFixed(2)} m about the cursor after it stopped`;
+      // a person dangles from the hand that holds them, but doesn't keep spinning round it
+      for (const limp of [false, true]) {
+        kit.reset();
+        const h = human(0);
+        kit.advance(1);
+        h.limp = limp;
+        const m = whirl(h.limbs.get('upperTorso')!.part, 0);
+        if (m.turns > Math.PI * 1.5) return `a${limp ? ' limp' : ''} person whirled by the chest kept spinning round it: ${(m.turns / (Math.PI * 2)).toFixed(1)} turns after it stopped`;
+      }
+      return true;
+    }],
+    ['extra: building: drawn shapes: boxes, round ones, any outline; saved and loaded', () => {
+      kit.reset();
+      controls.setTool('shape');
+      controls.shapeMat = 'wood';
+      const click = (x: number, y: number) => {
+        kit.down(x, y);
+        kit.up(x, y);
+      };
+      const n = () => game.entities.length;
+      // a box dragged out: 1 m by 0.5 m of wood
+      kit.down(-4, 1);
+      kit.move(-3, 1.5);
+      kit.up(-3, 1.5);
+      const box = game.entities[0];
+      if (n() !== 1 || box.def.id !== 'shape') return `dragging out a box made ${n()} things`;
+      const bp = box.parts[0];
+      if (Math.abs(bp.w - 32) > 1 || Math.abs(bp.h - 16) > 1) return `box is ${bp.w} x ${bp.h} px`;
+      if (Math.abs(bp.mass - 0.5 * 55) > 3) return `wooden box weighs ${bp.mass.toFixed(1)} kg`;
+      // round with Shift: a ball
+      controls.shapeMat = 'rubber';
+      kit.down(4, 1, 0, { shiftKey: true });
+      kit.move(4.6, 1.6);
+      kit.up(4.6, 1.6);
+      const ball = game.entities[1];
+      if (!ball || ball.parts[0].colliders[0].shape.type !== 0) return 'a Shift-drag made no ball';
+      // an L, corner by corner, closed on its first corner: cut into convex pieces
+      controls.shapeMat = 'metal';
+      const L: [number, number][] = [[-1, 0.2], [0.5, 0.2], [0.5, 0.6], [-0.6, 0.6], [-0.6, 1.6], [-1, 1.6]];
+      for (const [x, y] of L) click(x, y);
+      if (n() !== 2) return 'the outline was made before it was closed';
+      click(L[0][0], L[0][1]);
+      const ell = game.entities[2];
+      if (!ell || n() !== 3) return 'closing the outline made nothing';
+      const lp = ell.parts[0];
+      if (lp.colliders.length < 2) return `the L has ${lp.colliders.length} collider`;
+      // its area: 1.5 x 0.4 + 0.4 x 1 = 1 m² of metal plate (170 kg/m²)
+      if (Math.abs(lp.mass - 170) > 15) return `the metal L weighs ${lp.mass.toFixed(0)} kg`;
+      // a corner whose edge would cross the outline isn't placed
+      for (const [x, y] of [[2, 2], [3, 3], [3, 2], [2, 3]] as [number, number][]) click(x, y);
+      if (controls.draft?.pts.length !== 3) return `a bow tie got ${controls.draft?.pts.length} corners`;
+      kit.press('Escape');
+      if (controls.draft) return 'Esc did not drop the outline';
+      controls.setTool('drag');
+      kit.advance(4);
+      if (kit.maxSpeed() > 0.05) return `shapes still moving at ${kit.maxSpeed().toFixed(2)} m/s`;
+      // the L stands on its foot
+      if (Math.abs(lp.a) > 0.05 || lp.y < 0.3) return `the L fell over (angle ${lp.a.toFixed(2)}, y ${lp.y.toFixed(2)})`;
+      // saved and loaded, they are the same shapes
+      const masses = game.entities.map((e) => e.parts[0].mass.toFixed(2)).join(',');
+      loadFromString(game, saveToString(game));
+      const after = game.entities.map((e) => e.parts[0].mass.toFixed(2)).join(',');
+      if (after !== masses) return `masses ${masses} came back as ${after}`;
+      if (game.entities.map((e) => e.label).join(',') !== 'Wood shape,Rubber shape,Metal shape') return `came back as ${game.entities.map((e) => e.label).join(',')}`;
+      return true;
+    }],
+    ['extra: building: resizing by the handles keeps connections; undo, paste and saves keep the size', () => {
+      kit.reset();
+      const plank = kit.spawn('plank', 0, 2);
+      plank.setFrozen(true);
+      kit.advance(0.1);
+      const p0 = plank.parts[0];
+      const m0 = p0.mass;
+      const left = p0.localToWorld((-p0.w / 2) * PX, 0);
+      game.connections.create('hinge', p0, left, null, left);
+      controls.selection = new Set([plank]);
+      // the right handle, pulled 1 m further right
+      const right = p0.localToWorld((p0.w / 2) * PX, 0);
+      kit.move(right.x, right.y);
+      kit.down(right.x, right.y);
+      if (!controls.resize) return 'the right handle was not picked up';
+      kit.move(right.x + 1, right.y + 0.3);
+      kit.up(right.x + 1, right.y + 0.3);
+      const big = game.entities[0];
+      const bp = big?.parts[0];
+      if (!bp || big === plank) return 'not resized';
+      if (bp.w !== 96 || bp.h !== 5) return `resized to ${bp.w} x ${bp.h} px, not 96 x 5`;
+      const l2 = bp.localToWorld((-bp.w / 2) * PX, 0);
+      if (Math.hypot(l2.x - left.x, l2.y - left.y) > 0.02) return 'its left end moved';
+      const hinge = game.connections.list[0];
+      if (game.connections.list.length !== 1 || hinge.a !== bp || hinge.kind !== 'hinge') return 'the hinge did not stay';
+      const at = hinge.a.localToWorld(hinge.la.x, hinge.la.y);
+      if (Math.hypot(at.x - left.x, at.y - left.y) > 0.01) return 'the hinge moved';
+      if (Math.abs(bp.mass / m0 - 1.5) > 0.05) return `mass went from ${m0.toFixed(2)} to ${bp.mass.toFixed(2)} kg`;
+      if (!controls.selection.has(big)) return 'the resized plank is not selected';
+      // undo and redo
+      controls.undo();
+      if (game.entities[0]?.parts[0].w !== 64) return 'undo did not bring back the short plank';
+      controls.redo();
+      const again = game.entities[0];
+      if (again.parts[0].w !== 96) return 'redo did not make it long again';
+      // copied and pasted, saved and loaded, it keeps its size
+      kit.move(again.parts[0].x, again.parts[0].y);
+      kit.advance(0);
+      controls.copy([again]);
+      kit.move(3, 1);
+      controls.paste();
+      if (game.entities[1]?.parts[0].w !== 96) return 'the pasted plank is not long';
+      loadFromString(game, saveToString(game));
+      if (game.entities.some((e) => e.parts[0].w !== 96)) return 'a loaded plank is not long';
+      // a crate made big: stronger by its weight, and back to its own size from the menu
+      kit.reset();
+      const crate = kit.spawn('crate', 0, 1);
+      const hp0 = crate.parts[0].maxHp;
+      const huge = controls.setSize(crate, 56, 56)!;
+      if (Math.abs(huge.parts[0].maxHp / hp0 - 4) > 0.2) return `a crate twice the size has ${(huge.parts[0].maxHp / hp0).toFixed(2)}x the hit points`;
+      const back = controls.setSize(huge)!;
+      if (back.parts[0].w !== 28 || back.config) return 'Reset size did not put it back';
+      return true;
+    }],
+    ['extra: building: hinges swing only as far as their limit; motors run at the speed they are set to', () => {
+      const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+      // a plank hinged at one end, limited to 30 degrees: it sags to the limit and no further,
+      // the same pointing either way (the limit straddling the half turn)
+      for (const angle of [0, Math.PI]) {
+        kit.reset();
+        const plank = kit.spawn('plank', 0, 3, { angle });
+        plank.setFrozen(true);
+        kit.advance(0.1);
+        const p = plank.parts[0];
+        // the end on the left either way: its own -x end, or +x when turned round
+        const end = p.localToWorld(((angle ? -1 : 1) * -p.w * PX) / 2, 0);
+        const c = game.connections.create('hinge', p, end, null, end)!;
+        game.connections.setLimit(c, Math.PI / 6);
+        plank.setFrozen(false);
+        let most = 0;
+        for (let i = 0; i < 30; i++) {
+          kit.advance(0.1);
+          most = Math.max(most, Math.abs(wrap(p.a - angle)));
+        }
+        const now = Math.abs(wrap(p.a - angle));
+        if (most > Math.PI / 6 + 0.06) return `turned ${angle ? 'round' : ''}, the limited plank swung ${((most * 180) / Math.PI).toFixed(0)} degrees`;
+        if (now < Math.PI / 6 - 0.08) return `turned ${angle ? 'round' : ''}, the limited plank hangs at ${((now * 180) / Math.PI).toFixed(0)} degrees`;
+        // saved and loaded, the limit stays
+        loadFromString(game, saveToString(game));
+        const k = game.connections.list[0];
+        if (k?.limit === undefined || Math.abs(k.limit - Math.PI / 6) > 1e-6) return 'the limit was not saved';
+        kit.advance(2);
+        const q = game.entities[0].parts[0];
+        if (Math.abs(wrap(q.a - angle)) > Math.PI / 6 + 0.06) return 'the loaded hinge swung past its limit';
+        // freed, it swings down past where the limit held it
+        game.connections.setLimit(k, null);
+        let swung = 0;
+        for (let i = 0; i < 30; i++) {
+          kit.advance(0.1);
+          swung = Math.max(swung, Math.abs(wrap(q.a - angle)));
+        }
+        if (swung < Math.PI / 2) return `freed, the plank swung only ${((swung * 180) / Math.PI).toFixed(0)} degrees`;
+      }
+      // a motor's rotor at 400% runs about four times as fast as at 100%
+      const spin = (speed: number) => {
+        kit.reset();
+        const m = kit.spawn('motor', 0, 1) as Motor;
+        m.housing.setFrozen(true);
+        m.speed = speed;
+        m.activate();
+        kit.advance(2);
+        return Math.abs(m.rotor.av);
+      };
+      const slow = spin(1);
+      const fast = spin(4);
+      if (fast / slow < 3.5) return `rotor at 400%: ${fast.toFixed(1)} rad/s, at 100%: ${slow.toFixed(1)} rad/s`;
+      return true;
+    }],
+    ['extra: building: weld touching things together; contraptions saved, spawned, exported and imported', () => {
+      kit.reset();
+      // two crates side by side, a plank across them
+      const a = kit.spawn('crate', -0.45, 0.45);
+      const b = kit.spawn('crate', 0.45, 0.45);
+      const top = kit.spawn('plank', 0, 0.98);
+      kit.advance(1.5);
+      const welds = controls.weldTogether([a, b, top]);
+      if (welds < 2) return `${welds} welds`;
+      // lifted by one crate, the rest come along
+      const before = top.parts[0].y;
+      const ap = a.parts[0];
+      kit.drag(ap.x, ap.y, ap.x, ap.y + 2, 0.5, 1);
+      if (top.parts[0].y < before + 1.5 || b.parts[0].y < 2) return 'the welded pile did not come up together';
+      kit.up(ap.x, ap.y);
+      kit.advance(2);
+      // saved as a contraption, it spawns with its welds
+      const store = (controls.ui as unknown as { contraptions: Contraptions }).contraptions;
+      const n0 = store.list.length;
+      const saved = store.add('Test bench', capture(game, [a, b, top]), thumbnail([a, b, top]));
+      if (!saved || store.list.length !== n0 + 1) return 'not saved';
+      try {
+        if (!saved.thumb.startsWith('data:image/png')) return 'no picture';
+        const def = store.defOf(saved);
+        controls.arm(def);
+        kit.move(-6, 1);
+        kit.press('KeyE');
+        controls.arm(null);
+        const made = game.entities.slice(3);
+        if (made.length !== 3) return `spawned ${made.length} things`;
+        const own = game.connections.list.filter((c) => c.kind === 'weld' && made.includes(c.a.entity));
+        if (own.length !== welds) return `spawned with ${own.length} welds, not ${welds}`;
+        if (Math.abs(made.reduce((s, e) => s + e.parts[0].x, 0) / 3 + 6) > 0.1) return 'not spawned at the cursor';
+        // Ctrl+Z takes the whole contraption back (Z alone freezes, as in People Playground)
+        kit.press('KeyZ', { ctrlKey: true });
+        if (game.entities.length !== 3) return 'Ctrl+Z did not take the contraption back';
+        // exported and imported, it's the same
+        const text = store.exportText(saved);
+        const data = JSON.parse(text) as unknown;
+        if (!Contraptions.isFile(data)) return 'the export is not a contraption file';
+        const copy = store.importFile(data);
+        if (!copy) return 'not imported';
+        store.remove(copy.id);
+        if (copy.snap.entities.length !== 3 || copy.name !== 'Test bench') return 'imported something else';
+      } finally {
+        store.remove(saved.id);
+      }
+      if (store.list.length !== n0) return 'not deleted';
+      return true;
+    }],
+    ['extra: sounds: blows on bodies smack; wood and stone never clank like metal', async () => {
+      await game.sound.whenLoaded();
+      const heard: { key: string; gain: number }[] = [];
+      const listen = (fn: () => void) => {
+        heard.length = 0;
+        game.sound.tap = { play: (s) => heard.push({ key: s.key, gain: s.gain }), hold: () => {} };
+        try {
+          fn();
+        } finally {
+          game.sound.tap = null;
+        }
+      };
+      const metal = () => heard.filter((h) => /^impact\/(metal|plate)/.test(h.key));
+      // wood and concrete dropped on the floor, and someone taking a bat
+      kit.reset();
+      const h = human(-3);
+      kit.advance(1);
+      listen(() => {
+        kit.spawn('crate', 0, 2.5);
+        kit.spawn('concrete-block', 2, 2.5);
+        kit.spawn('plank', 4, 2);
+        kit.advance(2);
+        arm(h, 'bat');
+      });
+      if (!h.heldItems().length) return 'the bat was not taken';
+      if (metal().length) return `wood and stone made metal sounds: ${metal().map((m) => m.key).join(', ')}`;
+      if (!heard.some((s) => s.key.startsWith('impact/wood')) || !heard.some((s) => s.key === 'impact/stone')) return 'no wood or stone sounds';
+      // a steel box dropped on someone lying down: a smack, louder than any clank
+      kit.reset();
+      const v = human(0);
+      kit.advance(0.5);
+      v.limp = true;
+      kit.advance(2);
+      const t = v.limbs.get('midTorso')!.part;
+      const hp0 = t.hp;
+      listen(() => {
+        kit.spawn('metal-box', t.x, t.y + 2.5);
+        kit.advance(1.5);
+      });
+      if (t.hp >= hp0) return 'the box did not hurt';
+      const smack = Math.max(0, ...heard.filter((s) => s.key.startsWith('impact/punch')).map((s) => s.gain));
+      if (!smack) return `no smack when the box hit (${heard.map((s) => s.key).join(', ')})`;
+      const clank = Math.max(0, ...metal().map((s) => s.gain));
+      if (clank > smack) return `the box clanked (${clank.toFixed(2)}) louder than the body smacked (${smack.toFixed(2)})`;
+      return true;
+    }],
+    ...areaTests({ game, controls, kit, human, arm }),
+    ['extra: balance: people step to catch a shove, land on their feet when set down, and still go over when hit hard', () => {
+      const shove = (where: string, dv: number): Human => {
+        kit.reset();
+        const h = human(0);
+        kit.advance(1.5);
+        const m = h.parts.reduce((s, p) => s + p.mass, 0);
+        h.limbs.get(where as 'midTorso')!.part.body.applyImpulse({ x: dv * m, y: 0 }, true);
+        return h;
+      };
+      // a firm shove either way: they stagger a step or two and stay up
+      for (const dv of [2.5, -2.5]) {
+        const h = shove('midTorso', dv);
+        let fell = false;
+        let stepped = false;
+        game.advance(3, () => {
+          if (h.state !== 'stand') fell = true;
+          if ((h as unknown as { stumbling: boolean }).stumbling) stepped = true;
+        });
+        if (fell) return `shoved at ${dv} m/s, they fell (${h.status()})`;
+        if (!stepped) return `shoved at ${dv} m/s, they never stepped to catch it`;
+      }
+      // a huge one still knocks them flat
+      const big = shove('upperTorso', 7);
+      kit.advance(3);
+      if (big.state === 'stand') return 'a 7 m/s shove left them standing';
+      // picked up by the chest, carried and set down on their feet: they stand
+      kit.reset();
+      const h = human(0);
+      kit.advance(1.5);
+      const p = h.limbs.get('upperTorso')!.part;
+      const x0 = p.x;
+      const y0 = p.y;
+      kit.down(x0, y0);
+      for (let i = 1; i <= 30; i++) {
+        kit.move(x0 + (i / 30) * 1.5, y0 + Math.sin((i / 30) * Math.PI) * 0.5 + (0.15 * i) / 30);
+        game.advance(1 / 60);
+      }
+      game.advance(0.3);
+      kit.up(x0 + 1.5, y0 + 0.15);
+      kit.advance(1.2);
+      if (h.state !== 'stand') return `set down on their feet, they're ${h.status()} after 1.2 s`;
+      return true;
+    }],
+    ['extra: destruction: a limb wrenched out hangs on by stretched flesh until it is pulled too far', () => {
+      kit.reset();
+      const h = human(0);
+      kit.advance(1);
+      for (const k of ['upperTorso', 'midTorso', 'lowerTorso'] as const) h.limbs.get(k)!.part.setFrozen(true);
+      const fore = h.limbs.get('lowerArmF')!;
+      h.rupture(fore);
+      const strands = () => (h as unknown as { tendons: { count: number } | null }).tendons?.count ?? 0;
+      if (!fore.severed || strands() !== 1) return `wrenched out: severed ${fore.severed}, ${strands()} strands`;
+      // it hangs off the elbow, not falling to the floor
+      kit.advance(1.5);
+      const elbow = fore.parent!.part.localToWorld(fore.a1.x, fore.a1.y);
+      const end = fore.part.localToWorld(fore.a2.x, fore.a2.y);
+      const gap = Math.hypot(elbow.x - end.x, elbow.y - end.y);
+      if (strands() !== 1 || gap > 0.4) return `hanging, the forearm is ${gap.toFixed(2)} m from the elbow (${strands()} strands)`;
+      // dragged away by the hand, it stretches and then lets go
+      const hand = h.limbs.get('handF')!.part;
+      let x = hand.x;
+      const y = hand.y;
+      kit.down(x, y);
+      let snapped = -1;
+      for (let i = 0; i < 120 && snapped < 0; i++) {
+        x += 0.03;
+        kit.move(x, y);
+        game.advance(1 / 60);
+        if (!strands()) snapped = i;
+      }
+      kit.up(x, y);
+      if (snapped < 0) return 'dragged 3.6 m away, it still hung on';
+      if (snapped < 10) return `it let go at once (${snapped} frames)`;
+      return true;
+    }],
+    ['extra: destruction: a limb hanging on by flesh still hangs on after flipping the body', () => {
+      kit.reset();
+      const h = human(0);
+      kit.advance(0.5);
+      h.rupture(h.limbs.get('lowerLegB')!);
+      kit.advance(0.3);
+      const h2 = game.flipEntity(h) as typeof h | null;
+      if (!h2) return 'could not flip';
+      kit.advance(0.3);
+      const leg = h2.limbs.get('lowerLegB')!;
+      const n = (h2 as unknown as { tendons: { count: number } | null }).tendons?.count ?? 0;
+      if (!leg.severed || n !== 1) return `flipped: shin severed ${leg.severed}, ${n} strands`;
+      return true;
+    }],
+    ['extra: destruction: a broken bone lets the limb bend the wrong way; mended, it stops where it should', () => {
+      // a shin wrenched both ways with the thigh held still: how far past the knee's range it goes
+      const wrench = (brk: boolean, mend: boolean) => {
+        kit.reset();
+        const h = human(0);
+        h.limp = true;
+        kit.advance(1);
+        const shin = h.limbs.get('lowerLegF')!;
+        const thigh = shin.parent!;
+        if (brk) {
+          h.damage(shin.part, shin.spec.hp * 0.6, 'blunt', { x: shin.part.x, y: shin.part.y });
+          if (!shin.broken) return NaN;
+        }
+        if (mend) h.heal();
+        thigh.part.setFrozen(true);
+        const f = h.facing;
+        let past = 0;
+        for (const dir of [1, -1]) {
+          for (let i = 0; i < 90; i++) {
+            const a = shin.part.a;
+            shin.part.body.applyImpulseAtPoint({ x: Math.cos(a) * dir * 0.6, y: Math.sin(a) * dir * 0.6 }, shin.part.localToWorld(0, -0.15), true);
+            game.advance(1 / 120);
+            const rel = f * (shin.part.a - thigh.part.a);
+            const r = Math.atan2(Math.sin(rel), Math.cos(rel));
+            past = Math.max(past, shin.spec.lo! - r, r - shin.spec.hi!);
+          }
+        }
+        return past;
+      };
+      const whole = wrench(false, false);
+      const broken = wrench(true, false);
+      const mended = wrench(true, true);
+      if (Number.isNaN(broken)) return 'the knock did not break the shin';
+      if (whole > 0.15) return `unbroken, the knee bent ${whole.toFixed(2)} rad past its range`;
+      if (broken < 0.6) return `broken, the knee bent only ${broken.toFixed(2)} rad past its range`;
+      if (mended > 0.15) return `mended, the knee still bent ${mended.toFixed(2)} rad past its range`;
+      return true;
+    }],
   ];
 
   /** Runs every test, or only those whose name contains `filter`. */
@@ -1599,22 +2175,39 @@ export function makeSelfTest(game: Game, controls: Controls) {
     // clock throttling allows. Hold the loop still and the sound off meanwhile.
     const muted = game.sound.muted;
     game.sound.setMuted(true);
+    // the tests play in the sandbox: the main menu, up as the game starts, would keep their keys from it
+    (controls.ui as unknown as { mainMenu?: { close(): void } }).mainMenu?.close();
     await kit.still(async () => {
       for (const [name, fn] of tests) {
         if (filter && !name.includes(filter)) continue;
+        // (each on the short step: one that ran the frame loop on a busy machine may have left the longer one)
+        game.resetStep();
         const t0 = performance.now();
         let r: string | true;
         try {
-          r = fn();
+          r = await fn();
         } catch (e) {
-          r = 'threw: ' + String(e);
+          r = 'threw: ' + String(e) + (e instanceof Error && /unreachable/.test(e.message) ? ' @ ' + (e.stack ?? '').split(/\n/).slice(5, 24).map((s) => s.trim().replace(/^at /, '')).join(' < ') : '');
         }
         results.push({ name, pass: r === true, detail: r === true ? 'ok' : r, ms: Math.round(performance.now() - t0) });
+        // Rapier panicked (a freed body asked about, say): every call after fails, and a
+        // test waiting on the world could wait forever. The rest aren't run; this one's named.
+        if (r !== true && /unreachable|recursive use|memory access out of bounds/.test(r)) {
+          game.halted = true;
+          for (const [other] of tests) {
+            if (results.some((x) => x.name === other) || (filter && !other.includes(filter))) continue;
+            results.push({ name: other, pass: false, detail: `not run: Rapier broke in "${name}"`, ms: 0 });
+          }
+          break;
+        }
         await new Promise((res) => setTimeout(res, 0));
       }
     });
     game.sound.setMuted(muted);
-    kit.reset();
+    // (with Rapier broken this throws too: the results are still given)
+    try {
+      kit.reset();
+    } catch {}
     console.table(results);
     return results;
   };

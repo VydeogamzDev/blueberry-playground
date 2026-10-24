@@ -1,10 +1,11 @@
 import { Item, type HoldSpec } from './Item';
 import type { PropConfig } from './Prop';
 import { PK } from '../systems/Particles';
-import { PX } from '../engine/constants';
+import type { CaseLook } from '../systems/Casings';
 import type { Game } from '../world/Game';
 import type { GunSound } from '../engine/Sound';
 import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
+import type { EditField, ValueEditor } from '../tools/Controls';
 
 export interface GunSpec {
   sound: GunSound;
@@ -31,6 +32,9 @@ export interface GunSpec {
   flash: number;
   /** Momentum per energy unit transferred to what the bullet hits. */
   push?: number;
+  /** A spent case's size in sprite pixels (length, width; by its sound if not given) and look. */
+  case?: { len: number; wid: number; look?: CaseLook };
+  /** (a shotgun's red shells: its cases are thrown as shells) */
   shellColor?: number;
   /** Seconds the barrel takes to spin up (miniguns). */
   spinUp?: number;
@@ -38,33 +42,78 @@ export interface GunSpec {
   laser?: number;
 }
 
+/** The numbers Edit gun… changes (kept with the gun in saves when they differ from its kind's). */
+type Tunable = 'recoil' | 'damage' | 'pellets' | 'rate' | 'energy';
+
+/**
+ * Edit gun…'s sliders and how far each goes. The fire rate is shown as the time
+ * between shots; penetration (the bullet's energy) spans a log scale.
+ */
+const TUNING: (Omit<EditField, 'get' | 'set'> & { key: Tunable })[] = [
+  { key: 'recoil', label: 'Recoil', unit: 'N·s', min: 0, max: 20, step: 0.1 },
+  { key: 'damage', label: 'Power (damage per bullet)', min: 1, max: 300, step: 1 },
+  { key: 'pellets', label: 'Bullets per shot', min: 1, max: 24, step: 1 },
+  { key: 'rate', label: 'Time between shots', unit: 's', min: 0.02, max: 3, step: 0.01 },
+  { key: 'energy', label: 'Penetration', min: 20, max: 12000, step: 10, log: true },
+];
+
+/** Seconds a gun that spins up fires for, once spun up, on a single activation. */
+const BURST = 0.5;
+
+/** Each kind of gun's spent case (sprite pixels long and wide), unless its spec says. */
+const CASE_SIZE: Partial<Record<GunSound, NonNullable<GunSpec['case']>>> = {
+  pistol: { len: 2, wid: 1 }, smg: { len: 2, wid: 1 }, rifle: { len: 3, wid: 1 }, minigun: { len: 3, wid: 1 },
+  sniper: { len: 4, wid: 1.5 }, shotgun: { len: 3, wid: 2 },
+};
+
 /** A gun: fires hitscan-style raycast bullets from its muzzle when activated. */
 export class Firearm extends Item {
+  /** This gun's own numbers: a copy of its kind's, so editing one gun leaves the others be. */
   readonly gun: GunSpec;
+  /** Its kind's numbers (Reset puts them back). */
+  private readonly stock: GunSpec;
   private cooldown = 0;
   private spin = 0;
+  /** Seconds of firing left from a single activation (see activate()). */
+  private burst = 0;
   shots = 0;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, hold: HoldSpec, gun: GunSpec, x: number, y: number, opts: SpawnOptions) {
     super(game, def, { ...cfg, ccd: true }, hold, x, y, opts);
-    this.gun = gun;
+    this.stock = gun;
+    this.gun = { ...gun };
     this.activatable = true;
   }
 
-  /** One shot (automatic guns keep firing while activation is held). */
+  /**
+   * Keeps firing while activation is held: automatic guns, and energy weapons
+   * (there's nothing to work between shots: the beam keeps coming while the
+   * trigger is held, by the player or by a person holding it).
+   */
+  get automatic(): boolean {
+    return this.gun.auto || this.gun.laser !== undefined;
+  }
+
+  /**
+   * One shot (automatic guns keep firing while activation is held). A gun that
+   * has to spin up first fires a short burst once it has: a single activation
+   * (the menu, a pulse, Use on whoever holds it) would otherwise do nothing.
+   */
   activate(): void {
-    if (!this.gun.spinUp) this.fire();
+    if (this.gun.spinUp) this.burst = BURST;
+    else this.fire();
   }
 
   preStep(dt: number): void {
     this.cooldown -= dt;
-    if (!this.gun.auto) return;
-    const want = this.activeHeld || this.powered;
+    if (!this.automatic) return;
+    const want = this.activeHeld || this.powered || this.burst > 0;
     if (this.gun.spinUp) {
       this.spin = Math.max(0, Math.min(1, this.spin + (want ? dt : -dt * 0.6) / this.gun.spinUp));
       if (this.spin > 0.02) this.game.sound.hold(this, 'machine/motor_loop', 0.15 + this.spin * 0.25, this.main.x, 0.6 + this.spin * 0.9);
       if (want && this.spin < 1) return;
     }
+    if (this.burst > 0) this.burst = Math.max(0, this.burst - dt);
     if (want && this.cooldown <= 0) this.fire();
   }
 
@@ -123,11 +172,14 @@ export class Firearm extends Item {
     if (g.eject) {
       const e = p.pixelToWorld(g.eject[0], g.eject[1]);
       const v = p.body.linvel();
-      ps.emit(PK.Shell, e.x, e.y, {
-        vx: v.x - fwd.x * (0.6 + Math.random()) + up.x * (2 + Math.random() * 1.5),
-        vy: v.y - fwd.y * (0.6 + Math.random()) + up.y * (2 + Math.random() * 1.5),
-        life: 4, size: PX * (g.sound === 'shotgun' ? 2 : 1), color: g.shellColor ?? 0xc9a43c, color1: 0xa8862e, gravity: 1, drag: 0.1,
-      });
+      // out of the port, up and back over the shooter's hand
+      const c = g.case ?? CASE_SIZE[g.sound] ?? { len: 2, wid: 1 };
+      const kick = 2 + Math.random() * 1.5;
+      game.casings.eject(
+        e.x, e.y,
+        v.x - fwd.x * (0.6 + Math.random()) + up.x * kick, v.y - fwd.y * (0.6 + Math.random()) + up.y * kick,
+        c.look ?? (g.shellColor ? 'shell' : 'brass'), c.len, c.wid, p.body,
+      );
     }
     game.sound.gunshot(g.sound, m.x);
     const shake = g.sound === 'sniper' ? 0.08 : g.sound === 'shotgun' ? 0.06 : 0.02;
@@ -135,8 +187,69 @@ export class Firearm extends Item {
   }
 
   contextActions(): ContextAction[] {
-    const acts: ContextAction[] = [{ label: this.gun.auto ? 'Fire (hold F)' : 'Fire', hint: 'F', action: () => this.fire() }];
+    const acts: ContextAction[] = [{ label: 'Fire', hint: this.automatic ? 'hold F' : 'F', action: () => this.activate() }];
     if (this.holder) acts.push({ label: 'Drop', action: () => this.holder?.dropItem(this) });
     return acts;
+  }
+
+  /** A number as Edit gun… shows it (the fire rate as the time between shots). */
+  private tuned(k: Tunable): number {
+    const g = this.gun;
+    return k === 'rate' ? 1 / g.rate : k === 'pellets' ? g.pellets ?? 1 : g[k];
+  }
+
+  /** One of Edit gun…'s sliders (a kind of gun can set its own range: see RocketLauncher). */
+  protected tuning(k: Tunable): (typeof TUNING)[number] {
+    return TUNING.find((x) => x.key === k)!;
+  }
+
+  /** Sets one as Edit gun… shows it, kept within its slider's range (a rate of 0 would never fire again). */
+  private tune(k: Tunable, v: number): void {
+    const t = this.tuning(k);
+    const c = Math.min(t.max, Math.max(t.min, v));
+    if (k === 'rate') this.gun.rate = 1 / c;
+    else if (k === 'pellets') this.gun.pellets = Math.round(c);
+    else this.gun[k] = c;
+  }
+
+  /** Edit gun… (see Controls): recoil, power, bullets per shot, time between shots and penetration, for this gun alone. */
+  editor(): ValueEditor {
+    const laser = this.gun.laser !== undefined;
+    return {
+      label: 'Edit gun…',
+      title: `Edit ${this.label.toLowerCase()}`,
+      // (a beam is one burn through whatever it can pass: no pellets or penetration to set)
+      fields: TUNING.filter((t) => !laser || (t.key !== 'pellets' && t.key !== 'energy')).map(({ key }) => this.tuning(key)).map((t) => ({
+        ...t,
+        get: () => this.tuned(t.key),
+        set: (v: number) => this.tune(t.key, v),
+      })),
+      reset: () => {
+        const s = this.stock;
+        Object.assign(this.gun, { recoil: s.recoil, damage: s.damage, pellets: s.pellets, rate: s.rate, energy: s.energy });
+      },
+    };
+  }
+
+  protected serializeExtra(): Record<string, unknown> | undefined {
+    const base = super.serializeExtra();
+    const edited: Partial<Record<Tunable, number>> = {};
+    let any = false;
+    for (const { key } of TUNING) {
+      const v = this.gun[key] ?? 1;
+      if (v === (this.stock[key] ?? 1)) continue;
+      edited[key] = v;
+      any = true;
+    }
+    return any ? { ...base, gun: edited } : base;
+  }
+
+  protected restoreExtra(extra: Record<string, unknown>): void {
+    super.restoreExtra(extra);
+    const edited = extra.gun as Partial<Record<Tunable, unknown>> | undefined;
+    for (const { key } of TUNING) {
+      const v = edited?.[key];
+      if (typeof v === 'number' && v >= 0 && v < Infinity && (key !== 'rate' || v > 0)) this.gun[key] = v;
+    }
   }
 }

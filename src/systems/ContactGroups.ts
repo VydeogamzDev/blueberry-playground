@@ -2,6 +2,12 @@ import { RAPIER } from '../engine/Physics';
 import { COLOR_BITS, COLOR_SHIFT, GROUP, GROUPS_DYNAMIC, groups } from '../engine/constants';
 import type { Game } from '../world/Game';
 import type { Part } from '../world/Part';
+import { RIGID_KINDS } from './Connections';
+import { rigidUnitsOf } from '../tools/Arrange';
+
+/** A part held by this many welds, hinges or pins gets this many more solver iterations (stiffer contraptions). */
+const BUSY_JOINTS = 3;
+const EXTRA_ITERATIONS = 2;
 
 const COLORS = 16 - COLOR_SHIFT;
 /** A colored entity's parts: never touch their own color, touch everything else. */
@@ -44,6 +50,11 @@ interface Box {
  * skip, Part.noCollide), nor do parts on their own. Entities in a crowd too dense
  * for a free color stay plain, with the hook, as before. The same contacts come out.
  *
+ * Things welded together (a rigid unit, see Arrange.rigidUnitsOf()) are colored
+ * as one: none of their parts touch each other, welded to each other directly
+ * or not, and their welds' pairs need no hook either (a contraption of fifty
+ * welded planks made 2 500 calls a step).
+ *
  * Parts without the hook get a hook that is never called instead (NO_CALLS):
  * Rapier reuses the contacts of a pair that has barely moved (by up to 5 cm)
  * rather than working them out again, except for hooked pairs. That would make a
@@ -55,6 +66,11 @@ export class ContactGroups {
   enabled = true;
   private colorOf = new Map<number, number>();
   private byGroup = new Map<number, Part[]>();
+  /** The rigid units, by part (from 1), as the connections were at `unitsAt` (their version). */
+  private units = new Map<Part, number>();
+  private unitsAt = -1;
+  /** Parts given extra solver iterations (see BUSY_JOINTS). */
+  private stiff = new Set<Part>();
 
   constructor(private game: Game) {
     // (Rapier is only loaded once the game starts)
@@ -62,20 +78,48 @@ export class ContactGroups {
     NO_CALLS = RAPIER.ActiveHooks.FILTER_INTERSECTION_PAIRS;
   }
 
+  /** The rigid unit a part is in (0: none), as the colors have it. */
+  unitOf(p: Part): number {
+    return this.units.get(p) ?? 0;
+  }
+
+  /** The connections changed: the rigid units again, and the extra iterations of parts held by several joints. */
+  private refreshUnits(): void {
+    const C = this.game.connections;
+    if (this.unitsAt === C.version) return;
+    this.unitsAt = C.version;
+    this.units = rigidUnitsOf(this.game);
+    const joints = new Map<Part, number>();
+    for (const k of C.list) {
+      if (!RIGID_KINDS.has(k.kind) || !k.joint) continue;
+      for (const p of [k.a, k.b]) if (p) joints.set(p, (joints.get(p) ?? 0) + 1);
+    }
+    const want = new Set<Part>();
+    for (const [p, n] of joints) if (n >= BUSY_JOINTS && !p.destroyed) want.add(p);
+    for (const p of this.stiff) if (!want.has(p) && !p.destroyed) p.body.setAdditionalSolverIterations(0);
+    for (const p of want) if (!this.stiff.has(p)) p.body.setAdditionalSolverIterations(EXTRA_ITERATIONS);
+    this.stiff = want;
+  }
+
   /** Runs just before each physics step, after anything that moves or regroups parts. */
   update(): void {
     const byGroup = this.byGroup;
     byGroup.clear();
+    this.refreshUnits();
+    const units = this.units;
     for (const e of this.game.entities) {
       if (e.destroyed) continue;
       for (const p of e.parts) {
         // parts in no-collide mode only touch the floor and walls
         if (p.destroyed || p.noCollideAll || p.onlyStatic) continue;
+        // (a rigid unit's parts are kept apart as one thing's: negative ids, apart from Part.group's)
+        const u = units.get(p);
+        const id = u !== undefined ? -u : p.group;
         if (!this.enabled) set(p, GROUPS_DYNAMIC, HOOK);
-        else if (p.group === 0) set(p, GROUPS_DYNAMIC, hookFor(p));
+        else if (id === 0) set(p, GROUPS_DYNAMIC, hookFor(p));
         else {
-          let list = byGroup.get(p.group);
-          if (!list) byGroup.set(p.group, (list = []));
+          let list = byGroup.get(id);
+          if (!list) byGroup.set(id, (list = []));
           list.push(p);
         }
       }
@@ -134,9 +178,10 @@ export class ContactGroups {
     for (const b of boxes) {
       if (b.color >= 0) this.colorOf.set(b.id, b.color);
       else this.colorOf.delete(b.id);
+      const own = b.id < 0 ? new Set(b.parts) : null;
       for (const p of b.parts) {
         if (b.color < 0) set(p, GROUPS_DYNAMIC, HOOK);
-        else set(p, COLORED[b.color], hookFor(p));
+        else set(p, COLORED[b.color], own ? hookOutside(p, own) : hookFor(p));
       }
     }
   }
@@ -145,6 +190,13 @@ export class ContactGroups {
 /** The hook only for pairs of its own to skip (a held item and the hand, a lodged blade): only it knows them. */
 function hookFor(p: Part): RAPIER.ActiveHooks {
   return p.noCollide !== null && p.noCollide.size > 0 ? HOOK : NO_CALLS;
+}
+
+/** A rigid unit's part: the hook only for pairs to skip with something outside its unit (inside, its color keeps them apart). */
+function hookOutside(p: Part, unit: Set<Part>): RAPIER.ActiveHooks {
+  if (p.noCollide === null || !p.noCollide.size) return NO_CALLS;
+  for (const q of p.noCollide) if (!unit.has(q)) return HOOK;
+  return NO_CALLS;
 }
 
 function set(p: Part, cg: number, hook: RAPIER.ActiveHooks): void {

@@ -66,7 +66,5 @@ export function groups(membership: number, filter: number): number {
 
 export const GROUPS_STATIC = groups(GROUP.STATIC, GROUP.DYNAMIC | GROUP.DEBRIS | GROUP.NOCOLLIDE);
 export const GROUPS_DYNAMIC = groups(GROUP.DYNAMIC | GROUP.PLAIN, GROUP.STATIC | GROUP.DYNAMIC | GROUP.DEBRIS);
-/** Debris (gibs, shells) collides with the world and objects but not other debris. */
-export const GROUPS_DEBRIS = groups(GROUP.DEBRIS, GROUP.STATIC | GROUP.DYNAMIC);
 /** "No collide" objects only touch the static environment. */
 export const GROUPS_NOCOLLIDE = groups(GROUP.NOCOLLIDE, GROUP.STATIC);

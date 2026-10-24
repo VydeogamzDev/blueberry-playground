@@ -3,6 +3,7 @@ import type { Controls } from '../tools/Controls';
 import type { Human } from '../entities/Human';
 import type { Firearm } from '../entities/Firearm';
 import type { Explosive } from '../entities/Explosive';
+import type { Part } from '../world/Part';
 import { makeTestKit } from './testkit';
 import { COARSE_DT, FIXED_DT } from '../engine/constants';
 
@@ -37,12 +38,6 @@ export interface BenchResult {
   draws: number;
 }
 
-/**
- * Timing benchmark for crowded scenes, exposed as `bp.bench()` and run by
- * `npm run bench`. Builds each scene, lets it settle, then times a few
- * seconds of simulation (two physics steps per rendered frame, as at 60 fps;
- * a scene too heavy for that is timed again at the longer step, one a frame).
- */
 /** The crowded scenes, each built with n people (or things); some return what to do every step. */
 function makeScenes(kit: ReturnType<typeof makeTestKit>): Record<string, (n: number) => ((dt: number) => void) | void> {
   const row = (n: number, i: number) => -60 + (120 * (i + 0.5)) / n;
@@ -87,9 +82,28 @@ function makeScenes(kit: ReturnType<typeof makeTestKit>): Record<string, (n: num
       const towers = Math.ceil(n / 10);
       for (let i = 0; i < n; i++) kit.spawn('crate', row(towers, i % towers), 0.45 + Math.floor(i / towers) * 0.9);
     },
+    /** Contraptions: towers of crates, each welded together into one (a rigid unit, see ContactGroups). */
+    contraption(n) {
+      const towers = Math.ceil(n / 10);
+      const below: (Part | undefined)[] = [];
+      for (let i = 0; i < n; i++) {
+        const t = i % towers;
+        const y = 0.45 + Math.floor(i / towers) * 0.9;
+        const p = kit.spawn('crate', row(towers, t), y).parts[0];
+        const q = below[t];
+        if (q) p.entity.game.connections.create('weld', q, { x: q.x, y: y - 0.45 }, p, { x: p.x, y: y - 0.45 });
+        below[t] = p;
+      }
+    },
   };
 }
 
+/**
+ * Timing benchmark for crowded scenes, exposed as `bp.bench()` and run by
+ * `npm run bench`. Builds each scene, lets it settle, then times a few
+ * seconds of simulation (two physics steps per rendered frame, as at 60 fps;
+ * a scene too heavy for that is timed again at the longer step, one a frame).
+ */
 export function makeBench(game: Game, controls: Controls) {
   const kit = makeTestKit(game, controls);
   const scenes = makeScenes(kit);
@@ -146,7 +160,7 @@ export function makeBench(game: Game, controls: Controls) {
     try {
       for (const [name, build] of Object.entries(scenes)) {
         if (only && !name.includes(only)) continue;
-        for (const n of name === 'props' ? sizes.map((s) => s * 3) : sizes) {
+        for (const n of name === 'props' || name === 'contraption' ? sizes.map((s) => s * 3) : sizes) {
           const r = await time(build, n, FIXED_DT, seconds);
           let bodies = 0;
           for (const e of game.entities) for (const p of e.parts) if (!p.destroyed) bodies++;

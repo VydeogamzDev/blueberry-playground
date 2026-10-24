@@ -5,10 +5,6 @@ export interface V2 {
 
 export const TAU = Math.PI * 2;
 
-export function v2(x = 0, y = 0): V2 {
-  return { x, y };
-}
-
 export function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
@@ -32,30 +28,6 @@ export function rotate(x: number, y: number, ang: number): V2 {
   const c = Math.cos(ang);
   const s = Math.sin(ang);
   return { x: x * c - y * s, y: x * s + y * c };
-}
-
-export function len(x: number, y: number): number {
-  return Math.sqrt(x * x + y * y);
-}
-
-export function dist(a: V2, b: V2): number {
-  return len(a.x - b.x, a.y - b.y);
-}
-
-export function rand(lo: number, hi: number): number {
-  return lo + Math.random() * (hi - lo);
-}
-
-export function randInt(lo: number, hiInclusive: number): number {
-  return Math.floor(lo + Math.random() * (hiInclusive - lo + 1));
-}
-
-export function chance(p: number): boolean {
-  return Math.random() < p;
-}
-
-export function pick<T>(arr: readonly T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
 }
 
 /** Small deterministic PRNG (mulberry32) for reproducible sprite noise. */

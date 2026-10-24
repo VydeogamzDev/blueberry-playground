@@ -1,16 +1,25 @@
 import { Prop, type PropConfig } from './Prop';
-import type { Liquid } from '../systems/Liquids';
+import { Liquid } from '../systems/Liquids';
 import type { PixelArt } from '../art/PixelArt';
 import type { Game } from '../world/Game';
+import type { Part } from '../world/Part';
 import type { V2 } from '../engine/math';
-import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
+import type { ContextAction, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
 
 type FlaskArt = (level: number, corked: boolean, tilt?: number) => PixelArt;
 
 /** Seconds a full flask takes to pour out upside down. */
 const POUR_TIME = 3;
+/** Heat (see Fire.warm()) at which a flask of oil in a fire cracks and bursts into flame: under two seconds in a big one. */
+const BURST = 2.5;
 /** The liquid inside is redrawn for this many tilts of the flask. */
 export const FLASK_TILTS = 16;
+/**
+ * A knock this fast (m/s) smashes it, dropped from a couple of metres or flung at
+ * something, as it does a molotov or a pane: by its own small weight alone (see
+ * Prop.onImpact()) it took a 10 m fall.
+ */
+const SMASH_SPEED = 6;
 
 /**
  * A glass flask of liquid. Uncork it and tip it over to pour; it shatters when
@@ -24,6 +33,7 @@ export class Flask extends Prop {
   private drip = 0;
   private shown = '';
   private art: FlaskArt;
+  private heat = 0;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, liquid: Liquid, art: FlaskArt, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
@@ -81,12 +91,39 @@ export class Flask extends Prop {
       // the whole content splashes out (a pour is ~270 drops)
       this.game.particles.liquid(this.liquid, p.x, p.y, 0, 1, Math.round(20 + this.amount * 200), 2.2, Math.PI, p.body);
       this.game.sound.play('liquid/splash', { gain: 0.5 + this.amount * 0.4, x: p.x });
+      // (once: it's only taken away at the end of the step, and the rest of a
+      // shotgun's pellets, or the heat of another flame, may break it again meanwhile)
+      this.amount = 0;
     }
     super.shatter(point);
   }
 
   onBullet(): void {
     this.shatter();
+  }
+
+  onImpact(info: ImpactInfo): void {
+    // (a knock from something very light, a spent case, doesn't do it)
+    if (info.speed >= SMASH_SPEED && info.otherMass > 0.3) this.shatter(info.point);
+    else super.onImpact(info);
+  }
+
+  /** A fire's heat on it: glass full of oil cracks, and the oil goes up in a gout of flame. */
+  onHeat(_p: Part, heat: number): void {
+    if (this.liquid !== Liquid.Oil || this.amount <= 0 || this.destroyed) return;
+    this.heat += heat;
+    const p = this.main;
+    if (this.heat < BURST) {
+      // the oil inside smokes as it heats up
+      const { p: m } = this.mouth();
+      this.game.particles.smoke(m.x, m.y + 0.05, 1, 0.08);
+      return;
+    }
+    const { x, y } = p;
+    const r = 0.4 + this.amount * 0.6;
+    // (broken first: the flare sets alight what it reaches, this flask among them)
+    this.shatter();
+    this.game.fire.flare(x, y, r);
   }
 
   contextActions(): ContextAction[] {

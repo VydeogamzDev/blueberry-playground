@@ -126,7 +126,7 @@ export class Blade extends Item {
   }
 
   /** Lodges the blade into a part at a world point. */
-  private stick(target: Part, pt: V2, depth: number): void {
+  protected stick(target: Part, pt: V2, depth: number): void {
     const world = this.game.physics.world;
     const p = this.main;
     const fwd = this.forward();
@@ -197,25 +197,12 @@ export class Blade extends Item {
     // re-enable contacts with the last target once they no longer overlap
     if (this.released) {
       this.unstickT -= dt;
-      if (this.unstickT <= 0 && (this.released.destroyed || !this.overlaps(this.released))) {
+      if (this.unstickT <= 0 && (this.released.destroyed || !this.game.physics.overlaps(this.main, this.released))) {
         this.main.noCollide?.delete(this.released);
         this.released.noCollide?.delete(this.main);
         this.released = null;
       } else if (this.unstickT <= 0) this.unstickT = 0.1;
     }
-  }
-
-  private overlaps(o: Part): boolean {
-    const world = this.game.physics.world;
-    let hit = false;
-    for (const c1 of this.main.colliders) {
-      for (const c2 of o.colliders) {
-        world.contactPair(c1, c2, (m) => {
-          for (let i = 0; i < m.numContacts(); i++) if (m.contactDist(i) < -0.004) hit = true;
-        });
-      }
-    }
-    return hit;
   }
 
   serializeLinks(ref: (e: Entity) => number): Record<string, unknown> | undefined {

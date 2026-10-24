@@ -1,6 +1,9 @@
 import type { ImpactSound } from '../world/Materials';
+import { fetchAsset } from './assets';
+import { store } from './Store';
 
-export type GunSound = 'pistol' | 'revolver' | 'smg' | 'rifle' | 'shotgun' | 'sniper' | 'minigun' | 'laser';
+export type GunSound = 'pistol' | 'revolver' | 'smg' | 'rifle' | 'shotgun' | 'sniper' | 'minigun' | 'laser'
+  | 'battle' | 'burst' | 'lmg' | 'double' | 'flintlock' | 'launcher' | 'none';
 
 interface PlayOpts {
   /** Linear gain (before the master volume). */
@@ -25,6 +28,8 @@ interface LoopVoice {
 
 /** Sounds playing at once. */
 export const MAX_VOICES = 40;
+/** Where the volume settings are kept in the browser. */
+const STORE = 'blueberry-sound';
 /** Of any one sound at once (a burst of fire, a heap landing). */
 const PER_KEY = 6;
 
@@ -115,6 +120,8 @@ export interface SoundTap {
 export class Sound {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
+  /** Every sound but the interface's clicks goes through this, into the master. */
+  private fx: GainNode | null = null;
   private manifest: Record<string, string[]> = {};
   private buffers = new Map<string, AudioBuffer>();
   private lastVariant = new Map<string, number>();
@@ -122,7 +129,10 @@ export class Sound {
   private loops = new Map<object, Map<string, LoopVoice>>();
   private voices = new Voices();
   private playing = new Map<number, { src: AudioBufferSourceNode; gain: GainNode }>();
+  /** The master volume (0..1). The volumes and mute are the player's settings, kept in the browser. */
   volume = 0.7;
+  /** The effects' volume (0..1, under the master): everything but the interface's clicks. */
+  effects = 1;
   muted = false;
   /** Screen-space pan source: returns -1..1 for a world x (beyond = off-screen). */
   panFor: (x: number) => number = () => 0;
@@ -136,8 +146,16 @@ export class Sound {
   private manifestLoaded: Promise<void>;
 
   constructor() {
-    const base = import.meta.env.BASE_URL;
-    this.manifestLoaded = fetch(`${base}sfx/manifest.json`)
+    try {
+      const s = JSON.parse(store.getItem(STORE) ?? '{}') as { volume?: unknown; effects?: unknown; muted?: unknown };
+      const level = (v: unknown, d: number) => (typeof v === 'number' && v >= 0 && v <= 1 ? v : d);
+      this.volume = level(s.volume, this.volume);
+      this.effects = level(s.effects, this.effects);
+      this.muted = s.muted === true;
+    } catch {
+      /* no storage (or a broken entry): the defaults */
+    }
+    this.manifestLoaded = fetchAsset('sfx/manifest.json')
       .then((r) => r.json())
       .then((m: Record<string, unknown>) => {
         for (const [k, v] of Object.entries(m)) if (Array.isArray(v) && k !== 'loops') this.manifest[k] = v as string[];
@@ -148,10 +166,16 @@ export class Sound {
       });
   }
 
+  /** Called after every unlock() that has the audio going (the music starts then: see Music). */
+  readonly onUnlock: (() => void)[] = [];
+
   /** Must be called from a user gesture. */
   unlock(): void {
     if (this.ctx) {
-      if (this.ctx.state === 'suspended') void this.ctx.resume();
+      // (an iPhone's is "interrupted" by a call, or the browser going to the background)
+      const state: string = this.ctx.state;
+      if (state === 'suspended' || state === 'interrupted') void this.ctx.resume();
+      for (const f of this.onUnlock) f();
       return;
     }
     try {
@@ -160,7 +184,21 @@ export class Sound {
       return;
     }
     this.master = this.bus(this.ctx, this.muted ? 0 : this.volume);
+    this.fx = this.ctx.createGain();
+    this.fx.gain.value = this.effects;
+    this.fx.connect(this.master);
     if (Object.keys(this.manifest).length) void this.loadAll();
+    for (const f of this.onUnlock) f();
+  }
+
+  /** The audio context and the master bus's input, once unlock() has made them (the music plays into them). */
+  get output(): { ctx: AudioContext; master: GainNode } | null {
+    return this.ctx && this.master ? { ctx: this.ctx, master: this.master } : null;
+  }
+
+  /** Resolves once the list of sounds has loaded (or failed to: then the game is silent). */
+  ready(): Promise<void> {
+    return this.manifestLoaded;
   }
 
   /**
@@ -200,7 +238,6 @@ export class Sound {
 
   private async loadFiles(): Promise<void> {
     const ctx = this.ctx!;
-    const base = import.meta.env.BASE_URL;
     const files = [...new Set(Object.values(this.manifest).flat())].filter((f) => !this.buffers.has(f));
     // a few at a time; the short UI and impact sounds are tiny, so this is quick
     let next = 0;
@@ -208,7 +245,7 @@ export class Sound {
       while (next < files.length) {
         const f = files[next++];
         try {
-          const data = await (await fetch(base + f)).arrayBuffer();
+          const data = await (await fetchAsset(f)).arrayBuffer();
           this.buffers.set(f, await ctx.decodeAudioData(data));
         } catch {
           /* skip broken files */
@@ -221,11 +258,38 @@ export class Sound {
   setVolume(v: number): void {
     this.volume = v;
     if (this.master) this.master.gain.value = this.muted ? 0 : v;
+    this.keep();
+  }
+
+  setEffects(v: number): void {
+    this.effects = v;
+    if (this.fx) this.fx.gain.value = v;
+    this.keep();
   }
 
   setMuted(m: boolean): void {
     this.muted = m;
     if (this.master) this.master.gain.value = m ? 0 : this.volume;
+    this.keep();
+  }
+
+  /** The master bus's gain as it is now (the volume, or 0 muted). */
+  get masterGain(): number {
+    return this.master ? this.master.gain.value : this.muted ? 0 : this.volume;
+  }
+
+  /** The effects' gain as it is now. */
+  get effectsGain(): number {
+    return this.fx ? this.fx.gain.value : this.effects;
+  }
+
+  /** Keeps the volume settings for the next visit. */
+  private keep(): void {
+    try {
+      store.setItem(STORE, JSON.stringify({ volume: this.volume, effects: this.effects, muted: this.muted }));
+    } catch {
+      /* not kept: fine for this visit */
+    }
   }
 
   /** Every sound key in the library. */
@@ -307,7 +371,8 @@ export class Sound {
     g.gain.value = gain;
     const p = ctx.createStereoPanner();
     p.pan.value = pan;
-    src.connect(g).connect(p).connect(this.master);
+    // (the interface's clicks skip the effects volume)
+    src.connect(g).connect(p).connect(key.startsWith('ui/') ? this.master : this.fx ?? this.master);
     this.playing.set(v.id, { src, gain: g });
     src.onended = () => {
       this.playing.delete(v.id);
@@ -341,7 +406,7 @@ export class Sound {
       const g = ctx.createGain();
       g.gain.value = 0;
       const p = ctx.createStereoPanner();
-      src.connect(g).connect(p).connect(this.master);
+      src.connect(g).connect(p).connect(this.fx ?? this.master);
       src.start(ctx.currentTime, Math.random() * buf.duration);
       v = { src, gain: g, pan: p, idle: 0 };
       m.set(key, v);
@@ -370,10 +435,6 @@ export class Sound {
       }
       if (!m.size) this.loops.delete(owner);
     }
-  }
-
-  stopAll(): void {
-    for (const m of this.loops.values()) for (const v of m.values()) v.idle = 1;
   }
 
   // ---- game sounds -----------------------------------------------------------
@@ -429,6 +490,15 @@ export class Sound {
         this.play('machine/zap', { gain: 0.75, x, rate: 1.7, vary: 0.05 });
         this.play('machine/spark', { gain: 0.3, x, rate: 1.4 });
         break;
+      case 'battle': this.play('gun/battle', { gain: 0.95, x, vary: 0.03 }); break;
+      case 'burst': this.play('gun/burst', { gain: 0.8, x, vary: 0.04 }); break;
+      case 'lmg': this.play('gun/lmg', { gain: 0.8, x, vary: 0.05 }); break;
+      // a break-action has no pump to work after the shot
+      case 'double': this.play('gun/double', { gain: 1.1, x, vary: 0.03 }); break;
+      case 'flintlock': this.play('gun/flintlock', { gain: 1.0, x, vary: 0.04 }); break;
+      case 'launcher': this.play('gun/launcher', { gain: 0.9, x, vary: 0.04 }); break;
+      // guns with their own sounds (sprayers, stun gun)
+      case 'none': break;
     }
   }
 
@@ -488,6 +558,17 @@ export class Sound {
     if (!this.allow('gib', 2, 80)) return;
     this.play('gore/gib', { gain: 0.55, x });
     this.play('gore/splat', { gain: 0.45, x, delay: 0.04 });
+  }
+
+  /**
+   * A blow that hurts a body (`frac`: the share of the limb's health it took): a
+   * meaty smack, wetter the worse it is. The thing that hit it sounds as well.
+   */
+  fleshHit(frac: number, x?: number): void {
+    if (frac < 0.03 || !this.allow('fleshhit', 3, 70)) return;
+    const s = Math.min(1, frac);
+    this.play(s < 0.2 ? 'impact/punch' : 'impact/punch_heavy', { gain: 0.3 + s * 0.45, x, rate: 0.9 + Math.random() * 0.12 });
+    if (s > 0.25) this.play(s > 0.65 ? 'gore/splat' : 'gore/squish', { gain: 0.15 + s * 0.35, x, delay: 0.012 });
   }
 
   /** Bone fracture. */

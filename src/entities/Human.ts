@@ -1,5 +1,5 @@
 import { RAPIER } from '../engine/Physics';
-import { GRAVITY, PX, WORLD } from '../engine/constants';
+import { PX, WORLD } from '../engine/constants';
 import { clamp, rotate, smoothstep, wrapAngle, type V2 } from '../engine/math';
 import { Entity } from '../world/Entity';
 import type { Part, ShapeSpec } from '../world/Part';
@@ -7,8 +7,16 @@ import type { Game } from '../world/Game';
 import { MAT, type PhysMaterial } from '../world/Materials';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
 import { limbArt, faceColors, EYE, MOUTH, HUMAN_SKIN, type BodyKind, type LimbKey, type Skin } from '../art/human';
+import { ramp } from '../art/palette';
 import type { Item, Holder } from './Item';
-import type { Drug } from './Syringe';
+import { adrenalineRush, type Drug } from './Syringe';
+import { washBlood } from './Medical';
+import { Tendons } from '../systems/Tendons';
+import { FLESH, PLATING, breakUp, blastEnergy, takeChunk } from '../systems/Chunks';
+import { isFighter, isLiving, land, onFeet, stillUp, strikePoint, type Fighter } from '../systems/Fighting';
+import { allies, bombNear, dress, dye, enemies, isTeamId, lyingNear, nearestEnemy, TEAMS, undead, type TeamId } from '../systems/Teams';
+import type { PixelArt } from '../art/PixelArt';
+import { ACID_SCAR, Liquid, liquidSound, paintWound, seep, woundSpot } from '../systems/Liquids';
 
 interface LimbSpec {
   key: LimbKey;
@@ -55,7 +63,7 @@ const SPECS: LimbSpec[] = [
 ];
 
 /** Live-tunable balance parameters (exposed for debugging). */
-export const BALANCE = { kp: 42, kd: 4, dead: 0.05, amax: 7.5, torqueOnly: true, standDamping: 20, limpDamping: 0.7 };
+export const BALANCE = { kp: 42, kd: 4, dead: 0.05, amax: 7.5, torqueOnly: true, standDamping: 20, limpDamping: 0.7, stumble: 1.6 };
 
 /** Failed attempts to stand before lying still until something changes. */
 const GIVE_UP = 4;
@@ -67,10 +75,12 @@ const CALM_PAIN = 0.12;
  * how far the knee bends as a foot comes forward (rad), how far the hips bend to
  * carry the body forward over the legs (rad), and how hard the torso is driven
  * toward the wanted speed (1/s, and m/s² at most). Live-tunable for debugging.
+ * `top`: the fastest the legs carry anyone (m/s); asked for more (a run on
+ * adrenaline), they'd outrun their own feet and go over.
  */
 export const GAIT = {
   walk: 1.15, run: 2.2, swing: 0.36, runSwing: 0.45, lift: 0.8, runLift: 1.1,
-  bend: 0.2, runBend: 0.35, drive: 5, accel: 2.5, runAccel: 4,
+  bend: 0.2, runBend: 0.35, drive: 5, accel: 2.5, runAccel: 4, top: 2.4,
 };
 /** Hip height above the soles (m). */
 const HIP_Y = 22.5 * PX;
@@ -82,6 +92,19 @@ const MID_Y = 27.25;
 export const HUMAN_HALF_HEIGHT = MID_Y * PX;
 
 type Pose = Partial<Record<LimbKey, number>>;
+
+/**
+ * A seat in a vehicle someone sits in (see Car): held there at the hips, in
+ * the seat's pose (joint angles, facing right).
+ */
+export interface Seat {
+  readonly pose: Partial<Record<LimbKey, number>>;
+  /** Gets them out, onto their feet beside it ("Get out" in their menu). */
+  leave(): void;
+  /** A limb of theirs was taken hold of (pulled hard, they come out), or let go of (null). */
+  grabbed(part: Part | null): void;
+}
+
 const POSE_STAND: Pose = { lowerArmF: 0.12, lowerArmB: 0.2, upperArmF: 0.04, upperArmB: -0.06, lowerLegF: -0.02, lowerLegB: -0.02 };
 const POSE_DOWN: Pose = {
   head: -0.2, midTorso: 0.12, lowerTorso: 0.12, upperArmF: 0.6, upperArmB: 0.35, lowerArmF: 1.1, lowerArmB: 0.9,
@@ -114,6 +137,10 @@ type MovePose = keyof typeof MOVE_POSES;
 const JUMP = { vy: 3.4, crouch: 0.22 };
 /** Coming up out of a landing's bent knees into the standing pose (s): snapped straight, the legs would spring them off the floor again. */
 const SETTLE_T = 0.5;
+/** The most the knees may be bent (rad) to straighten up again from a stumble without lying down first (see catching()). */
+const KNEE_CATCH = 1.4;
+/** How far past its joint's limits a broken bone lets a limb bend (rad). */
+const BROKEN_GIVE = 1.1;
 /** Going from one pose to the next, climbing or jumping (s): snapped, the feet whip round at 30-40 m/s. */
 const POSE_EASE = 0.15;
 
@@ -122,6 +149,8 @@ interface Jump {
   t: number;
   /** Speed along the floor to carry on with (m/s, + right). */
   vx: number;
+  /** How fast they spring up (m/s): JUMP.vy, unless it's a leap timed by a fighter (see route()). */
+  vy: number;
   /** Has left the ground, and seconds since landing (negative: not yet). */
   off: boolean;
   landed: number;
@@ -152,6 +181,16 @@ interface Climb {
 /** Highest top (m above the floor under them) someone will climb onto, and deepest drop they'll climb down. */
 export const CLIMB = { up: 1.1, down: 1.3 };
 
+/**
+ * A fighter finding a way to the foe (see route()): the deepest drop they'll jump
+ * down (m: landing faster than about 7 m/s hurts the legs); the fastest they'll
+ * leap across a gap (m/s along the floor) and how fast they spring up for it; a
+ * hop down a drop (m/s, along and up); how high a thing they'll jump over (m: a
+ * body lying in the way); how far ahead they look for the far side (m); how much
+ * floor they want to land on beyond it (m); and how long a crouch a leap takes (s).
+ */
+const LEAP = { down: 2, vx: 3.2, vy: 3.4, hopVx: 1.4, hopVy: 1.1, hurdle: 0.55, look: 3.2, land: 0.5, crouch: 0.12 };
+
 /** Aiming pose for an arm holding an item, and for a supporting arm. */
 const AIM = { upper: 1.42, lower: 0.06, hand: 0 };
 const SUPPORT = { upper: 1.15, lower: 0.75, hand: 0 };
@@ -163,6 +202,156 @@ interface Grip {
   support: { hand: Limb; joint: RAPIER.ImpulseJoint } | null;
   /** Seconds since the item was grabbed (aim control ramps in). */
   t: number;
+}
+
+/**
+ * Fighting (see fight()), distances trunk to trunk (m): how near they come to punch;
+ * how far beyond striking distance they wait between blows, stepping in to strike and
+ * back out after (stepOut); how far off they shoot with a gun of no range of its own
+ * (see RANGE); how long a punch, a swing and a kick take (s), the first `wind` of it
+ * drawing back and the next `out` throwing it (a swing's: swingWind, swingOut); the
+ * least pause between blows (s) and how much longer it may be (jitter: two fighters
+ * alike don't fall into step); the chance of a second punch straight after the first
+ * (combo), and of a kick instead of a punch (kicks); how much harder the muscles work
+ * throwing a punch or kick, and a swing; how fast the arms may turn to the next pose
+ * (rad/s), and throwing a blow; how fast they step in winding up a swing, and step
+ * back (m/s); and how long one of them stays down before they're beaten (s).
+ */
+const FIGHT = {
+  reach: 0.62, stepOut: 0.4, shoot: 6, punch: 0.4, swing: 0.8, kick: 0.55, wind: 0.4, out: 0.3, swingWind: 0.3, swingOut: 0.5,
+  pause: 0.3, jitter: 0.6, combo: 0.35, kicks: 0.25, power: 3, swingPower: 1.5, slew: 9, slewOut: 30, lunge: 0.9, back: 0.85, beaten: 4,
+};
+
+/**
+ * Swinging a weapon (see swingPath()), the hand placed relative to the shoulder (m,
+ * x ahead, y up) and the weapon's angle above straight ahead (rad): on the shoulder
+ * between blows, pointing up and back (rest: clear of the foe's swings, and of
+ * whoever stands behind), drawn back further to swing (cock), then swung over and
+ * down through the foe to `follow` past them, the hand thrown out `arm` toward them.
+ * They strike from where the weapon meets the foe `sweet` of its length out from the grip.
+ */
+const SWING = { rest: { x: 0.06, y: 0.22, a: 2.3 }, cock: { x: 0, y: 0.26, a: 2.6 }, arm: 0.47, follow: 0.45, sweet: 0.72 };
+
+/**
+ * Shooting at a foe (see shoot()): how long the gun must be steady on them before the
+ * first shot (s, and up to `settleJitter` more); how near on target (rad) counts as
+ * steady, and it must be to fire; how often a shot goes for the head rather than the
+ * body; about how far off a shot may go (rad); the pause between shots (s, and up to
+ * `jitter` more); and how fast the aim is trimmed for the gun sagging under its weight
+ * (per s: see shoot()).
+ */
+const SHOT = { settle: 0.4, settleJitter: 0.35, steady: 0.12, fire: 0.07, head: 0.2, spread: 0.03, pause: 0.35, jitter: 0.6, trim: 3 };
+
+/**
+ * How near and how far off they shoot from with each gun (m): nearer, they step back;
+ * further, they walk in. (A launcher's are well clear of its blast; a flamethrower's
+ * and a stun gun's within what they reach: about five and six metres. A flamethrower
+ * isn't brought in any closer than it must be: a heavy thing held low, it doesn't tip
+ * up far or steadily enough for someone right in front of them, and isn't fired.)
+ */
+const RANGE: Record<string, [number, number]> = {
+  pistol: [4, 8], revolver: [4, 8], smg: [3, 7], rifle: [5, 11], shotgun: [2.5, 5], sniper: [8, 18], minigun: [4, 10], 'laser-rifle': [5, 12], crossbow: [5, 12],
+  'burst-rifle': [5, 11], 'battle-rifle': [6, 14], 'machine-gun': [4, 11], 'double-barrel': [2, 4.5], flintlock: [3, 6.5],
+  'grenade-launcher': [7, 14], flamethrower: [2, 5.5], 'stun-gun': [1.5, 4.5],
+};
+/** Any other gun's. */
+const RANGE_ANY: [number, number] = [3.5, 9];
+
+/**
+ * On a team (see scan()): how often they look about for an enemy (s), how far off
+ * they see one (m), how much nearer (m) another must be to leave the one they're
+ * fighting for it, and how far (m) they'd go for a weapon lying about, empty-handed
+ * against an armed foe.
+ */
+const SCAN = { every: 0.4, sight: 30, switch: 2, fetch: 3 };
+
+/**
+ * Zombies (see rise()): how long an infection takes to turn someone (s); how fast they
+ * get about, of a person's pace; how much worse a mauling it takes to stop one than to
+ * kill the living (see checkDeath()); a bite's harm, and the pause after a lunge (s);
+ * how near (trunk to trunk, m) one comes to lunge at someone on their feet; and how
+ * near its head has to get to someone to bite them (lying down, the hands can't reach).
+ */
+const ZOMBIE = { incubate: 10, pace: 0.5, trauma: 11, bite: 7, pause: 0.8, reach: 0.55, mouth: 0.7 };
+/** A zombie's skin (in the clothes they had on), and its eye and mouth. */
+const ZOMBIE_SKIN = ramp('#8d9a78', 0.85);
+const ZOMBIE_EYE = 0xd8d27a;
+const ZOMBIE_MOUTH = 0x3a1414;
+/** Standing as a zombie: arms held out in front, head hung, a little hunched. */
+const POSE_ZOMBIE: Pose = { ...POSE_STAND, head: -0.25, midTorso: 0.1, upperArmF: 1.35, upperArmB: 1.15, lowerArmF: 0.12, lowerArmB: 0.3, handF: -0.2, handB: -0.2 };
+/** What still works on a zombie, whose heart doesn't beat: what acts on the flesh itself, Life and the Cure. */
+const UNDEAD_DRUGS = new Set<Drug>(['healing', 'life', 'cure', 'freeze', 'bone', 'acid', 'strength']);
+
+/** On Ultra Strength: how much stronger the muscles are and how much harder blows land, and how hard (m/s) whoever's hit is flung. */
+const MIGHT = { muscle: 2.5, blow: 2.5, fling: 6 };
+
+/**
+ * A fire extinguisher in hand, out of a fight (see douse()): how often they look about
+ * for a fire (s); how far off they see one (m across, and up or down); how near they
+ * come to spray it (m); and how much of the fire on them the cloud they spray at their
+ * own feet puts out in a second.
+ */
+const DOUSE = { every: 0.3, sight: 6, rise: 1.5, reach: 2, self: 0.9 };
+
+/** Poses picked from the menu (see setPose()). */
+export type PoseName = 'stumble' | 'cower' | 'sit' | 'flat';
+const POSE_NAMES: [PoseName, string][] = [['stumble', 'Stumble'], ['cower', 'Cower'], ['sit', 'Sit'], ['flat', 'Flat pose']];
+/** Cowering: crouched down, arms over the head, head tucked in. */
+const POSE_COWER: Pose = { ...POSE_CROUCH, head: -0.5, upperArmF: 2.5, upperArmB: 2.2, lowerArmF: 2.2, lowerArmB: 2.3, handF: 0.4, handB: 0.4 };
+/** Sitting on the floor: legs out in front, the back up straight, hands on the knees. */
+const POSE_SIT: Pose = {
+  head: 0.05, midTorso: 0.08, lowerTorso: 0.08, upperLegF: 1.5, upperLegB: 1.4, lowerLegF: -0.15, lowerLegB: -0.25, footF: 0.1, footB: 0.1,
+  upperArmF: 0.7, upperArmB: 0.5, lowerArmF: 0.3, lowerArmB: 0.4,
+};
+/** Lying flat out, straight and still. */
+const POSE_FLAT: Pose = { upperArmF: 0.05, upperArmB: -0.05 };
+
+/** The parts of a person that show their team's colour (their shirt: see setTeam()). */
+const SHIRT: LimbKey[] = ['upperTorso', 'midTorso', 'lowerTorso', 'upperArmF', 'upperArmB'];
+
+const mix = (a: V2, b: V2, s: number): V2 => ({ x: a.x + (b.x - a.x) * s, y: a.y + (b.y - a.y) * s });
+
+/** A punch, or a swing of something held: the arm draws back, then drives the fist (or the weapon) at the foe. */
+interface Blow {
+  t: number;
+  dur: number;
+  side: 'F' | 'B';
+  /** What is swung (null: a punch, or a kick). */
+  item: Item | null;
+  /** A kick with the front leg (at something too low to punch, or now and then). */
+  kick: boolean;
+  /** It's landed (each blow hurts once). */
+  landed: boolean;
+  /** How much of it goes on drawing back, and on throwing it (fractions; see blowStage()). */
+  wind: number;
+  out: number;
+  /** What it's aimed at. */
+  aim: 'head' | 'chest';
+  /** A zombie's lunge to grab and bite (see maul()). */
+  bite?: boolean;
+}
+
+/** Is it a gun (fired at a foe from a way off rather than swung)? A crossbow is (it has a projectile speed). */
+function isGun(it: Item): it is Item & { fire(): void } {
+  return ('gun' in it || 'projectileSpeed' in it) && typeof (it as { fire?: unknown }).fire === 'function';
+}
+
+/** How fast a gun's shot flies (m/s): Infinity for a beam, or a gun that doesn't say. */
+function shotSpeed(gun: Item): number {
+  if ('projectileSpeed' in gun) return (gun as Item & { projectileSpeed(): number }).projectileSpeed() || Infinity;
+  const spec = (gun as Item & { gun?: { speed: number; laser?: number } }).gun;
+  return spec && spec.laser === undefined && spec.speed > 0 ? spec.speed : Infinity;
+}
+
+/** How far a held weapon reaches beyond the hand (m): from its grip to its far end. */
+function weaponReach(it: Item): number {
+  return Math.max(0.2, (it.main.w - (it.hold?.grip[0] ?? 0)) * PX);
+}
+
+/** Something lying about worth picking up to fight with: a melee weapon or a gun (not one stuck in someone). */
+function isWeapon(e: Entity): e is Item {
+  const it = e as Item & { lodge?: unknown };
+  return !!it.hold && !it.lodge && (e.def.category === 'Melee' || isGun(it));
 }
 
 interface Wound {
@@ -187,6 +376,8 @@ interface Limb {
   severed: boolean;
   gone: boolean;
   broken: boolean;
+  /** Its joint's limits are the broken bone's (see setLimits()). */
+  loose: boolean;
   /** Connected to the torso through intact joints. */
   attached: boolean;
   wounds: Wound[];
@@ -204,6 +395,8 @@ interface Column {
   omega: number;
   sx: number;
   sy: number;
+  /** How far the center of mass is from the feet (m). */
+  h: number;
   grounded: boolean;
 }
 
@@ -247,6 +440,8 @@ export class Human extends Entity implements Holder {
   private retries = 0;
   private getupBest = 0;
   private getupProgressT = 0;
+  /** Just let go of (s left): whether they've landed on their feet is checked every step meanwhile. */
+  private catchT = 0;
   /** Shuffling off someone they're lying on top of: which way, for how long, and how many goes so far. */
   private crawlDir = 0;
   private crawlT = 0;
@@ -266,6 +461,8 @@ export class Human extends Entity implements Holder {
   private t = Math.random() * 100;
   /** Forced limp (context menu). */
   limp = false;
+  /** The vehicle seat they sit in (see sit()). */
+  seat: Seat | null = null;
   /** Joint angles at the start of a get-up (blended toward the standing pose). */
   private blendFrom: Map<Limb, number> | null = null;
   /** Joint angles eased out of into the next pose, over settleDur s (see SETTLE_T, POSE_EASE). */
@@ -280,7 +477,7 @@ export class Human extends Entity implements Holder {
   // ---- getting about on foot (see think())
   /** Wanders about on its own (context menu); otherwise stays where it is put. */
   wander = false;
-  private goal: 'idle' | 'walk' | 'flee' = 'idle';
+  private goal: 'idle' | 'walk' | 'flee' | 'fight' | 'douse' = 'idle';
   private goalT = 0;
   private targetX = 0;
   private fleeFrom = 0;
@@ -292,8 +489,10 @@ export class Human extends Entity implements Holder {
   /** How long it has been unable to turn round to set off. */
   private turnWait = 0;
   private lookT = 0;
-  /** Wanted speed (m/s) in the facing direction. */
+  /** Wanted speed (m/s) in the facing direction (below 0: stepping back, in a fight or a stumble). */
   private speed = 0;
+  /** Stepping to catch their balance (see stumbleSpeed()). */
+  private stumbling = false;
   /** Gait phase (rad), and how far the legs have gone over from standing to stepping (0..1). */
   private stride = 0;
   private gaitAmt = 0;
@@ -308,9 +507,106 @@ export class Human extends Entity implements Holder {
   /** Until they may climb again, and since they last finished a climb (s). */
   private climbCool = 0;
   private landT = 9;
+  /** Some of them was frozen last step (see preStep()). */
+  private wasFrozen = false;
   /** Waiting for the cool-down to climb again (see think()). */
   private climbWait = false;
+
+  // ---- fighting (see fight())
+  /** Who they're going for (null: nobody). */
+  foe: Entity | null = null;
+  /** The punch or swing being thrown, and until the next may be (s). */
+  private blow: Blow | null = null;
+  private blowT = 0;
+  /** Which arm punched last (they take turns). */
+  private lastFist: 'F' | 'B' = 'B';
+  /** Shooting at the foe: until the next shot (s), and how far the gun is tipped up (+) or down to aim (rad). */
+  private shotT = 0;
+  private tilt = 0;
+  /** Putting out a fire (see douse()): the extinguisher they're spraying, the burning part they're after, and until they next look about for one (s). */
+  private dousing: Item | null = null;
+  private fireAt: Part | null = null;
+  private fireT = 0;
+  /** Backing away from a foe too near to fire a launcher at (until a metre past its blast). */
+  private backOff = false;
+  /** How long the foe has been down (s): long enough, and they've won. */
+  private foeDownT = 0;
+  /** How long they've been down themselves in the fight (see FIGHT.beaten). */
+  private downT = 0;
+  /** The arm (and leg) targets last sent in the fight, when (by `t`), and whether they're still catching up (see fightIK()). */
+  private fightPose = new Map<LimbKey, number>();
+  private fightPoseT = 0;
+  /** A weapon being drawn back to swing, and what it was stuck in, passed through until it's swung (see freeWeapon()). */
+  private freed: { part: Part; from: Part[] } | null = null;
+  private easingFists = false;
   private jumping: Jump | null = null;
+  /** The side they fight for (see Teams): they go for anyone on another, and leave their own be (null: none). */
+  team: TeamId | null = null;
+  /** Until they next look about for an enemy, on a team (s; see scan()). */
+  private scanT = Math.random() * 0.3;
+  /** Stepping back from the foe this step, still facing them (see closeIn()), and whether there was room behind at the last look. */
+  private backstep = false;
+  private backClear = true;
+  /** A weapon fought with: which, and the angle it's to point at (on the shoulder, or swung; see swingPath()). */
+  private swingAt: { item: Item; angle: number } | null = null;
+  /** Another punch coming straight after the last, before stepping back out. */
+  private combo = false;
+  /** Shooting: how long the gun has been steady on the foe (s), how long it must be before the next shot, which part of them it's aimed at, and how far off (rad). */
+  private aimT = 0;
+  private aimNeed = 0;
+  private aimSpot: 'head' | 'chest' | 'belly' = 'chest';
+  private aimErr = 0;
+  /** How much higher than the foe the gun is aimed, for its sagging under its weight (rad; see shoot()). */
+  private aimTrim = 0;
+  /** Out of the gun's range: walking in until well inside it. */
+  private closing = false;
+  /** Getting away from a lit bomb or a fire close by: for how long (s) and from where (x); and until they next look for one (s). */
+  private evadeT = 0;
+  private evadeX = 0;
+  private dangerT = 0;
+  /** A weapon lying about they're going for (empty-handed against an armed foe), and for how long so far (s). */
+  private fetch: Item | null = null;
+  private fetchT = 0;
+  /** Kept for looking along the line of fire (see friendInWay()). */
+  private fireRay: RAPIER.Ray | null = null;
+  /**
+   * Finding a way to the foe (see route()): the speed to go at, as worked out at the
+   * last look (0: off, jumping or climbing; null: walking on as anyone does); and for
+   * how long (s) there's no way on to them which way (a drop, a wall), and until the
+   * next fist shaken at them from there (s).
+   */
+  private approach: number | null = null;
+  private noWayT = 0;
+  private noWayDir = 1;
+  private tauntT = 0;
+  /** Stuck up high with the foe down below: until they next look for another way down (s), and the one they're off to (x, how high they set off from, for how long more: s). */
+  private wayT = 0;
+  private detourX = 0;
+  private detourY = 0;
+  private detourT = 0;
+  /** A stumble would take them over a drop: they stand it out instead (see think()). */
+  private edgeStep = false;
+
+  // ---- zombies (see rise()) and poses (see setPose())
+  /** Infected: how far it has got (0: not infected; at 1 they turn). */
+  infection = 0;
+  /** Turned: undead, and on a side of their own (see Teams). */
+  zombie = false;
+  /** Until the next groan (s), and how much of a Cure has gone in. */
+  private groanT = 2 + Math.random() * 6;
+  private cureDose = 0;
+  /** The pose picked in the menu (null: none). */
+  pose: PoseName | null = null;
+  /** Until the next lurch in a Stumble (s). */
+  private lurchT = 0;
+  /** Frozen stiff (the Freeze drug): every joint locked where it was (see stiffen()). */
+  private stiff = false;
+  /** Until the next bone gives way to Bone Eating (s). */
+  private boneT = 0;
+  /** What the skin was last dressed for (a zombie's or their own: see frame()). */
+  private dressedZombie = false;
+  /** An android tinted by the Freeze (see tone()). */
+  private toned = false;
 
   constructor(game: Game, def: ItemDef, variant: Variant, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -341,7 +637,7 @@ export class Human extends Entity implements Holder {
       });
       const limb: Limb = {
         spec: s, part, joint: null, parent: null, children: [], a1: { x: 0, y: 0 }, a2: { x: 0, y: 0 },
-        severed: false, gone: false, broken: false, attached: true, wounds: [], stress: 0, phase: Math.random() * 10, extraI: 0,
+        severed: false, gone: false, broken: false, loose: false, attached: true, wounds: [], stress: 0, phase: Math.random() * 10, extraI: 0,
       };
       // Hands, feet and forearms are tiny and get squeezed between heavy bodies in
       // piles, where their minute inertia makes the contact solve buzz. Tripling it
@@ -456,31 +752,101 @@ export class Human extends Entity implements Holder {
 
   /** Overall muscle strength 0..1. */
   private strength(): number {
-    if (!this.alive || this.limp) return 0;
+    if (!this.alive || this.limp || this.stiff) return 0;
     return clamp(this.consciousness * (1 - this.shock * 0.6), 0, 1);
   }
 
   // ---------------------------------------------------------------- drugs
 
   /** Seconds left of each drug's effect. */
-  readonly drugs = { adrenaline: 0, knockout: 0, poison: 0 };
+  readonly drugs = { adrenaline: 0, knockout: 0, poison: 0, painkiller: 0, strength: 0, freeze: 0, bone: 0, acid: 0, coagulation: 0 };
   private mendDose = 0;
   private lifeDose = 0;
+  /** Seconds left out cold from a jolt (see stun()). */
+  stunned = 0;
+
+  /**
+   * Knocked out for `secs` (a stun gun's jolt): down at once and coming round after,
+   * as from a knockout. It's no drug, so it shows as none, and androids go down too.
+   */
+  stun(secs: number): void {
+    if (!this.alive) return;
+    this.stunned = Math.max(this.stunned, secs);
+  }
+
+  /** How much faster adrenaline has them walking, running, getting up and looking about (1: no faster; a zombie shambles slower). */
+  get rush(): number {
+    return (this.alive ? adrenalineRush(this.drugs.adrenaline) : 1) * (this.zombie ? ZOMBIE.pace : 1);
+  }
+
+  /** How much stronger Ultra Strength has them (1: no stronger; see MIGHT). */
+  private get might(): number {
+    return this.alive && this.drugs.strength > 0 ? MIGHT.muscle : 1;
+  }
+
+  /** Not infected, nor undead: a zombie goes for them (people, androids too; see Teams). */
+  get prey(): boolean {
+    return this.alive && !this.zombie && this.infection === 0;
+  }
+
+  /** Strides lengthen with the rush, so the legs don't have to make up all the extra speed by stepping faster. */
+  private get reach(): number {
+    return 1 + (this.rush - 1) * 0.3;
+  }
 
   /** A syringe pushing `dose` (fraction of a full syringe) into the bloodstream. */
   inject(drug: Drug, dose: number): void {
-    if (!this.variant.bleeds) return;
+    // (an android has no blood to carry anything round: only the Freeze, which locks
+    // its joints wherever it goes in, does anything to one)
+    if (!this.variant.bleeds && drug !== 'freeze') return;
+    if (this.zombie && !UNDEAD_DRUGS.has(drug)) return;
+    // (a heart that has stopped takes nothing round the body: only Life works on the
+    // dead, the Zombie virus, which raises them, and the Cure, which keeps it from doing so)
+    if (!this.alive && drug !== 'life' && drug !== 'cure' && drug !== 'zombie') return;
+    const d = this.drugs;
     switch (drug) {
+      case 'death':
+        // the heart stops there and then
+        this.die();
+        break;
+      case 'coagulation':
+        d.coagulation = Math.min(60, d.coagulation + dose * 30);
+        break;
+      case 'painkiller':
+        d.painkiller = Math.min(120, d.painkiller + dose * 60);
+        this.pain = 0;
+        break;
+      case 'strength':
+        d.strength = Math.min(120, d.strength + dose * 60);
+        break;
+      case 'freeze':
+        d.freeze = Math.min(90, d.freeze + dose * 30);
+        if (!this.stiff) this.stiffen(true);
+        break;
+      case 'bone':
+        d.bone = Math.min(30, d.bone + dose * 15);
+        break;
+      case 'acid':
+        d.acid = Math.min(40, d.acid + dose * 25);
+        break;
+      case 'zombie':
+        this.infect();
+        break;
+      case 'cure':
+        this.cure(dose);
+        break;
       case 'healing':
         this.mend(dose);
         break;
       case 'life':
         if (this.alive) this.mend(dose * 0.6);
         else {
-          this.lifeDose += dose;
-          // brings the dead back if there is still a head on the body
+          // brings the dead back if there is still a head on the body (a part dose
+          // wears off: see vitals; and none of it is any use without a head)
           const head = this.L('head');
-          if (this.lifeDose >= 0.5 && !head.gone && head.attached) {
+          if (head.gone || !head.attached) break;
+          this.lifeDose += dose;
+          if (this.lifeDose >= 0.5) {
             this.lifeDose = 0;
             this.heal();
           }
@@ -500,13 +866,22 @@ export class Human extends Entity implements Holder {
     }
   }
 
-  /** Healing over the injection: tissue, blood, burns; bones and wounds at the end. */
+  /**
+   * Healing over the injection: tissue, blood, burns and the blood on the skin,
+   * and they come round and try to get up again; bones and wounds at the end.
+   */
   private mend(dose: number): void {
     if (!this.alive) return;
+    this.rouse();
     this.blood = Math.min(100, this.blood + dose * 60);
     this.pain = Math.max(0, this.pain - dose * 2);
+    this.shock = Math.max(0, this.shock - dose * 2);
+    this.consciousness = Math.min(1, this.consciousness + dose * 1.5);
     this.drugs.poison = 0;
+    // (it gets them back up: a sedative is worn through as adrenaline does)
+    this.drugs.knockout = Math.max(0, this.drugs.knockout - dose * 90);
     this.mendDose += dose;
+    let face = false;
     for (const l of this.order) {
       if (l.gone) continue;
       const p = l.part;
@@ -514,15 +889,307 @@ export class Human extends Entity implements Holder {
       if (p.burning > 0) this.game.fire.extinguish(p);
       p.charred = Math.max(0, p.charred - dose * 1.5);
       p.refreshTint();
+      // the blood washes off a pixel at a time, and the bleeding eases off at once
+      if (washBlood(p, dose * 2.5) && l.spec.key === 'head') face = true;
+      for (const w of l.wounds) w.rate *= Math.max(0, 1 - dose * 4);
       if (this.mendDose >= 0.6) {
         l.wounds.length = 0;
         l.broken = false;
       }
     }
+    // (washing the face takes its expression with it)
+    if (face) this.setFace();
     if (this.mendDose >= 0.6) {
       this.mendDose = 0;
       this.updateMotors(true);
     }
+  }
+
+  /**
+   * A defibrillator's shock: a heart that stopped less than a minute ago starts
+   * again, if the head and chest are whole. Only what stopped it is patched up
+   * enough to keep it going: they come round weak, wounds and all. Whether it worked.
+   */
+  restart(): boolean {
+    const head = this.L('head');
+    const chest = this.L('upperTorso');
+    if (this.alive || this.deathT > 60 || head.gone || !head.attached || head.part.hp <= 0 || chest.part.hp <= 0 || !this.L('midTorso').attached) return false;
+    this.alive = true;
+    this.deathT = 0;
+    this.lifeDose = 0;
+    // (what poisoned or sedated them is what the shock has to beat: it's gone)
+    this.drugs.poison = this.drugs.knockout = 0;
+    this.blood = Math.max(this.blood, 70);
+    this.consciousness = 0.5;
+    this.pain = Math.min(this.pain, 0.5);
+    this.shock = Math.min(this.shock, 0.3);
+    this.rouse();
+    for (const l of this.order) {
+      if (l.gone) continue;
+      l.part.hp = Math.max(l.part.hp, l.part.maxHp * 0.6);
+      l.part.refreshTint();
+    }
+    this.setFace();
+    this.updateMotors(true);
+    return true;
+  }
+
+  /**
+   * The body's colour shows what's in it (set as each frame is drawn, on every screen:
+   * what it goes by is sent to guests): frozen stiff, pale and blue; an infection
+   * greying it as it takes hold; poison a sickly green, deeper as it drains them (in
+   * eighths: it steps); Ultra Strength flushed; and a corpse's pallor coming over it.
+   */
+  private tone(): void {
+    const d = this.drugs;
+    // (an android only ever turns blue with the Freeze: otherwise its tint is left be,
+    // once set back after it thaws)
+    if (!this.variant.bleeds && !(d.freeze > 0) && !this.toned) return;
+    this.toned = d.freeze > 0;
+    let r = 1;
+    let g = 1;
+    let b = 1;
+    if (d.freeze > 0) {
+      r = 0.84;
+      g = 0.95;
+      b = 1.14;
+    } else {
+      if (this.infection > 0 && !this.zombie) {
+        const k = Math.round(this.infection * 8) / 8;
+        r -= 0.16 * k;
+        g -= 0.05 * k;
+        b -= 0.2 * k;
+      }
+      if (d.poison > 0 && this.alive) {
+        const k = Math.round((0.45 + 0.55 * clamp((100 - this.blood) / 50, 0, 1)) * 8) / 8;
+        r *= 1 - 0.24 * k;
+        g *= 1 - 0.03 * k;
+        b *= 1 - 0.32 * k;
+      }
+      if (d.strength > 0 && this.alive) {
+        r *= 1.1;
+        g *= 0.93;
+        b *= 0.9;
+      }
+      if (!this.alive && this.variant.kind === 'human' && !this.zombie) {
+        const k = Math.min(1, this.deathT / 25);
+        r *= 1 - k * 0.12;
+        g *= 1 - k * 0.1;
+        b *= 1 - k * 0.04;
+      }
+    }
+    for (const l of this.order) {
+      if (l.gone || l.part.frozen || l.part.noCollideAll) continue;
+      l.part.setTint(r, g, b);
+    }
+  }
+
+  /** Infected with the zombie virus (a Zombie syringe, a zombie's bite): it takes hold over the next few seconds, and they turn (see rise()). */
+  infect(): void {
+    if (!this.variant.bleeds || this.zombie || this.infection > 0) return;
+    this.infection = 1e-3;
+  }
+
+  /**
+   * The infection has taken hold: they turn. The living drop where they stand and get
+   * up again a zombie; the dead (their head still on) rise as one. Grey-green, slow and
+   * feeling nothing, a zombie goes for the living and bites (see maul()); only its head
+   * destroyed or taken off, or a far worse mauling than kills the living, stops it.
+   */
+  private rise(): void {
+    const head = this.L('head');
+    if (this.zombie || head.gone || !head.attached || head.part.hp <= 0) return;
+    this.zombie = true;
+    this.infection = 1;
+    this.dropAll();
+    this.stopFighting();
+    this.pose = null;
+    this.wander = true;
+    const d = this.drugs;
+    d.knockout = d.poison = d.painkiller = d.coagulation = d.adrenaline = 0;
+    if (!this.alive) {
+      // (what killed them patched up enough to stand on)
+      this.alive = true;
+      this.deathT = 0;
+      this.consciousness = 0.35;
+      for (const l of this.order) if (!l.gone) l.part.hp = Math.max(l.part.hp, l.part.maxHp * 0.4);
+    } else this.stun(2);
+    this.pain = this.shock = 0;
+    this.rouse();
+    this.redress();
+    this.setFace();
+    this.setState('down');
+    this.groanT = 0.3;
+    this.scanT = 0;
+  }
+
+  /**
+   * The Zombie Cure: enough of it clears an infection, and a zombie (its head still
+   * whole) is themselves again, in their own skin, coming round on the floor.
+   */
+  private cure(dose: number): void {
+    if (!this.infection && !this.zombie) return;
+    this.cureDose += dose;
+    if (this.cureDose < 0.3) return;
+    this.cureDose = 0;
+    this.infection = 0;
+    if (!this.zombie) return;
+    this.zombie = false;
+    this.wander = false;
+    this.stopFighting();
+    if (this.alive) {
+      this.blood = Math.max(this.blood, 60);
+      this.stun(2);
+    }
+    this.redress();
+    this.setFace();
+    this.updateMotors(true);
+  }
+
+  /** Every part in what they wear now: a zombie's skin or their own, in their side's colours (see teamArt()). */
+  private redress(): void {
+    this.dressedZombie = this.zombie;
+    for (const l of this.order) if (!l.gone && !l.part.destroyed) dress(l.part, this.teamArt(l.spec.key, this.team));
+  }
+
+  /**
+   * Frozen stiff (the Freeze drug; false: thawed): every joint locked where it is, so the
+   * body keeps its shape like a statue (and falls over like one), its muscles no use.
+   */
+  private stiffen(on: boolean, quiet = false): void {
+    if (this.stiff === on) return;
+    this.stiff = on;
+    for (const l of this.order) this.setLimits(l);
+    const c = this.L('upperTorso').part;
+    if (on) {
+      this.stopFighting();
+      this.setState('down');
+      if (!quiet) this.game.sound.play('impact/glass_light', { gain: 0.45, x: c.x, rate: 1.5, vary: 0.1 });
+    } else {
+      this.rouse();
+      if (!quiet) liquidSound(this.game, 'liquid/drip', c.x, 0.3, 0.2);
+    }
+    this.updateMotors(true);
+  }
+
+  /** Breaks a limb's bone (Break bone in the menu, Bone Eating) or mends it (Mend bone). */
+  private setBroken(l: Limb, on: boolean): void {
+    if (l.broken === on || l.gone) return;
+    l.broken = on;
+    const p = l.part;
+    if (on) {
+      this.game.sound.bone(p.x);
+      if (this.alive && !this.zombie) this.pain = Math.min(1.5, this.pain + 0.35);
+      // (a bruise where it went)
+      if (this.variant.kind === 'human') p.paintAt(p.x, p.y, 0x5a2a3a, 1, 0.35);
+      this.rouse();
+    }
+    this.updateMotors(true);
+  }
+
+  /** Bone Eating: another bone gives way (not the skull). Whether there was one left whole. */
+  private eatBone(): boolean {
+    const whole = this.order.filter((l) => !l.gone && l.joint && !l.broken && l.spec.key !== 'head');
+    if (!whole.length) return false;
+    this.setBroken(whole[Math.floor(Math.random() * whole.length)], true);
+    return true;
+  }
+
+  /** Acid in the blood: every limb is eaten away (blistering, dripping, smoking) until it gives way and falls off. */
+  private melt(dt: number): void {
+    const ps = this.game.particles;
+    let x = 0;
+    for (const l of this.order) {
+      if (l.gone) continue;
+      const p = l.part;
+      x = p.x;
+      // (some go sooner than others)
+      p.hp -= p.maxHp * 0.07 * (0.6 + (l.phase % 1) * 0.8) * dt;
+      if (Math.random() < dt * 5) {
+        const ix = Math.floor(Math.random() * p.w);
+        const iy = Math.floor(Math.random() * p.h);
+        p.paintPixel(ix, iy, ACID_SCAR, 0.8);
+      }
+      if (Math.random() < dt * 0.5) ps.liquid(Liquid.Acid, p.x, p.y, 0, -1, 1, 0.4, 0.8, p.body);
+      if (Math.random() < dt * 0.6) ps.smoke(p.x, p.y + 0.05, 1, 0.06);
+      if (p.hp <= 0 && l.joint && !l.severed) this.sever(l, 'cut');
+    }
+    if (this.alive && !this.zombie) this.pain = Math.min(1.5, this.pain + dt * 0.08);
+    liquidSound(this.game, 'liquid/sizzle', x, 0.3, 0.7);
+  }
+
+  /** What's in them at work (some of it on the dead too), and an infection taking hold. */
+  private afflict(dt: number): void {
+    const d = this.drugs;
+    if (d.freeze > 0) {
+      // (thawing sooner by a fire)
+      const burnt = this.order.some((l) => !l.gone && l.part.burning > 0);
+      d.freeze = Math.max(0, d.freeze - dt * (burnt ? 8 : 1));
+      if (d.freeze === 0) this.stiffen(false);
+    }
+    d.painkiller = Math.max(0, d.painkiller - dt);
+    d.strength = Math.max(0, d.strength - dt);
+    if (d.coagulation > 0) {
+      d.coagulation = Math.max(0, d.coagulation - dt);
+      // the blood thickens: every wound stops bleeding within a few seconds
+      for (const l of this.order) for (const w of l.wounds) w.rate *= Math.exp(-dt * 1.2);
+    }
+    if (d.bone > 0) {
+      d.bone = Math.max(0, d.bone - dt);
+      if ((this.boneT -= dt) <= 0) {
+        this.boneT = 0.6 + Math.random() * 0.6;
+        if (!this.eatBone()) d.bone = 0;
+      }
+    }
+    if (d.acid > 0) {
+      d.acid = Math.max(0, d.acid - dt);
+      this.melt(dt);
+    }
+    // the infection takes hold (in the dead too: they rise), and turns them once it has
+    if (this.infection > 0 && this.infection < 1) {
+      this.infection = Math.min(1, this.infection + dt / ZOMBIE.incubate);
+      if (this.infection >= 1) this.rise();
+    }
+    if (this.zombie && this.alive && this.consciousness > 0.3 && (this.groanT -= dt) <= 0) {
+      this.groanT = 5 + Math.random() * 9;
+      this.game.sound.play('creature/zombie_groan', { gain: 0.35, x: this.L('upperTorso').part.x, vary: 0.12 });
+    }
+  }
+
+  // ---------------------------------------------------------------- poses
+
+  /**
+   * A pose picked from the menu (null: none; picked again, it's let go of): Stumble
+   * (they lurch about, catching themselves), Cower (crouched, arms over the head, going
+   * nowhere), Sit (on the floor, legs out in front) or Flat pose (lying straight and still).
+   */
+  setPose(p: PoseName | null): void {
+    this.pose = p;
+    this.stopFighting();
+    this.rouse();
+    if (p === 'sit' || p === 'flat') this.setState('down');
+    else if (this.state === 'stand') this.easeFrom(POSE_EASE * 2);
+    this.lurchT = 0.4;
+    this.updateMotors(true);
+  }
+
+  /** Stumbling about: now and then a lurch one way or the other, to catch with a few quick steps. */
+  private lurch(dt: number): void {
+    if ((this.lurchT -= dt) > 0) return;
+    this.lurchT = 0.7 + Math.random() * 1.1;
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    for (const k of ['upperTorso', 'midTorso', 'head'] as LimbKey[]) {
+      const p = this.L(k).part;
+      if (!this.L(k).gone && !p.frozen) p.body.applyImpulse({ x: dir * p.mass * (0.9 + Math.random() * 0.7), y: 0 }, true);
+    }
+  }
+
+  /** Sitting: the trunk held up over the hips (as a seat would hold it), the legs out along the floor. */
+  private sitUp(dt: number): void {
+    const p = this.L('lowerTorso').part;
+    if (this.L('lowerTorso').gone || p.frozen) return;
+    const tau = clamp(-wrapAngle(p.a) * 260 - p.body.angvel() * 40, -180, 180);
+    p.body.applyTorqueImpulse(tau * dt, true);
   }
 
   private legsWork(): boolean {
@@ -540,6 +1207,7 @@ export class Human extends Entity implements Holder {
     this.state = s;
     this.stateT = 0;
     this.feetT = 0;
+    this.stumbling = false;
     this.climbing = null;
     this.jumping = null;
     this.settleFrom = null;
@@ -577,9 +1245,10 @@ export class Human extends Entity implements Holder {
     push('lowerLegB', 0.6);
   }
 
-  /** Standing muscles hold posture firmly; a fallen body moves freely. */
+  /** Standing (or sitting up in a seat) muscles hold posture firmly; a fallen body moves freely. */
   private applyDamping(): void {
-    const ang = this.state === 'stand' ? BALANCE.standDamping : BALANCE.limpDamping;
+    const firm = this.state === 'stand' || (this.seat !== null && this.strength() > 0.15);
+    const ang = firm ? BALANCE.standDamping : BALANCE.limpDamping;
     for (const l of this.order) if (!l.gone && !this.isGrabbed(l.part)) l.part.body.setAngularDamping(ang);
   }
 
@@ -595,26 +1264,40 @@ export class Human extends Entity implements Holder {
     // climbing (tucked up until the feet are over where they're going, then reaching
     // down for it) and jumping
     const movePose = standing ? (this.climbing ? this.climbPose() : this.jumping ? this.jumpPose() : '') : '';
-    const pose = movePose ? MOVE_POSES[movePose] : standing ? POSE_STAND : POSE_DOWN;
-    const writhe = !standing && conscious ? Math.min(0.9, this.pain * 0.9) : 0;
+    // sitting in a vehicle (see sit()), or on the floor (Sit: see setPose()): the seat's
+    // pose, held as firmly as standing
+    const seated = (this.seat !== null || this.pose === 'sit') && conscious;
+    const upPose = this.pose === 'cower' ? POSE_COWER : this.zombie ? POSE_ZOMBIE : POSE_STAND;
+    const pose = movePose ? MOVE_POSES[movePose] : standing ? upPose : seated ? this.seat?.pose ?? POSE_SIT : this.pose === 'flat' ? POSE_FLAT : POSE_DOWN;
+    const writhe = !standing && !seated && conscious && this.pose !== 'flat' ? Math.min(0.9, this.pain * 0.9) : 0;
     // someone lying still stops tensing up: weak muscles pushing against a pile of
     // bodies never find a balance and keep the limbs creeping forever
-    const relaxed = !standing && conscious && this.pain < CALM_PAIN && !this.grips.length && this.stateT > 4;
+    const relaxed = !standing && !seated && conscious && !this.held && this.pain < CALM_PAIN && !this.grips.length && this.stateT > 4;
     // re-sending identical motor targets would keep the bodies awake (and drifting)
     const getupRamp = this.state === 'getup' ? clamp(this.stateT / 1.2, 0.12, 1) : 1;
     const ik = standing ? this.holdIK() : null;
+    const blow = standing ? this.fightIK() : null;
+    // how much harder the muscles work throwing a blow (see FIGHT)
+    const thrown = this.blow && this.blowStage(this.blow).stage === 'out' ? (this.blow.item ? FIGHT.swingPower : FIGHT.power) : 0;
     let ikSig = '';
     if (ik) for (const k in ik) ikSig += Math.round(ik[k as LimbKey]! * 40) + ',';
+    if (blow) for (const k in blow) ikSig += 'b' + Math.round(blow[k as LimbKey]! * 40) + ',';
     // limp or relaxed joints only have friction: how strong they are doesn't matter
     const tone = standing || (conscious && !relaxed) ? Math.round(str * 50) : -1;
     const stepping = standing && this.gaitAmt > 0 && !this.climbing && !this.jumping;
     const settle = standing && this.settleFrom ? smoothstep(0, 1, this.settleT / this.settleDur) : 1;
-    const sig = `${standing}:${conscious}:${tone}:${Math.round(getupRamp * 20)}:${this.gripSig()}:${ikSig}:${relaxed}:${stepping}:${movePose}:${Math.round(settle * 20)}`;
+    // held up off the ground, they keep their legs under them to land on
+    const dangling = this.held && conscious && !standing && !seated;
+    const might = this.might;
+    const sig = `${standing}:${conscious}:${tone}:${Math.round(getupRamp * 20)}:${this.gripSig()}:${ikSig}:${relaxed}:${stepping}:${movePose}:${Math.round(settle * 20)}:${dangling}:${seated}:${this.pose}:${might}:${this.zombie}`;
     if (!force && !stepping && (writhe === 0 || relaxed) && sig === this.motorSig) return;
     this.motorSig = sig;
+    // (passing out in the seat, they slump in it)
+    if (this.seat) this.applyDamping();
     for (const l of this.order) {
       const j = l.joint;
       if (!j || !j.isValid() || l.severed) continue;
+      if (l.loose !== l.broken) this.setLimits(l);
       let target = (pose[l.spec.key] ?? 0) * f;
       const from = this.blendFrom?.get(l);
       if (from !== undefined) target = from + (target - from) * smoothstep(0, 1, this.stateT / 1.1);
@@ -625,8 +1308,17 @@ export class Human extends Entity implements Holder {
       const arm = l.spec.muscle < 500;
       // arms holding something aim it forward
       const hold = standing ? this.armRole(l) : null;
+      const swing = blow?.[l.spec.key];
       let boost = 1;
-      if (hold) {
+      if (swing !== undefined) {
+        // fists up, or swinging a weapon (held as firmly as when aiming); a blow
+        // going out has the arm (or leg) put into it. Muscles only turn joints, so
+        // nothing is torn by a fist that's blocked
+        target = swing;
+        // (the other hand on a weapon only goes along with it: see fightIK())
+        boost = hold ? (hold.role === 'support' ? 1 : hold.seg === 'hand' ? 8 : 3.5) : 1.5;
+        if (thrown && (l.spec.key.endsWith(this.blow!.side) || this.blow!.kick)) boost *= thrown;
+      } else if (hold) {
         const t = ik?.[l.spec.key];
         if (t !== undefined) {
           // arms reach for the item's grips (inverse kinematics)
@@ -639,21 +1331,36 @@ export class Human extends Entity implements Holder {
         }
       } else if (this.grips.length && !standing && conscious && l.spec.key.startsWith('hand')) boost = 6;
       else if (stepping) target += this.gait(l.spec.key) * f;
+      // (a zombie's arms held out, and arms over the head cowering, take more holding up)
+      if (standing && arm && swing === undefined && !hold && (this.zombie || this.pose === 'cower')) boost = 3;
+      // getting up with something in hand (or fists up): those arms come round to it
+      // gradually too (snapped there, the weight in hand flings them about, and the
+      // attempt fails as flailing)
+      if (from !== undefined && (swing !== undefined || hold)) target = from + (target - from) * smoothstep(0, 1, this.stateT / 1.1);
       if (writhe > 0 && arm) {
         target += Math.sin(this.t * (1.5 + l.phase * 0.2) + l.phase) * writhe * 0.55 * f;
       }
-      const K = l.spec.muscle * boost * (l.broken ? 0.05 : 1) * (l.attached ? 1 : 0);
-      if (!conscious || K <= 0 || relaxed) {
+      const K = l.spec.muscle * boost * might * (l.broken ? 0.05 : 1) * (l.attached ? 1 : 0);
+      if (this.seat && !conscious && K > 0 && /^(upperLeg|lowerLeg|foot|midTorso|lowerTorso)/.test(l.spec.key)) {
+        // slumped in a vehicle's seat, the back stays up and the legs in the footwell (gone
+        // limp, they'd fold down through the floor, which they don't touch, and drag along the road)
+        j.setMotorMaxForce(1e6);
+        j.configureMotorPosition((this.seat.pose[l.spec.key] ?? 0) * f, K * 0.3, K * 0.3 * 0.004 + 0.3);
+      } else if (!conscious || K <= 0 || relaxed) {
         // limp: dry joint friction. Limbs still flop under their own weight, but
         // small sustained loads (a pile of bodies) no longer make them creep forever.
         const fr = (JOINT_FRICTION[l.spec.key.replace(/[FB]$/, '')] ?? 1) * (this.alive ? 1 : 0.7) * (l.broken ? 0.2 : 1);
         j.configureMotorVelocity(0, fr * 30);
         j.setMotorMaxForce(fr);
-      } else if (standing) {
+      } else if (standing || seated) {
         j.setMotorMaxForce(1e6);
         // NB: Rapier's soft motors lose most of their stiffness when damping is high,
         // so damping stays small and body angular damping provides the rest
         j.configureMotorPosition(target, K * str * getupRamp, K * str * getupRamp * 0.003 + 0.3);
+      } else if (dangling && !arm) {
+        j.setMotorMaxForce(1e6);
+        const tone = 0.35;
+        j.configureMotorPosition((POSE_STAND[l.spec.key] ?? 0) * f, K * tone * str, K * tone * 0.004 + 0.3);
       } else {
         j.setMotorMaxForce(1e6);
         // lying down: weak muscle tone (and writhing when in pain)
@@ -661,6 +1368,28 @@ export class Human extends Entity implements Holder {
         j.configureMotorPosition(target, K * tone * str, K * tone * 0.004 + 0.3);
       }
     }
+  }
+
+  /**
+   * Sets a joint's range of movement for the way they face: a broken bone gives
+   * way and bends well past where the joint would stop it (a knee the wrong way).
+   * Frozen stiff, it's locked where it is.
+   */
+  private setLimits(l: Limb): void {
+    const j = l.joint;
+    if (!j || !j.isValid()) return;
+    l.loose = l.broken;
+    if (this.stiff && l.parent) {
+      const a = wrapAngle(l.part.body.rotation() - l.parent.part.body.rotation());
+      j.setLimits(a - 0.01, a + 0.01);
+      return;
+    }
+    const give = l.broken ? BROKEN_GIVE : 0;
+    // (short of the half turn, where the joint's angle wraps round)
+    const lo = Math.max(-2.9, l.spec.lo! - give);
+    const hi = Math.min(2.9, l.spec.hi! + give);
+    if (this.f === 1) j.setLimits(lo, hi);
+    else j.setLimits(-hi, -lo);
   }
 
   /** Is something heavy lying on this person's head or torso? */
@@ -686,6 +1415,25 @@ export class Human extends Entity implements Holder {
     }
     this.wasPinned = load > 6;
     return this.wasPinned;
+  }
+
+  /**
+   * Down, but with the feet planted under a body that's still more or less
+   * upright: let go of on their feet, or tipping and not yet over.
+   */
+  private catching(str: number): boolean {
+    if (this.held || this.gaveUp || this.getupFails > 1 || str < 0.6 || this.pain > 0.8 || this.stateT < 0.03 || !this.legsWork()) return false;
+    // (dropping onto their feet is fine: they land on them; being thrown sideways isn't)
+    const up = this.L('upperTorso').part;
+    if (Math.abs(up.vx) > 2.5 || up.vy > 2.5 || up.vy < -4.5) return false;
+    // (folded up by a hard landing, the knees can't be straightened in one go: snapped
+    // open, a folded leg kicks the body metres into the air. They go down and get up.)
+    for (const k of ['lowerLegF', 'lowerLegB'] as LimbKey[]) {
+      const l = this.L(k);
+      if (!l.gone && l.attached && l.parent && Math.abs(wrapAngle(l.part.body.rotation() - l.parent.part.body.rotation())) > KNEE_CATCH) return false;
+    }
+    const col = this.column();
+    return col.grounded && Math.abs(col.theta) < 0.45 && Math.abs(col.omega) < 2 && this.grounded(true);
   }
 
   /** Limbs moving dangerously fast while trying to stand. */
@@ -798,6 +1546,15 @@ export class Human extends Entity implements Holder {
   preStep(dt: number): void {
     this.t += dt;
     this.stateT += dt;
+    // unfrozen: the joints ease from where they were held into their pose (a pose's
+    // easing that ran out while frozen would snap them, and bent legs kick them into the air)
+    const frozen = this.parts.some((p) => p.frozen);
+    if (this.wasFrozen && !frozen) {
+      this.easeFrom(SETTLE_T);
+      this.updateMotors(true);
+    }
+    this.wasFrozen = frozen;
+    this.catchT -= dt;
     const str = this.strength();
     const conscious = str > 0.15;
 
@@ -806,7 +1563,9 @@ export class Human extends Entity implements Holder {
     // lying down only does when about to get up)
     let colNow: Column | null = null;
     const column = () => (colNow ??= this.column());
-    if (!conscious || this.held) {
+    // (sitting in a vehicle is lying down as far as getting up goes: they stay put)
+    // (nor sitting on the floor or lying flat out, posed: see setPose())
+    if (!conscious || this.held || this.seat || this.pose === 'sit' || this.pose === 'flat') {
       if (this.state !== 'down') this.setState('down');
     } else if (this.state === 'stand' || this.state === 'getup') {
       const col = column();
@@ -821,7 +1580,7 @@ export class Human extends Entity implements Holder {
         // over on the way) ends it
         this.airT = 0;
         if (Math.abs(wrapAngle(this.L('upperTorso').part.a)) > 1.1) this.setState('down');
-      } else if (this.state === 'stand' && (tilt > (this.landT < 0.5 ? 0.9 : 0.62) || this.airT > (this.landT < 0.6 ? 0.6 : 0.35))) {
+      } else if (this.state === 'stand' && (tilt > (this.landT < 0.5 ? 0.9 : this.stumbling ? 0.8 : 0.62) || this.airT > (this.landT < 0.6 ? 0.6 : 0.35))) {
         if (this.stateT < 3) this.failGetup();
         else this.setState('down');
       } else if (this.state === 'getup' && this.flailing()) {
@@ -840,7 +1599,8 @@ export class Human extends Entity implements Holder {
     } else if (this.state === 'down') {
       const up = this.L('upperTorso').part;
       const rest = Math.hypot(up.vx, up.vy) < 0.6;
-      const wait = 2.2 + this.getupFails * 1.5 + this.pain * 4;
+      // (in a fight, or on a team, they're quicker to be back up)
+      const wait = ((this.foe || this.team ? 1.2 : 2.2) + this.getupFails * 1.5 + this.pain * 4) / this.rush;
       if (this.gaveUp && this.retries < 2 && Math.hypot(up.x - this.gaveUp.x, up.y - this.gaveUp.y) > 0.4) this.retry();
       // lying across someone: shuffle off onto the floor first (nobody gets up off a
       // body), looking a few times a second whether they're on (or still on) anyone
@@ -863,6 +1623,19 @@ export class Human extends Entity implements Holder {
         this.crawlX = this.L('midTorso').part.x;
         this.crawlStuck = 0;
         this.stateT = Math.min(this.stateT, 1);
+      } else if ((look || this.catchT > 0) && this.catching(str)) {
+        // still on their feet, more or less (let go of upright, or caught mid-tip):
+        // straighten up again instead of lying down first
+        const tilt = Math.abs(column().theta);
+        // (on their feet and tipping, they can step to catch it: see stumbleSpeed())
+        if (tilt < 0.45) {
+          this.setState('stand');
+          this.easeFrom(SETTLE_T);
+        } else {
+          this.getupBest = tilt;
+          this.getupProgressT = 0;
+          this.setState('getup');
+        }
       } else if (!this.gaveUp && this.stateT > wait && rest && this.legsWork() && str > 0.7 && this.pain < 0.6 && !this.pinned()) {
         const col = column();
         if (col.grounded && this.grounded(true)) {
@@ -890,11 +1663,33 @@ export class Human extends Entity implements Holder {
       this.speed = 0;
       this.goalT -= dt;
     }
+    // dropped writhing on the floor by the flames, extinguisher in hand: they spray
+    // themselves all the same (and otherwise, off their feet or on to something else,
+    // the lever is let go)
+    const ext = conscious && this.state !== 'stand' && !this.held && this.grips.length ? this.extinguisher() : null;
+    if (ext && this.order.some((l) => !l.gone && l.part.burning > 0.02)) this.sprayOwn(ext, dt);
+    else if (this.dousing && (this.goal !== 'douse' || this.state !== 'stand' || !conscious || this.held)) this.stopDousing();
+    // posed (see setPose()): lurching about, or sitting up
+    if (conscious && !this.held && this.pose === 'stumble' && this.state === 'stand' && !this.climbing && !this.jumping) this.lurch(dt);
+    else if (conscious && !this.held && this.pose === 'sit' && !this.seat) this.sitUp(dt);
+    // fighting: knocked out (or killed), it's over for them; the punch or swing
+    // under way is lost when knocked off their feet
+    if (this.foe && !stillUp(this)) this.stopFighting();
+    // knocked down and kept down as long as the foe waits over them (see closeIn()):
+    // beaten, it's over for them too (up again, they'd only go at it once more)
+    this.downT = this.foe && this.state !== 'stand' ? this.downT + dt : 0;
+    if (this.downT > FIGHT.beaten) this.stopFighting();
+    if (this.blow) {
+      if (conscious && this.state === 'stand' && !this.held && !this.climbing && !this.jumping) this.strike(dt);
+      else this.blow = null;
+    }
+    if (this.freed && (this.blow?.item?.main !== this.freed.part || this.blowStage(this.blow).stage !== 'back')) this.freeWeapon(null);
+    this.blowT -= dt;
 
     // ---- muscles
     this.motorTimer -= dt;
-    // stepping legs follow their gait every step, and easing into a pose goes smoothly
-    if (this.motorTimer <= 0 || this.gaitAmt > 0 || this.settleFrom) {
+    // stepping legs follow their gait every step, and easing into a pose (or throwing a blow) goes smoothly
+    if (this.motorTimer <= 0 || this.gaitAmt > 0 || this.settleFrom || this.blow || this.easingFists) {
       this.motorTimer = 0.05;
       this.updateMotors(false);
     }
@@ -907,7 +1702,12 @@ export class Human extends Entity implements Holder {
       if (this.state === 'getup') {
         const ramp = clamp(this.stateT / 1.2, 0, 1);
         this.balance(column(), 16 * str, 9 * str, 4 + 14 * ramp, dt);
-      } else this.balance(column(), BALANCE.kp * str, BALANCE.kd * str, BALANCE.amax, dt);
+      } else {
+        // (stumbling, everything goes into staying up: arms out, bent at the hips; but
+        // posed to Stumble, they can't keep their balance well)
+        const s = (this.stumbling ? BALANCE.stumble : 1) * (this.pose === 'stumble' ? 0.6 : 1);
+        this.balance(column(), BALANCE.kp * str * s, BALANCE.kd * str * s, BALANCE.amax * s, dt);
+      }
     }
     // (only someone on their feet walks)
     this.walk(dt, this.state === 'stand' && column().grounded);
@@ -927,20 +1727,63 @@ export class Human extends Entity implements Holder {
     const c = this.L('upperTorso').part;
     const look = this.lookT <= 0;
     if (look) {
-      this.lookT = 0.1;
+      this.lookT = 0.1 / this.rush;
       this.climbWait = false;
       const fire = this.grips.length ? null : this.game.fire.near(c.x, c.y, 2, this);
       if (fire) this.scare(fire.x, 2.5);
     }
+    // cowering, they stay where they are, whatever happens
+    if (this.pose === 'cower') {
+      this.speed = 0;
+      this.stumbling = false;
+      return;
+    }
+    // on a team (or a zombie): an eye out for the enemy to go for (and the next, once one is beaten)
+    if ((this.team || this.zombie) && (this.scanT -= dt) <= 0) this.scan(c);
+    // a fire extinguisher in hand, and no fight on: an eye out for a fire to put out
+    if (this.goal !== 'fight' && (this.fireT -= dt) <= 0) this.spotFire(c);
+    // tipping further than standing still can hold (shoved, bumped, let go of
+    // mid-swing): they step the way they're falling until the feet are back under them
+    // (in a fight, stepping back rather than turning their back on the foe; and never
+    // off a drop too deep to climb down: they'd rather go over where they stand)
+    const lean = this.stumbleSpeed();
+    if (lean && (look || !this.stumbling)) this.edgeStep = this.dropAhead(Math.sign(lean)) > CLIMB.down;
+    if (lean && !this.edgeStep && (Math.sign(lean) === this.f || this.goal === 'fight' || this.turn())) {
+      this.stumbling = true;
+      this.speed = Math.sign(lean) === this.f ? Math.abs(lean) : -Math.abs(lean);
+      return;
+    }
+    this.stumbling = false;
     let speed = 0;
     if (this.goal === 'flee') {
       if (this.goalT <= 0) this.rest();
-      else speed = (Math.sign(c.x - this.fleeFrom) || this.f) * GAIT.run;
+      else speed = (Math.sign(c.x - this.fleeFrom) || this.f) * GAIT.run * this.rush;
     } else if (this.goal === 'walk') {
       const dx = this.targetX - c.x;
       if (Math.abs(dx) < 0.25 || this.goalT <= 0) this.rest();
-      else speed = Math.sign(dx) * GAIT.walk * clamp(Math.abs(dx) / 0.8, 0.5, 1);
-    } else if (this.goalT <= 0 && this.wander) this.decide();
+      else speed = Math.sign(dx) * GAIT.walk * this.rush * clamp(Math.abs(dx) / 0.8, 0.5, 1);
+    } else if (this.goal === 'fight') {
+      speed = this.closeIn(c, dt);
+      // stepping back from the foe, still facing them: no turning round, and only
+      // with room behind (looked for a few times a second)
+      if (this.backstep && speed) {
+        if (look) this.backClear = !this.blockedAhead(true, 0.12) && this.dropAhead(-this.f) < 0.35;
+        this.speed = this.backClear ? -Math.abs(speed) : 0;
+        this.stuckT = 0;
+        return;
+      }
+      // on the way to the foe: a drop to get down, a gap to leap, someone lying in the
+      // way to jump (see route(): worked out as they look, and kept to until the next look)
+      if (speed && Math.sign(speed) === this.f) {
+        if (look) this.approach = this.route(speed);
+        if (this.approach !== null) {
+          this.speed = Math.min(Math.abs(speed), this.approach);
+          this.stuckT = 0;
+          return;
+        }
+      } else this.approach = null;
+    } else if (this.goal === 'douse') speed = this.douse(c, dt);
+    else if (this.goalT <= 0 && this.wander) this.decide();
     // people walk forwards: facing the wrong way, turn round first
     if (speed && Math.sign(speed) !== this.f && !this.turn()) {
       // no room to turn (someone at their heels): after a while, give up and go
@@ -948,7 +1791,7 @@ export class Human extends Entity implements Holder {
       this.turnWait += dt;
       if (this.turnWait > 1.5 && this.goal !== 'flee') {
         this.blocked = Math.sign(speed);
-        this.rest();
+        this.halt();
       }
       speed = 0;
     } else this.turnWait = 0;
@@ -972,11 +1815,21 @@ export class Human extends Entity implements Holder {
       return;
     } else if (speed && (look ? this.blockedAhead() || this.dropAhead() > 0.35 || this.cliffAhead(Math.abs(speed)) : this.cornered)) {
       this.pacing = 0;
-      // something in the way, or a drop: stop short of it (running scared, keep looking for a way)
+      // something in the way, or a drop: stop short of it (running scared, keep looking
+      // for a way; in a fight, wait there a while: see melee() and gunfight(). Kept
+      // stopped until the next look either way: going on in between, they'd creep
+      // on over the edge a little at a time)
       this.blocked = this.f;
       speed = 0;
       if (this.goal === 'flee') this.cornered = true;
-      else this.rest();
+      else if (this.goal === 'fight') {
+        this.cornered = true;
+        // (the foe in the way, or the weapon they hold out: there already, see melee())
+        if (!this.ofFoe(this.blocker)) {
+          this.noWayT = 1;
+          this.noWayDir = this.f;
+        }
+      } else this.halt();
     } else if (look) {
       this.cornered = false;
       this.pacing = 0;
@@ -987,7 +1840,7 @@ export class Human extends Entity implements Holder {
       this.stuckT = 0;
       this.blocked = Math.sign(speed);
       speed = 0;
-      this.rest();
+      this.halt();
     }
     this.speed = Math.abs(speed);
   }
@@ -1053,6 +1906,828 @@ export class Human extends Entity implements Holder {
     this.goalT = this.wander ? 2 + Math.random() * 6 : 4 + Math.random() * 10;
   }
 
+  /** Stopped by something in the way: stand about for a while (in a fight, they wait for their chance). */
+  private halt(): void {
+    if (this.goal !== 'fight') this.rest();
+  }
+
+  /**
+   * Sets them on `foe` (someone, or some animal): they run at it and punch, or
+   * swing what they hold, or with a gun shoot from a way off, until it's dead or
+   * out cold (waiting while it's down). `back`: the foe fights back.
+   */
+  fight(foe: Entity, back = true): boolean {
+    // (never one of their own side: see Teams)
+    if (foe === this || !this.alive || !isLiving(foe) || !foe.alive || allies(this, foe)) return false;
+    this.foe = foe;
+    this.goal = 'fight';
+    // (a win in an earlier fight doesn't count towards this one)
+    this.foeDownT = 0;
+    // (sizing each other up: they don't swing at the same moment)
+    this.blowT = 0.2 + Math.random() * 0.6;
+    this.shotT = 0.3 + Math.random() * 0.5;
+    // (a gun is steadied on someone new a moment before the first shot)
+    this.aimT = 0;
+    this.aimNeed = SHOT.settle + Math.random() * SHOT.settleJitter;
+    this.closing = false;
+    // (a way to someone new is looked for afresh)
+    this.noWayT = this.detourT = this.wayT = 0;
+    if (back && isFighter(foe) && !foe.foe) foe.fight(this, false);
+    return true;
+  }
+
+  /** Leaves off fighting. */
+  stopFighting(): void {
+    const was = this.goal === 'fight';
+    this.foe = null;
+    this.blow = null;
+    this.easingFists = false;
+    this.fightPose.clear();
+    this.swingAt = null;
+    this.combo = false;
+    this.fetch = null;
+    this.evadeT = 0;
+    this.approach = null;
+    this.noWayT = this.detourT = 0;
+    // (on a team, they look for the next straight away)
+    this.scanT = 0;
+    if (!was) return;
+    this.rest();
+    // fists lowered gently (snapped back down, they'd whip about)
+    if (this.state === 'stand' && !this.destroyed) this.easeFrom(0.4);
+  }
+
+  /**
+   * On a team: looks about for the enemy to go for (see Teams.nearestEnemy()) and
+   * goes for it, unless already fighting one about as near (or someone they were
+   * set on who isn't on another side: they see that through). Empty-handed against
+   * someone armed, they'll pick up a weapon lying close by first.
+   */
+  private scan(c: Part): void {
+    this.scanT = SCAN.every * (0.7 + Math.random() * 0.6);
+    const foe = this.foe;
+    // (no way to get at the one they're after, for now: rather someone else)
+    const stuck = this.noWayT > 0 && !this.grips.some((g) => isGun(g.item)) ? foe : null;
+    const e = nearestEnemy(this, c.x, c.y, SCAN.sight, stuck);
+    if (e && e !== foe) {
+      const up = !!foe && stillUp(foe);
+      const swap = !foe || !up || (stuck !== null && enemies(this, foe)) || (enemies(this, foe) && ((!onFeet(foe as Fighter) && onFeet(e)) || Math.abs(e.center().x - c.x) + SCAN.switch < Math.abs(foe.center().x - c.x)));
+      if (swap) this.fight(e, false);
+    }
+    const now = this.foe;
+    if (now instanceof Human && now.grips.length && !this.grips.length && !this.fetch && !this.zombie && Math.abs(now.center().x - c.x) > 2.5) {
+      this.fetch = lyingNear(this.game, c.x, c.y, SCAN.fetch, isWeapon);
+      this.fetchT = 0;
+    }
+  }
+
+  /**
+   * Puts something to hold straight into a free hand (the front one first): soldiers
+   * armed for a battle (see ArmyPanel), a weapon picked up in a fight. Whether they did.
+   */
+  take(item: Item): boolean {
+    if (!this.alive || this.zombie || this.destroyed || item.destroyed || item.holder || !item.hold) return false;
+    const hand = (['handF', 'handB'] as LimbKey[]).find((k) => this.ok(k) && !this.handBusy(this.L(k)) && !this.L(k).part.frozen);
+    if (!hand) return false;
+    let it = item;
+    // (items always face the way the person faces)
+    if (it.flipped !== this.flipped) {
+      const flipped = this.game.flipEntity(it) as Item | null;
+      if (!flipped) return false;
+      it = flipped;
+    }
+    this.attach(it, this.L(hand));
+    return true;
+  }
+
+  /**
+   * Fighting: goes for the foe and, near enough, faces it and fights: hand to hand
+   * (see melee()), or with a gun from the distance it's fired from (see gunfight()).
+   * Gets away from a lit bomb or a fire by them first, waits while the foe is down,
+   * and stops once it's out of it. Returns the speed wanted, in the world's x
+   * (see backstep: stepping back from the foe, still facing them).
+   */
+  private closeIn(c: Part, dt: number): number {
+    const foe = this.foe;
+    this.backstep = false;
+    // (knocked down and staying down: beaten)
+    this.foeDownT = foe && isLiving(foe) && !onFeet(foe) ? this.foeDownT + dt : 0;
+    // (a zombie goes on at them, down or out cold, until they're dead or bitten)
+    if (!foe || !stillUp(this) || (this.zombie ? foe.destroyed || !isLiving(foe) || !foe.alive || undead(foe) : !stillUp(foe) || this.foeDownT > FIGHT.beaten)) {
+      this.stopFighting();
+      return 0;
+    }
+    if (this.zombie) return this.maul(c, foe, dt);
+    this.shotT -= dt;
+    // a lit bomb whose blast would reach them, or fire right by them: away from it first
+    if ((this.dangerT -= dt) <= 0) {
+      this.dangerT = 0.25;
+      const x = this.danger(c);
+      if (x !== null) {
+        this.evadeT = 1.5 + Math.random();
+        this.evadeX = x;
+        this.blow = null;
+      }
+    }
+    if (this.evadeT > 0) {
+      this.evadeT -= dt;
+      return (Math.sign(c.x - this.evadeX) || -this.f) * GAIT.run * this.rush;
+    }
+    this.noWayT -= dt;
+    // off round another way down to the foe (see wayDown()): until they're down it
+    if (this.detourT > 0) {
+      this.detourT -= dt;
+      const d = this.detourX - c.x;
+      if (Math.abs(d) > 0.3 && c.y > this.detourY - 0.3) return Math.sign(d) * GAIT.walk * this.rush;
+      this.detourT = 0;
+    }
+    const dx = foe.center().x - c.x;
+    const dir = Math.sign(dx) || this.f;
+    const gun = this.grips.find((g) => isGun(g.item))?.item as (Item & { fire(): void }) | undefined;
+    if (gun) return this.gunfight(gun, foe, Math.abs(dx), dir, dt);
+    const held = this.grips[0]?.item ?? null;
+    // (empty-handed against someone armed: the weapon lying close by they're going for)
+    if (!held && this.fetch) {
+      const s = this.fetching(c, dt);
+      if (s !== null) return s;
+    }
+    return this.melee(held, foe, Math.abs(dx), dir, dt);
+  }
+
+  /** How much higher (m) the foe stands than they do: the lowest of each (the feet, or whatever they lie on). */
+  private standsAbove(foe: Entity): number {
+    let a = Infinity;
+    for (const p of foe.parts) if (!p.destroyed && p.y < a) a = p.y;
+    let b = Infinity;
+    for (const l of this.order) if (!l.gone && l.attached && l.part.y < b) b = l.part.y;
+    return a < Infinity && b < Infinity ? a - b : 0;
+  }
+
+  /** No way on toward the foe that way (a drop, a wall, seen a moment ago: see think())? */
+  private noWay(dir: number): boolean {
+    return this.noWayT > 0 && this.noWayDir === dir;
+  }
+
+  /** A lit bomb whose blast would reach them, or fire right by them: where it is (x), or null. */
+  private danger(c: Part): number | null {
+    const bomb = bombNear(this.game, c.x, c.y, this);
+    if (bomb !== null) return bomb;
+    const fire = this.game.fire.near(c.x, c.y - 0.5, 1.1, this);
+    return fire ? fire.x : null;
+  }
+
+  /** On the way to pick up a weapon: the speed to go at (0 as it's picked up), or null once there's none to get. */
+  private fetching(c: Part, dt: number): number | null {
+    const it = this.fetch!;
+    this.fetchT += dt;
+    if (it.destroyed || it.holder || this.fetchT > 5) {
+      this.fetch = null;
+      return null;
+    }
+    const dx = it.main.x - c.x;
+    if (Math.abs(dx) > 0.4) return Math.sign(dx) * GAIT.run * this.rush;
+    // (stooping for it is left out: it's in hand)
+    this.fetch = null;
+    this.take(it);
+    return 0;
+  }
+
+  /**
+   * Hand to hand: comes to just out of the foe's reach and waits there; steps in to
+   * strike (with a weapon, from as far as it reaches; with fists from close up:
+   * punches, now and then two in a row, and kicks), and steps back out after. Waits
+   * while the foe is down. With no way on to them (down a drop too deep, across a
+   * gap too wide, up a wall), waits there shaking a fist at them, or goes round
+   * another way down if there is one. Returns the speed wanted.
+   */
+  private melee(held: Item | null, foe: Entity, ad0: number, dir: number, dt: number): number {
+    const strike = held ? this.strikeRange(held, foe) : FIGHT.reach;
+    const ready = strike + FIGHT.stepOut;
+    // (standing higher or lower than them, up on a box or down off a ledge: further to go)
+    const up = this.standsAbove(foe);
+    const ad = Math.abs(up) > 0.5 ? ad0 + Math.abs(up) : ad0;
+    if (ad > strike && this.noWay(dir)) {
+      if (dir !== this.f) {
+        this.turn();
+        return 0;
+      }
+      if (!this.blow && (this.tauntT -= dt) <= 0) {
+        this.tauntT = 2 + Math.random() * 3;
+        this.throwBlow(held);
+      }
+      // up high with them down below: another way down, looked for every so often
+      if (up < -0.6 && (this.wayT -= dt) <= 0) {
+        this.wayT = 2.5;
+        const x = this.wayDown(-dir);
+        if (x !== null) {
+          this.detourX = x;
+          this.detourY = this.L('upperTorso').part.y;
+          this.detourT = 10;
+          this.noWayT = 0;
+          this.blow = null;
+        }
+      }
+      return 0;
+    }
+    if (ad > ready + 0.4) {
+      this.combo = false;
+      // (a moment's wait once there, different every time: two coming together don't strike as one)
+      if (this.blowT < 0.1) this.blowT = 0.1 + Math.random() * 0.5;
+      return dir * (ad > ready + 1.5 ? GAIT.run : GAIT.walk) * this.rush;
+    }
+    if (dir !== this.f) {
+      this.turn();
+      return 0;
+    }
+    const b = this.blow;
+    // winding up a swing: in onto them as it's drawn back (a punch or a kick is thrown standing)
+    if (b) return b.item && b.t < b.dur * b.wind && ad > strike && !this.noWay(dir) ? dir * FIGHT.lunge * this.rush : 0;
+    if (this.blowT > 0 || !onFeet(foe as Fighter)) {
+      // between blows: back out to just beyond the foe's reach (another punch coming straight after: stay)
+      if (this.combo) return 0;
+      if (ad < ready - 0.2) {
+        this.backstep = true;
+        return -dir * FIGHT.back * this.rush;
+      }
+      return ad > ready + 0.2 ? dir * GAIT.walk * 0.6 * this.rush : 0;
+    }
+    // stepping in to strike (the foe in the way counts as near enough: walking on, they'd stop short of them)
+    if (ad > strike + 0.1 && !(ad < strike + 0.6 && this.blockedAhead() && this.ofFoe(this.blocker))) return dir * GAIT.walk * this.rush;
+    // too near to swing a weapon at: a step back first (if there's room behind)
+    if (held && ad < strike - 0.4 && this.backClear) {
+      this.backstep = true;
+      return -dir * FIGHT.back * this.rush;
+    }
+    this.combo = false;
+    this.throwBlow(held);
+    return 0;
+  }
+
+  /**
+   * A zombie going for someone: it shambles up to them (near enough to lunge at someone
+   * on their feet; over the middle of someone lying down) and lunges, an arm out to grab
+   * and the head in to bite (see bite()), down or not, until they're bitten. Returns the
+   * speed wanted.
+   */
+  private maul(c: Part, foe: Entity, dt: number): number {
+    this.noWayT -= dt;
+    const dx = foe.center().x - c.x;
+    const dir = Math.sign(dx) || this.f;
+    const up = this.standsAbove(foe);
+    const low = isLiving(foe) && !onFeet(foe);
+    let ad = Math.abs(dx) + (Math.abs(up) > 0.5 ? Math.abs(up) : 0);
+    // (someone lying down is bitten wherever is nearest: the whole length of them is in reach,
+    // and their middle may be past their legs, which are in the way)
+    if (low) for (const p of foe.parts) if (!p.destroyed) ad = Math.min(ad, Math.abs(p.x - c.x));
+    const reach = low ? ZOMBIE.reach * 0.6 : ZOMBIE.reach;
+    if (this.blow) return 0;
+    // (the foe in the way counts as near enough: walking on, it would stop short of them)
+    if (ad > reach + 0.15 && !(ad < reach + 0.6 && this.blockedAhead() && this.ofFoe(this.blocker))) return this.noWay(dir) ? 0 : dir * GAIT.walk * this.rush;
+    if (dir !== this.f) {
+      this.turn();
+      return 0;
+    }
+    if (this.blowT <= 0) this.lunge(low);
+    return 0;
+  }
+
+  /** A zombie's lunge: an arm thrown out to grab (one and then the other), bending right down to someone on the floor. */
+  private lunge(low: boolean): void {
+    const free = (['F', 'B'] as const).filter((s) => this.ok(`hand${s}`));
+    const side = free.length > 1 ? (this.lastFist === 'F' ? 'B' : 'F') : free[0] ?? 'F';
+    this.lastFist = side;
+    const vary = 0.85 + Math.random() * 0.3;
+    this.blow = { t: 0, dur: 0.75 * vary, side, item: null, kick: false, landed: false, wind: 0.4, out: 0.3, aim: low ? 'chest' : 'head', bite: true };
+  }
+
+  /** Aiming what they hold (tipped by `tilt`): at the foe, or at a fire. */
+  private get aiming(): boolean {
+    return this.goal === 'fight' || this.goal === 'douse';
+  }
+
+  /** The fire extinguisher in their hand, if they hold one. */
+  private extinguisher(): Item | null {
+    return this.grips.find((g) => g.item.def.id === 'fire-extinguisher' && !g.item.destroyed)?.item ?? null;
+  }
+
+  /** With an extinguisher in hand: the fire to put out (on themselves first, else the nearest about them), and off to it. */
+  private spotFire(c: Part): void {
+    this.fireT = DOUSE.every;
+    let fire: Part | null = null;
+    if (this.extinguisher()) {
+      fire = this.order.find((l) => !l.gone && l.attached && l.part.burning > 0.05)?.part ?? null;
+      const p = fire ? null : this.game.fire.near(c.x, c.y, DOUSE.sight, this);
+      if (p && Math.abs(p.y - c.y) < DOUSE.rise) fire = p;
+    }
+    this.fireAt = fire;
+    if (fire) this.goal = 'douse';
+    else if (this.goal === 'douse') this.rest();
+  }
+
+  /**
+   * Putting out a fire with the extinguisher in hand: up to it, facing it, they spray it
+   * (aimed at it) until it's out. On fire themselves, they spray at their own feet and the
+   * cloud billows up over them (the spray itself passes by whoever holds it). Returns the
+   * speed wanted.
+   */
+  private douse(c: Part, dt: number): number {
+    const ext = this.extinguisher();
+    const p = this.fireAt;
+    if (!ext || !p || p.destroyed || p.burning <= 0.02) {
+      this.stopDousing();
+      // (another fire, or none: looked for at once)
+      this.fireT = 0;
+      return 0;
+    }
+    const own = p.entity === this;
+    const dx = p.x - c.x;
+    const dir = own ? this.f : Math.sign(dx) || this.f;
+    if (!own && Math.abs(dx) > DOUSE.reach) {
+      this.stopDousing();
+      return dir * GAIT.walk * this.rush;
+    }
+    if (dir !== this.f) {
+      this.stopDousing();
+      this.turn();
+      return 0;
+    }
+    const m = ext.main;
+    const tx = own ? m.x + this.f * 0.5 : p.x;
+    const ty = own ? c.y - 1.3 : p.y;
+    this.tilt = clamp(Math.atan2(ty - m.y, Math.max(0.2, Math.abs(tx - m.x))), -0.7, 0.7);
+    if (own) this.sprayOwn(ext, dt);
+    else this.spray(ext);
+    return 0;
+  }
+
+  /** On fire with an extinguisher in hand, standing or on the floor: they spray themselves, and the cloud billowing up over them damps their flames. */
+  private sprayOwn(ext: Item, dt: number): void {
+    this.spray(ext);
+    for (const l of this.order) if (!l.gone && l.part.burning > 0) this.game.fire.douse(l.part, DOUSE.self * dt);
+  }
+
+  /** The extinguisher's lever held down. */
+  private spray(ext: Item): void {
+    if (this.dousing === ext) return;
+    this.stopDousing();
+    this.dousing = ext;
+    ext.setActiveHeld(true);
+  }
+
+  /** The extinguisher's lever let go. */
+  private stopDousing(): void {
+    if (this.dousing && !this.dousing.destroyed) this.dousing.setActiveHeld(false);
+    this.dousing = null;
+  }
+
+  /** Is this (in the way) the foe, or something they hold? */
+  private ofFoe(p: Part | null): boolean {
+    return !!p && !!this.foe && (p.entity === this.foe || (p.entity as { holder?: unknown }).holder === this.foe);
+  }
+
+  /** How near (trunk to trunk) they come to swing a weapon at the foe: its far part meets their head with the arm thrown out. */
+  private strikeRange(item: Item, foe: Entity): number {
+    const r = weaponReach(item) * SWING.sweet;
+    // (an animal's head, lower down: the weapon comes down onto it from nearer)
+    const dy = strikePoint(foe).y - this.L('upperTorso').part.y - 0.1;
+    return SWING.arm + Math.sqrt(Math.max(0, r * r - dy * dy));
+  }
+
+  /**
+   * With a gun: walks in to within its range (see RANGE), steps back from a foe come
+   * nearer than it's best fired at (and right away from one in a launcher's blast),
+   * faces them and shoots. Returns the speed wanted.
+   */
+  private gunfight(gun: Item & { fire(): void }, foe: Entity, ad: number, dir: number, dt: number): number {
+    // (a launcher's blast reaches back: shot from further off, and backed away from a foe come nearer than that)
+    const clear = 'standOff' in gun ? (gun as { standOff(): number }).standOff() : 0;
+    if (clear) {
+      if (ad < clear) this.backOff = true;
+      else if (ad > clear + 1) this.backOff = false;
+      if (this.backOff) return -dir * GAIT.run * this.rush;
+    }
+    // (its own range if it has one, kept clear of a blast made bigger in Edit gun…)
+    const [near, own] = RANGE[gun.def.id] ?? (clear ? [0, Math.max(FIGHT.shoot, clear + 2)] : RANGE_ANY);
+    const far = Math.max(own, clear + 2);
+    // beyond its range: in until well inside it (no way on to them: shot at from where they are)
+    if (ad > far) this.closing = true;
+    else if (ad < far - 1) this.closing = false;
+    if (this.closing && !this.noWay(dir)) return dir * (ad > far + 2 ? GAIT.run : GAIT.walk) * this.rush;
+    if (dir !== this.f) {
+      this.turn();
+      return 0;
+    }
+    this.shoot(gun, foe, dt);
+    // too near for it: a few steps back, still facing them (right on top of them, they just shoot)
+    if (ad < near && ad > 1.2) {
+      this.backstep = true;
+      return -dir * FIGHT.back * this.rush;
+    }
+    return 0;
+  }
+
+  /**
+   * Aims at the foe (the body mostly, now and then the head; where they'll be by
+   * the time the shot gets there, and above them for a slow shot that drops on its
+   * way) and fires once the gun has been steady on them a moment, unless one of
+   * their own side is in the line of fire.
+   */
+  private shoot(gun: Item & { fire(): void }, foe: Entity, dt: number): void {
+    const m = gun.main;
+    const p = this.aimPart(foe);
+    const at = p ?? foe.center();
+    let tx = at.x;
+    let ty = at.y;
+    const v = shotSpeed(gun);
+    if (p && v < Infinity) {
+      const t = Math.hypot(tx - m.x, ty - m.y) / v;
+      tx += p.vx * t;
+      ty += p.vy * t;
+    }
+    const x = Math.abs(tx - m.x);
+    const y = ty - m.y;
+    let angle = Math.atan2(y, x);
+    if ('projectileSpeed' in gun && v < Infinity) {
+      // (the low arc that comes down on them; out of reach, as far as it'll go; floating, straight at them)
+      const g = -this.game.gravity;
+      const disc = v ** 4 - g * (g * x * x + 2 * y * v * v);
+      if (g > 0.05) angle = disc >= 0 ? Math.atan2(v * v - Math.sqrt(disc), g * x) : Math.PI / 4;
+    }
+    const want = clamp(angle + this.aimErr, -0.7, 0.7);
+    // (the gun's weight holds it a little under where it's aimed: aimed that much higher)
+    const off = wrapAngle(this.f * ((gun.hold?.angle ?? 0) + want) - m.body.rotation());
+    this.aimTrim = clamp(this.aimTrim + off * this.f * dt * SHOT.trim, -0.3, 0.3);
+    this.tilt = clamp(want + this.aimTrim, -0.7, 0.7);
+    const err = Math.abs(off);
+    this.aimT = err < SHOT.steady ? this.aimT + dt : 0;
+    if (this.shotT > 0 || err > SHOT.fire || this.aimT < this.aimNeed) return;
+    if (this.friendInWay(gun, Math.hypot(x, y) + 0.3)) {
+      this.shotT = 0.15;
+      return;
+    }
+    gun.fire();
+    this.shotT = (SHOT.pause + Math.random() * SHOT.jitter) / this.rush;
+    // (the next once it's steady again: at the body mostly, and a little off, maybe)
+    this.aimNeed = 0.1;
+    this.aimSpot = Math.random() < SHOT.head ? 'head' : Math.random() < 0.6 ? 'chest' : 'belly';
+    this.aimErr = (Math.random() + Math.random() - 1) * SHOT.spread;
+  }
+
+  /** The part of the foe a shot goes for (an animal's chest for the body), or null if there's none of it left. */
+  private aimPart(foe: Entity): Part | null {
+    const want = this.aimSpot === 'head' ? 'Head' : this.aimSpot === 'chest' ? 'Upper torso' : 'Middle torso';
+    let body: Part | null = null;
+    for (const p of foe.parts) {
+      if (p.destroyed) continue;
+      if (p.name === want) return p;
+      if (p.name === 'Chest' || p.name === 'Upper torso') body = p;
+    }
+    return body;
+  }
+
+  /** Is anyone on their side in the line of fire, out to `range` m (see Teams)? */
+  private friendInWay(gun: Item, range: number): boolean {
+    if (!this.team) return false;
+    const m = gun.main;
+    const ray = (this.fireRay ??= new RAPIER.Ray({ x: 0, y: 0 }, { x: 1, y: 0 }));
+    ray.origin = { x: m.x, y: m.y };
+    ray.dir = gun.forward();
+    let friend = false;
+    this.game.physics.world.intersectionsWithRay(ray, range, true, (hit) => {
+      const p = this.game.physics.partOf(hit.collider);
+      if (p && !p.destroyed && allies(this, p.entity)) friend = true;
+      return !friend;
+    });
+    return friend;
+  }
+
+  /** Starts a punch (with a free fist, each in turn), a kick (at something low down, or now and then), or a swing of what's in hand. */
+  private throwBlow(held: Item | null): void {
+    let side: 'F' | 'B';
+    // (each a little quicker or slower: two fighters alike don't fall into step)
+    const vary = (0.85 + Math.random() * 0.3) / this.rush;
+    // too low for a fist to reach (an animal's head): a kick, if both legs will bear it; and now and then anyway
+    const low = this.foe && strikePoint(this.foe).y < this.L('upperTorso').part.y - 0.5;
+    if (!held && (low || (this.foe && Math.random() < FIGHT.kicks))) {
+      if (['upperLegF', 'lowerLegF', 'footF', 'upperLegB', 'lowerLegB'].every((k) => this.ok(k as LimbKey))) {
+        this.blow = { t: 0, dur: FIGHT.kick * vary, side: 'F', item: null, kick: true, landed: false, wind: FIGHT.wind, out: FIGHT.out, aim: 'chest' };
+        return;
+      }
+      if (low) return;
+    }
+    if (held) {
+      const g = this.grips.find((x) => x.item === held);
+      if (!g) return;
+      side = g.hand.spec.key.endsWith('F') ? 'F' : 'B';
+    } else {
+      const free = (['F', 'B'] as const).filter((s) => this.ok(`upperArm${s}`) && this.ok(`lowerArm${s}`) && this.ok(`hand${s}`) && !this.handBusy(this.L(`hand${s}`)));
+      if (!free.length) return;
+      side = free.length > 1 ? (this.lastFist === 'F' ? 'B' : 'F') : free[0];
+      this.lastFist = side;
+    }
+    if (held) this.freeWeapon(held.main);
+    // (at the head or the body: a weapon either, a fist mostly the head)
+    this.blow = held
+      ? { t: 0, dur: FIGHT.swing * vary, side, item: held, kick: false, landed: false, wind: FIGHT.swingWind, out: FIGHT.swingOut, aim: Math.random() < 0.5 ? 'head' : 'chest' }
+      : { t: 0, dur: FIGHT.punch * vary, side, item: null, kick: false, landed: false, wind: FIGHT.wind, out: FIGHT.out, aim: Math.random() < 0.65 ? 'head' : 'chest' };
+  }
+
+  /** Where a blow is aimed: the foe's head or chest (an animal's head; whatever's left of them, once that's gone). */
+  private blowTarget(foe: Entity, b: Blow | null): V2 {
+    if (b?.aim === 'chest') for (const p of foe.parts) if (!p.destroyed && p.name === 'Upper torso') return { x: p.x, y: p.y };
+    return strikePoint(foe);
+  }
+
+  /**
+   * The blow under way: once drawn back, the fist (or the weapon) is thrown at
+   * the foe's head or chest, and hurts them where it lands.
+   */
+  private strike(dt: number): void {
+    const b = this.blow!;
+    b.t += dt;
+    // (a zombie with no hand left to grab with still bites)
+    const end = b.item ? (b.item.destroyed || b.item.holder !== this ? null : b.item.main) : b.bite && !this.ok(`hand${b.side}`) ? this.L('head').part : this.L(b.kick ? 'footF' : `hand${b.side}`).part;
+    if ((!this.foe && !b.item) || !end || end.destroyed || b.t >= b.dur) {
+      this.blow = null;
+      // (a swing on Use over: the arm goes back to holding it)
+      if (!this.foe) this.fightPose.clear();
+      // (now and then a second punch straight after the first, before stepping back out)
+      this.combo = !b.item && !b.kick && !b.bite && !!this.foe && Math.random() < FIGHT.combo;
+      this.blowT = b.bite ? ZOMBIE.pause * (0.8 + Math.random() * 0.5) : (this.combo ? FIGHT.pause * 0.5 : FIGHT.pause + Math.random() * FIGHT.jitter) / this.rush;
+      return;
+    }
+    const { stage, s } = this.blowStage(b);
+    // (a weapon lags behind its swing: it may meet them early in the follow-through)
+    if (b.landed || !(stage === 'out' || (b.item && stage === 'guard' && s < 0.35))) return;
+    // (swung on Use, at nothing in particular: it lands on whatever it meets)
+    const foe = this.foe ?? this.struck(end);
+    if (!foe) return;
+    const at = this.foe ? this.blowTarget(foe, b) : strikePoint(foe);
+    // (they've got round behind: it goes wide)
+    if ((at.x - this.L('upperTorso').part.x) * this.f < 0) return;
+    const dx = at.x - end.x;
+    const dy = at.y - end.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const u = { x: dx / d, y: dy / d };
+    if (b.bite) {
+      if (this.bite(foe, end, u)) b.landed = true;
+      return;
+    }
+    // (on Ultra Strength, far harder: see MIGHT)
+    const str = this.strength() * (this.might > 1 ? MIGHT.blow : 1);
+    // a weapon hurts by its weight (and cuts, if it's a blade); a kick has a leg behind it
+    const m = Math.min(4, b.item?.main.mass ?? 0);
+    const dmg = (b.item ? 10 + 9 * m : b.kick ? 9 + Math.random() * 6 : 6 + Math.random() * 5) * str;
+    const push = (b.item ? 6 + 5 * m : b.kick ? 8 + Math.random() * 4 : 5 + Math.random() * 4) * str;
+    const kind = b.item && 'blade' in b.item ? 'cut' : 'blunt';
+    if (land(this.game, this, end, foe, dmg, kind, u, push)) {
+      b.landed = true;
+      if (this.might > 1) this.fling(foe, u);
+    }
+  }
+
+  /**
+   * On Ultra Strength, a blow that lands sends whoever it hit flying (see MIGHT): away
+   * from them, and up off their feet. (A kick meets them from below, nearly straight
+   * up: they're flung back all the same, a little higher.)
+   */
+  private fling(foe: Entity, u: V2): void {
+    const v = MIGHT.fling * Math.min(1, 150 / Math.max(1, foe.totalMass()));
+    const up = 0.4 + 0.5 * Math.max(0, u.y);
+    for (const p of foe.parts) {
+      if (p.destroyed || p.frozen) continue;
+      p.body.applyImpulse({ x: p.mass * v * this.f, y: p.mass * v * up }, true);
+    }
+    this.game.sound.play('impact/punch_heavy', { gain: 0.7, x: foe.center().x });
+  }
+
+  /**
+   * A zombie's lunge reaching them: a bite where its hand (or head) meets them, or else
+   * on whatever of them is near enough its hand or head (someone lying on the floor).
+   * Whoever it bites is infected (see infect()) and fights back. Whether it bit.
+   */
+  private bite(foe: Entity, end: Part, u: V2): boolean {
+    const dmg = ZOMBIE.bite * (0.7 + Math.random() * 0.6) * this.might;
+    let at = land(this.game, this, end, foe, dmg, 'cut', u, 2);
+    if (!at) {
+      const head = this.L('head');
+      let bd = ZOMBIE.mouth;
+      for (const p of foe.parts) {
+        if (p.destroyed) continue;
+        const d = Math.min(Math.hypot(p.x - end.x, p.y - end.y), head.gone ? Infinity : Math.hypot(p.x - head.part.x, p.y - head.part.y));
+        if (d < bd) {
+          bd = d;
+          at = p;
+        }
+      }
+      if (!at) return false;
+      foe.damage(at, dmg, 'cut', { x: at.x, y: at.y }, u);
+      if (isFighter(foe) && foe.alive && !foe.foe) foe.fight(this, false);
+    }
+    (foe as Entity & { infect?(): void }).infect?.();
+    this.game.sound.play('creature/zombie_bite', { gain: 0.6, x: at.x, vary: 0.1 });
+    if (at.mat.bleeds && !at.destroyed) this.game.particles.blood(at.x, at.y, -u.x, 0.6, 8, 2, at.body);
+    return true;
+  }
+
+  /**
+   * A weapon about to be drawn back to swing, stuck in someone (pushed in on it,
+   * or put down over it: pinched between an arm and the body, no muscle pulls it
+   * out): it passes through what it's touching until it comes round (see preStep()).
+   * Null: everything it passed through solid again.
+   */
+  private freeWeapon(part: Part | null): void {
+    if (this.freed) for (const p of this.freed.from) this.freed.part.noCollide?.delete(p);
+    this.freed = null;
+    if (!part) return;
+    const world = this.game.physics.world;
+    const from: Part[] = [];
+    for (const c of part.colliders) {
+      world.contactPairsWith(c, (other) => {
+        const p = this.game.physics.partOf(other);
+        if (!p || p.destroyed || p.entity === this || p.entity === part.entity || from.includes(p) || part.noCollide?.has(p)) return;
+        world.contactPair(c, other, (m) => {
+          if (m.numContacts() > 0 && !from.includes(p)) from.push(p);
+        });
+      });
+    }
+    if (!from.length) return;
+    for (const p of from) (part.noCollide ??= new Set()).add(p);
+    this.freed = { part, from };
+  }
+
+  /** What a weapon swung on Use is touching (not its holder, nor itself). */
+  private struck(end: Part): Entity | null {
+    const world = this.game.physics.world;
+    const found: { e: Entity | null } = { e: null };
+    for (const c of end.colliders) {
+      world.contactPairsWith(c, (other) => {
+        const p = found.e ? null : this.game.physics.partOf(other);
+        if (!p || p.destroyed || p.entity === this || p.entity === end.entity) return;
+        world.contactPair(c, other, (m) => {
+          if (m.numContacts() > 0) found.e = p.entity;
+        });
+      });
+      if (found.e) break;
+    }
+    return found.e;
+  }
+
+  /**
+   * Arm targets in a fight: fists up in front of the chin, and the blow being
+   * thrown, drawn back, out at the foe's head (or chest) and back to guard. A
+   * weapon is held ready on the shoulder, and swung from there round through the
+   * foe (see swingPath()), the other hand on it going along with it. The fist
+   * moves along a smooth path: the arm muscles snapped straight to each pose
+   * would whip it about at 30-40 m/s.
+   */
+  private fightIK(): Partial<Record<LimbKey, number>> | null {
+    this.swingAt = null;
+    const foe = this.foe;
+    // (being removed, everything let go of: nothing to work out)
+    // (a swing on Use, with no foe: at a point head high in front of them)
+    const alone = !foe && !!this.blow?.item;
+    if (this.destroyed || (!alone && (this.goal !== 'fight' || !foe || foe.destroyed))) return null;
+    const out: Partial<Record<LimbKey, number>> = {};
+    const f = this.f;
+    const torso = this.L('upperTorso').part;
+    const target = () => (foe ? this.blowTarget(foe, this.blow) : { x: torso.x + f * 1.1, y: torso.y + 0.2 });
+    const kick = this.blow?.kick ? this.blow : null;
+    // the weapon fought with (what's first in hand, unless they're shooting: a gun is
+    // aimed, see holdIK()), held ready between swings too; or the one swung on Use
+    const wg = foe ? (this.grips.some((g) => isGun(g.item)) ? undefined : this.grips[0]) : this.grips.find((g) => g.item === this.blow?.item);
+    const wield = wg && !isGun(wg.item) ? wg : null;
+    // (the other hand on it only goes along with it: not held to the fists' pace below)
+    let along: 'F' | 'B' | null = null;
+    if (kick) {
+      // a kick: the knee drawn up, the leg flung out straight at it, and back down
+      const hip = this.L('lowerTorso').part;
+      const at = target();
+      const reach = clamp(Math.atan2(Math.abs(at.x - hip.x), hip.y - at.y), 0.4, 1.5);
+      const { stage, s } = this.blowStage(kick);
+      const back = { x: reach * 0.6, y: -1.5 };
+      const outLeg = { x: reach, y: -0.1 };
+      const rest = { x: 0, y: -0.02 };
+      const leg = stage === 'back' ? mix(rest, back, s) : stage === 'out' ? mix(back, outLeg, s) : mix(outLeg, rest, s);
+      out.upperLegF = f * leg.x;
+      out.lowerLegF = f * leg.y;
+      out.footF = f * 0.3;
+    }
+    for (const side of ['F', 'B'] as const) {
+      const sh = this.shoulder(side);
+      if (!sh) continue;
+      const hand = this.L(`hand${side}`);
+      let a: { upper: number; lower: number; hand: number } | null;
+      if (wield && wield.hand === hand) {
+        const s = this.swingPath(wield, sh, torso, target());
+        a = this.armIK(side, s.x, s.y, s.a);
+        this.swingAt = { item: wield.item, angle: s.a };
+      } else if (wield && wield.support?.hand === hand) {
+        // (in the torso's frame, as all of these: see armIK())
+        const g2 = wield.item.gripWorld(true);
+        if (!g2) continue;
+        const r = rotate(g2.x - sh.x, g2.y - sh.y, -torso.a);
+        a = this.armIK(side, r.x, r.y, null);
+        along = side;
+      } else {
+        const b = this.blow?.side === side && !kick && !this.blow.item ? this.blow : null;
+        if (!b && (alone || this.handBusy(hand))) continue;
+        // (kept in close: two guards held out meet in the middle, and every punch lands on a
+        // fist; a zombie's arms are held out to grab)
+        const guard = this.zombie ? { x: f * (side === 'F' ? 0.55 : 0.48), y: -0.04 } : { x: f * (side === 'F' ? 0.14 : 0.09), y: -0.1 };
+        let p = guard;
+        if (b) {
+          const back = this.zombie ? { x: f * 0.35, y: 0.06 } : { x: f * 0.1, y: -0.02 };
+          // (always out in front: a point behind the shoulder flips the arm right round)
+          const at = target();
+          let hit = rotate(at.x - sh.x, at.y - sh.y, -torso.a);
+          hit = { x: f * Math.max(0.1, f * hit.x), y: hit.y };
+          const { stage, s } = this.blowStage(b);
+          p = stage === 'back' ? mix(guard, back, s) : stage === 'out' ? mix(back, hit, s) : mix(hit, guard, s);
+        }
+        a = this.armIK(side, p.x, p.y, null);
+      }
+      if (!a) continue;
+      out[`upperArm${side}`] = a.upper;
+      out[`lowerArm${side}`] = a.lower;
+      out[`hand${side}`] = a.hand;
+    }
+    // a zombie lunging bends in at the hips to bite, right down to someone on the floor
+    const bite = this.blow?.bite ? this.blow : null;
+    if (bite) {
+      const { stage, s } = this.blowStage(bite);
+      const k = stage === 'back' ? s : stage === 'out' ? 1 : 1 - s;
+      const lean = bite.aim === 'chest' ? 0.5 : 0.15;
+      out.midTorso = f * lean * k;
+      out.lowerTorso = f * lean * 0.8 * k;
+      out.head = -f * 0.3 * k;
+    }
+    // turned toward at a limited rate (faster throwing a blow): snapped from one
+    // pose to the next, putting their fists up whips the hands round at 20 m/s
+    const dt = Math.min(0.1, this.t - this.fightPoseT);
+    this.fightPoseT = this.t;
+    const step = (this.blow && this.blowStage(this.blow).stage === 'out' ? FIGHT.slewOut : FIGHT.slew) * dt;
+    this.easingFists = false;
+    for (const k of Object.keys(out) as LimbKey[]) {
+      const l = this.L(k);
+      const was = this.fightPose.get(k) ?? (l.parent ? wrapAngle(l.part.a - l.parent.part.a) : out[k]!);
+      const d = out[k]! - was;
+      if (along && (k === `upperArm${along}` || k === `lowerArm${along}` || k === `hand${along}`)) {
+        this.fightPose.set(k, out[k]!);
+        continue;
+      }
+      if (Math.abs(d) > step) {
+        out[k] = was + Math.sign(d) * step;
+        this.easingFists = true;
+      }
+      this.fightPose.set(k, out[k]!);
+    }
+    for (const k of [...this.fightPose.keys()]) if (!(k in out)) this.fightPose.delete(k);
+    return out;
+  }
+
+  /** How far the blow has got: drawing back, thrown out, or coming back to guard (each 0..1, eased). */
+  private blowStage(b: Blow): { stage: 'back' | 'out' | 'guard'; s: number } {
+    const k = b.t / b.dur;
+    const w = b.wind;
+    const o = b.out;
+    if (k < w) return { stage: 'back', s: smoothstep(0, 1, k / w) };
+    if (k < w + o) return { stage: 'out', s: smoothstep(0, 1, (k - w) / o) };
+    return { stage: 'guard', s: smoothstep(0, 1, (k - w - o) / (1 - w - o)) };
+  }
+
+  /** Is this limb the business end of a blow being thrown (the fist and forearm, or the foot and shin)? */
+  private throwing(l: Limb): boolean {
+    const b = this.blow;
+    if (!b || b.item) return false;
+    const k = l.spec.key;
+    return b.kick ? k === 'footF' || k === 'lowerLegF' : k === `hand${b.side}` || k === `lowerArm${b.side}`;
+  }
+
+  /**
+   * Where the hand with a weapon goes (relative to the shoulder `sh`, in the torso's
+   * frame: see armIK()) and the angle the weapon is held at (above straight ahead):
+   * on the shoulder between swings (see SWING); in a swing drawn further back, then
+   * the hand thrown out toward `at` as the weapon comes round over and down through
+   * it, and back again. (A swing on Use, with no foe, starts and ends where it's held.)
+   */
+  private swingPath(g: Grip, sh: V2, torso: Part, at: V2): { x: number; y: number; a: number } {
+    const f = this.f;
+    const b = this.blow?.item === g.item ? this.blow : null;
+    const rest = this.foe ? { x: f * SWING.rest.x, y: SWING.rest.y, a: SWING.rest.a } : { ...this.holdReach(g), a: g.item.hold?.angle ?? 0 };
+    if (!b) return rest;
+    const cock = { x: f * SWING.cock.x, y: SWING.cock.y, a: SWING.cock.a };
+    // (always out in front: a point behind the shoulder flips the arm right round)
+    const hit = rotate(at.x - sh.x, at.y - sh.y, -torso.a);
+    const ahead = Math.max(0.1, f * hit.x);
+    const k = Math.min(1, SWING.arm / (Math.hypot(ahead, hit.y) || 1));
+    // (pointing straight at it as it gets there, and on past)
+    const strike = { x: f * ahead * k, y: hit.y * k, a: Math.atan2(hit.y, ahead) - SWING.follow };
+    const { stage, s } = this.blowStage(b);
+    const [p, q] = stage === 'back' ? [rest, cock] : stage === 'out' ? [cock, strike] : [strike, rest];
+    return { x: p.x + (q.x - p.x) * s, y: p.y + (q.y - p.y) * s, a: p.a + (q.a - p.a) * s };
+  }
+
   /** Room to set off that way, turning round first if need be? */
   private clearTo(dir: number): boolean {
     return dir === this.f ? !this.blockedAhead() : !this.blockedAhead(true);
@@ -1060,7 +2735,8 @@ export class Human extends Entity implements Holder {
 
   /** Runs away from x for a few seconds. */
   private scare(fromX: number, secs: number): void {
-    if (!this.alive || this.grips.length) return;
+    // (a zombie fears nothing; someone cowering stays put)
+    if (!this.alive || this.zombie || this.pose === 'cower' || this.grips.length || this.goal === 'fight') return;
     if (this.goal !== 'flee') this.goalT = 0;
     this.goal = 'flee';
     this.fleeFrom = fromX;
@@ -1068,7 +2744,7 @@ export class Human extends Entity implements Holder {
   }
 
   onAlarm(x: number, y: number, radius: number): void {
-    if (!this.alive || this.consciousness < 0.3 || this.L('upperTorso').gone || this.grips.length) return;
+    if (!this.alive || this.consciousness < 0.3 || this.L('upperTorso').gone || this.grips.length || this.goal === 'fight') return;
     const c = this.L('upperTorso').part;
     const d = Math.hypot(c.x - x, c.y - y);
     if (d > radius || d < 0.3) return;
@@ -1125,11 +2801,11 @@ export class Human extends Entity implements Holder {
     return Math.max(0, b.vx * this.f);
   }
 
-  /** How far the floor falls away a step ahead (m; 0: it doesn't). */
-  private dropAhead(): number {
+  /** How far the floor falls away a step ahead (or that way: `dir`) (m; 0: it doesn't). */
+  private dropAhead(dir: number = this.f): number {
     const g = this.groundUnder();
     if (g === null) return 0;
-    const ahead = this.probe(this.L('upperTorso').part.x + this.f * 0.45, g + 0.3, 0, -1, 3);
+    const ahead = this.probe(this.L('upperTorso').part.x + dir * 0.45, g + 0.3, 0, -1, 3);
     return (ahead ? ahead.d : 3) - 0.3;
   }
 
@@ -1143,6 +2819,148 @@ export class Human extends Entity implements Holder {
     if (g === null) return false;
     const ahead = this.probe(this.L('upperTorso').part.x + this.f * (0.45 + speed * 0.35), g + 0.3, 0, -1, CLIMB.down + 0.6);
     return !ahead || ahead.d - 0.3 > CLIMB.down;
+  }
+
+  /**
+   * A fighter on the way to the foe, at a drop or someone lying in the way (looked
+   * at a few times a second): climbs down a drop, or jumps down one too deep to
+   * climb down but not too deep to land from; leaps a gap to floor about as high or
+   * lower on the far side, if it's near enough; jumps over someone lying in the
+   * way. Walks up to the edge for it first. Returns the speed to go at (0: they're
+   * off), or null to go on as anyone walking does (see think(): climbing up onto
+   * things, and stopping short of a drop there's no getting down).
+   */
+  private route(speed: number): number | null {
+    if (this.climbCool > 0) return null;
+    if (this.blockedAhead()) {
+      // (not the foe: that's who they're after; nor anyone standing)
+      const b = this.blocker?.entity;
+      return b && b !== this.foe && b.canWalk && !b.upright ? this.hurdle() : null;
+    }
+    if (this.dropAhead() <= 0.35 && !this.cliffAhead(Math.abs(speed))) return null;
+    const g = this.groundUnder();
+    if (g === null) return null;
+    const f = this.f;
+    const c = this.trunkCenter();
+    // how far ahead the edge is
+    let edge = -1;
+    for (let d = 0; d <= 1.6; d += 0.08) {
+      if (!this.probe(c.x + f * d, g + 0.2, 0, -1, 0.5)) {
+        edge = d;
+        break;
+      }
+    }
+    if (edge < 0) return null;
+    // (walked up to slowly: off from close to the edge, the feet still on it)
+    const near = edge < 0.36;
+    const slow = GAIT.walk * 0.6;
+    const below = this.probe(c.x + f * (edge + 0.3), g + 0.2, 0, -1, LEAP.down + 0.6);
+    const depth = below ? below.d - 0.2 : Infinity;
+    if (depth <= LEAP.down) {
+      // down it: climbed down, if it's low enough and there's room to, else a hop down
+      if (depth <= CLIMB.down && edge < 0.6 && this.climbDown()) return 0;
+      if (!near) return slow;
+      const T = (LEAP.hopVy + Math.sqrt(LEAP.hopVy ** 2 + 2 * this.pull * depth)) / this.pull;
+      return this.leap(clamp((edge + 0.5) / T, 1, LEAP.hopVx * 1.6), LEAP.hopVy) ? 0 : null;
+    }
+    // a gap: across it, if the far side is near enough to reach (the trunk flying from
+    // here to land a little way onto it)
+    const far = this.farSide(c.x, g, edge);
+    if (!far) return null;
+    const T = (LEAP.vy + Math.sqrt(Math.max(0, LEAP.vy ** 2 - 2 * this.pull * (far.y - g)))) / this.pull;
+    // (from where they'll be off: here, or once they've walked up to the edge)
+    const vx = Math.max(1.5, (far.d - (near ? 0 : edge - 0.3) + LEAP.land) / T);
+    if (vx > LEAP.vx) return null;
+    if (!near) return slow;
+    return !this.tethered() && this.leap(vx, LEAP.vy) ? 0 : null;
+  }
+
+  /**
+   * Across a gap from an edge `edge` m ahead: where the nearest floor is (no more than
+   * a little higher than `g`, nor deeper than LEAP.down; not someone) within LEAP.look
+   * of x, with room on it to land: its height, and how far ahead it starts. Null: none.
+   */
+  private farSide(x: number, g: number, edge: number): { y: number; d: number } | null {
+    const f = this.f;
+    const top = g + 0.6;
+    for (let d = edge + 0.2; d <= LEAP.look; d += 0.1) {
+      const h = this.probe(x + f * d, top, 0, -1, 0.6 + LEAP.down);
+      if (!h || h.part?.entity.canWalk) continue;
+      const y = top - h.d;
+      // (a wall rising on the far side: nothing to land on)
+      if (y > g + 0.25) return null;
+      for (const k of [0.3, LEAP.land + 0.3]) {
+        const on = this.probe(x + f * (d + k), y + 0.3, 0, -1, 0.6);
+        if (!on || Math.abs(0.3 - on.d) > 0.25) return null;
+      }
+      return { y, d };
+    }
+    return null;
+  }
+
+  /** Someone lying in the way: a jump over them, if they're low and short enough to clear, onto floor beyond. Returns the speed to go at (0: off), or null. */
+  private hurdle(): number | null {
+    const g = this.groundUnder();
+    if (g === null) return null;
+    const f = this.f;
+    const c = this.trunkCenter();
+    const top = g + LEAP.hurdle + 0.3;
+    let over = false;
+    for (let d = 0.2; d <= 2.2; d += 0.1) {
+      const h = this.probe(c.x + f * d, top, 0, -1, LEAP.hurdle + 0.6);
+      const y = h ? top - h.d : -Infinity;
+      if (y > g + LEAP.hurdle) return null;
+      if (y > g + 0.12) {
+        over = true;
+        continue;
+      }
+      // (no floor beyond: not here)
+      if (Math.abs(y - g) > 0.15) return null;
+      if (!over) continue;
+      const vx = Math.max(1.5, (d + 0.3) / ((2 * LEAP.vy) / this.pull));
+      return vx <= LEAP.vx && !this.tethered() && this.leap(vx, LEAP.vy) ? 0 : null;
+    }
+    return null;
+  }
+
+  /**
+   * Stuck at the edge of somewhere high with the foe down below: another way down off
+   * what they stand on, that way (`dir`), within 15 m: a drop they can get down, with
+   * room under what they're on to come back along to the foe. Where to go (x: just
+   * past the edge), or null.
+   */
+  private wayDown(dir: number): number | null {
+    const g = this.groundUnder();
+    if (g === null) return null;
+    let y: number = g;
+    const x0 = this.trunkCenter().x;
+    const reach = CLIMB.up + 0.2;
+    for (let d = 0.4; d <= 15; d += 0.4) {
+      const x = x0 + dir * d;
+      const h = this.probe(x, y + reach, 0, -1, reach + LEAP.down + 0.3);
+      const top: number = h ? y + reach - h.d : -Infinity;
+      // (a wall: no way on)
+      if (top > y + CLIMB.up) return null;
+      // (the floor goes on, up a step or down one)
+      if (top >= y - 0.35) {
+        y = top;
+        continue;
+      }
+      if (top < y - LEAP.down) return null;
+      // room under to come back
+      return this.probe(x, top + 1.2, -dir, 0, d + 0.5) ? null : x + dir * 0.3;
+    }
+    return null;
+  }
+
+  /** A jump a fighter times themselves (see route()): a short crouch, then off at `vx` (m/s) along the way they face and `vy` up. Whether they did. */
+  private leap(vx: number, vy: number): boolean {
+    if (!this.jump()) return false;
+    const j = this.jumping!;
+    j.t = -LEAP.crouch;
+    j.vx = vx * this.f;
+    j.vy = vy;
+    return true;
   }
 
   /**
@@ -1349,7 +3167,7 @@ export class Human extends Entity implements Holder {
       const p = l.part;
       const v = p.body.linvel();
       const ax = clamp((vx - w * (p.y - my) - v.x) * 14, -30, 30);
-      const ay = clamp((vy + w * (p.x - mx) - v.y) * 14, -30, 30) - GRAVITY;
+      const ay = clamp((vy + w * (p.x - mx) - v.y) * 14, -30, 30) - this.game.gravity;
       p.body.applyImpulse({ x: p.mass * ax * dt, y: p.mass * ay * dt }, true);
     }
     if (this.climbPose() !== was) {
@@ -1363,7 +3181,7 @@ export class Human extends Entity implements Holder {
   jump(): boolean {
     if (!this.alive || this.state !== 'stand' || this.held || this.climbing || this.jumping) return false;
     if (!this.legsWork() || this.strength() < 0.5 || !this.grounded()) return false;
-    this.jumping = { t: -JUMP.crouch, vx: this.trunkVx() * this.f, off: false, landed: -1, peaked: false, pose: 'crouch' };
+    this.jumping = { t: -JUMP.crouch, vx: this.trunkVx() * this.f, vy: JUMP.vy, off: false, landed: -1, peaked: false, pose: 'crouch' };
     this.speed = 0;
     this.easeFrom(POSE_EASE);
     this.updateMotors(true);
@@ -1391,7 +3209,7 @@ export class Human extends Entity implements Holder {
       for (const l of this.order) {
         if (l.gone || !l.attached || l.part.frozen) continue;
         const v = l.part.body.linvel();
-        l.part.body.applyImpulse({ x: l.part.mass * (j.vx - v.x), y: l.part.mass * (JUMP.vy - v.y) }, true);
+        l.part.body.applyImpulse({ x: l.part.mass * (j.vx - v.x), y: l.part.mass * (j.vy - v.y) }, true);
       }
     }
     if (j.t > 0.08 && !grounded) j.off = true;
@@ -1472,6 +3290,29 @@ export class Human extends Entity implements Holder {
   }
 
   /**
+   * Off balance: the speed (m/s, signed, world x) to step at to get the feet back
+   * under the body, or 0. Where the body would come to rest over (its capture point:
+   * the lean plus how fast it's going) is past the feet when standing still can't
+   * hold it.
+   */
+  private stumbleSpeed(): number {
+    // (walking, the body goes on ahead of the feet on purpose; holding something,
+    // they stand their ground, unless they're fighting with it, or a soldier: and not
+    // with something in pieces, which can't turn round with them, see tethered())
+    const holding = this.grips.length > 0 && (!(this.foe || this.team) || this.grips.some((g) => g.item.parts.length !== 1));
+    if ((this.gaitAmt > 0.05 && !this.stumbling) || holding || this.climbing || this.jumping || !this.legsWork()) return 0;
+    const col = this.column();
+    // (a foot comes off the ground with every step)
+    if (!col.grounded) return this.stumbling ? this.speed * this.f : 0;
+    const w0 = Math.sqrt(this.pull / col.h);
+    const capture = col.h * (Math.sin(col.theta) + (col.omega * Math.cos(col.theta)) / w0);
+    // (once stepping, they keep at it until they've really caught it)
+    if (Math.abs(capture) < (this.stumbling ? 0.06 : 0.2)) return 0;
+    // quick short steps, not strides: a running leg swings far too high to catch anything
+    return Math.sign(capture) * clamp(Math.abs(capture) * 3, 0.6, GAIT.walk * 1.2);
+  }
+
+  /**
    * A joint's stepping motion (facing right) on top of the standing pose: the legs
    * swing in turn, each knee bending as its foot comes forward, the soles kept
    * level and the arms swinging against the legs.
@@ -1479,17 +3320,22 @@ export class Human extends Entity implements Holder {
   private gait(key: LimbKey): number {
     const a = this.gaitAmt;
     const run = clamp((this.pace - GAIT.walk) / (GAIT.run - GAIT.walk), 0, 1);
-    const swing = GAIT.swing + (GAIT.runSwing - GAIT.swing) * run;
-    const lift = GAIT.lift + (GAIT.runLift - GAIT.lift) * run;
+    const swing = (GAIT.swing + (GAIT.runSwing - GAIT.swing) * run) * this.reach;
+    // (rushed, the feet are hardly lifted: quick steps. A high knee's foot comes down
+    // late, out ahead of them, and stops them dead every stride.)
+    const lift = (GAIT.lift + (GAIT.runLift - GAIT.lift) * run) / Math.max(1, this.rush);
     const ph = this.stride + (key.endsWith('F') ? 0 : Math.PI);
+    // (a zombie drags its far leg, hardly lifting it, and doesn't swing its arms)
+    const drag = this.zombie && key.endsWith('B') ? 0.5 : 1;
     // bent forward a little at the hips: the feet drag on the floor as they push off,
     // which would tip a body held straight over backwards
-    const sw = a * swing * Math.sin(ph);
-    const knee = -a * lift * Math.max(0, Math.cos(ph));
+    const sw = a * swing * Math.sin(ph) * (drag < 1 ? 0.75 : 1);
+    const knee = -a * lift * Math.max(0, Math.cos(ph)) * drag;
     if (key.startsWith('upperLeg')) return sw + a * (GAIT.bend + (GAIT.runBend - GAIT.bend) * run);
     if (key.startsWith('lowerLeg')) return knee;
     // the sole kept about level through the swing
     if (key.startsWith('foot')) return -(sw + knee) * 0.8;
+    if (this.zombie) return 0;
     if (key.startsWith('upperArm')) return -a * (0.3 + 0.35 * run) * Math.sin(ph);
     if (key.startsWith('lowerArm')) return a * (0.25 + 0.9 * run);
     return 0;
@@ -1500,21 +3346,27 @@ export class Human extends Entity implements Holder {
    * driven toward the wanted speed while the feet are on something.
    */
   private walk(dt: number, grounded: boolean): void {
-    const want = this.state === 'stand' ? this.speed : 0;
-    this.gaitAmt = want > 0 ? Math.min(1, this.gaitAmt + dt * 3) : Math.max(0, this.gaitAmt - dt * 3);
+    // (below 0: stepping back, still facing the same way, as from a foe)
+    const want = this.state === 'stand' ? clamp(this.speed, -GAIT.top, GAIT.top) : 0;
+    const back = want < 0 || (want === 0 && this.trunkVx() < -0.05) ? -1 : 1;
+    // (a stumble can't wait for the legs to get going)
+    this.gaitAmt = want !== 0 ? Math.min(1, this.gaitAmt + dt * (this.stumbling ? 6 : 3)) : Math.max(0, this.gaitAmt - dt * 3);
     if (!this.gaitAmt) return;
     // step for the speed the body is going (setting off, a little ahead of it), so the
     // feet keep up with it rather than flailing at a run from a standing start
-    this.pace = want ? clamp(this.trunkVx() + 0.4, 0.5 * Math.min(want, GAIT.walk), want) : Math.max(0, this.trunkVx());
+    const w = Math.abs(want);
+    const v = this.trunkVx() * back;
+    this.pace = w ? clamp(v + 0.4, 0.5 * Math.min(w, GAIT.walk), w) : Math.max(0, v);
     const run = clamp((this.pace - GAIT.walk) / (GAIT.run - GAIT.walk), 0, 1);
-    // each leg carries the body one sweep per half stride
-    const sweep = 2 * HIP_Y * Math.sin(GAIT.swing + (GAIT.runSwing - GAIT.swing) * run);
-    this.stride = (this.stride + 2 * Math.PI * Math.max(0.8, this.pace / (2 * sweep)) * dt) % (2 * Math.PI);
+    // each leg carries the body one sweep per half stride (stepping back, the stride runs backwards)
+    const sweep = 2 * HIP_Y * Math.sin((GAIT.swing + (GAIT.runSwing - GAIT.swing) * run) * this.reach);
+    const turn = 2 * Math.PI;
+    this.stride = (((this.stride + back * turn * Math.max(0.8, this.pace / (2 * sweep)) * dt) % turn) + turn) % turn;
     if (!grounded || this.state !== 'stand' || this.climbing || this.jumping) return;
     // speed up toward the wanted speed (or slow to a stop), gently while the legs
     // are still getting into their stride: a body shoved ahead of its feet falls on its face
     const up = (GAIT.accel + (GAIT.runAccel - GAIT.accel) * run) * (0.3 + 0.7 * this.gaitAmt);
-    const a = clamp((want - this.trunkVx()) * GAIT.drive, -4, up);
+    const a = back < 0 && want < 0 ? clamp((want - this.trunkVx()) * GAIT.drive, -up, 4) : clamp((want - this.trunkVx()) * GAIT.drive, -4, up);
     let m = 0;
     for (const l of this.order) if (!l.gone && l.attached) m += l.part.mass;
     const trunk = (['upperTorso', 'midTorso', 'lowerTorso'] as LimbKey[]).map((k) => this.L(k)).filter((l) => !l.gone && l.attached && !l.part.frozen);
@@ -1524,27 +3376,30 @@ export class Human extends Entity implements Holder {
 
   /** Pinned, tied, welded or holding something: they can't turn round in place. */
   private tethered(): boolean {
-    if (this.grips.length) return true;
+    // (what's in hand turns round with them, unless it's in pieces: see turn())
+    if (this.grips.some((g) => g.item.parts.length !== 1)) return true;
     const world = this.game.physics.world;
-    const mine = new Set(this.parts.map((p) => p.body.handle));
+    const held = this.grips.map((g) => g.item.main);
+    const mine = new Set([...this.parts, ...held].map((p) => p.body.handle));
     let out = false;
-    for (const l of this.order) {
-      if (l.gone || !l.attached) continue;
-      if (l.part.frozen) return true;
-      world.impulseJoints.forEachJointHandleAttachedToRigidBody(l.part.body.handle, (h) => {
+    for (const p of [...this.order.filter((l) => !l.gone && l.attached).map((l) => l.part), ...held]) {
+      if (p.frozen) return true;
+      world.impulseJoints.forEachJointHandleAttachedToRigidBody(p.body.handle, (h) => {
         const j = world.impulseJoints.get(h);
         if (!j || out) return;
-        const o = j.body1().handle === l.part.body.handle ? j.body2() : j.body1();
+        const o = j.body1().handle === p.body.handle ? j.body2() : j.body1();
         if (!mine.has(o.handle)) out = true;
       });
       if (out) return true;
     }
-    return this.game.connections.list.some((k) => k.a.entity === this || k.b?.entity === this);
+    const things = new Set<Entity>([this, ...this.grips.map((g) => g.item)]);
+    return this.game.connections.list.some((k) => things.has(k.a.entity) || (!!k.b && things.has(k.b.entity)));
   }
 
   /**
    * Turns round on the spot: the body is mirrored about its middle, keeping its
-   * pose and motion (a sprite game's about-turn).
+   * pose and motion (a sprite game's about-turn). What's in hand turns with
+   * them: let go, mirrored and taken again in the same hand.
    */
   private turn(): boolean {
     if (this.turnT > 0) return false;
@@ -1561,6 +3416,13 @@ export class Human extends Entity implements Holder {
       mx += l.part.x * l.part.mass;
     }
     const cx = mx / m;
+    const world = this.game.physics.world;
+    const held = this.grips.map((g) => ({ item: g.item, hand: g.hand, support: !!g.support }));
+    for (const g of this.grips) {
+      if (g.joint.isValid()) world.removeImpulseJoint(g.joint, true);
+      if (g.support?.joint.isValid()) world.removeImpulseJoint(g.support.joint, true);
+    }
+    this.grips = [];
     for (const l of live) {
       const v = l.part.body.linvel();
       l.part.mirror(cx);
@@ -1578,9 +3440,15 @@ export class Human extends Entity implements Holder {
       l.a2 = { x: -l.a2.x, y: l.a2.y };
       j.setAnchor1(l.a1);
       j.setAnchor2(l.a2);
-      if (this.f === 1) j.setLimits(l.spec.lo!, l.spec.hi!);
-      else j.setLimits(-l.spec.hi!, -l.spec.lo!);
+      this.setLimits(l);
     }
+    for (const h of held) {
+      h.item.main.mirror(cx);
+      h.item.flipped = !h.item.flipped;
+      this.attach(h.item, h.hand, h.support, true);
+    }
+    // (the fists' last targets were for facing the other way: start again from the mirrored pose)
+    this.fightPose.clear();
     this.updateMotors(true);
     for (const l of live) if (!l.part.frozen) l.part.body.wakeUp();
     return true;
@@ -1602,7 +3470,7 @@ export class Human extends Entity implements Holder {
       sy = Math.min(sy, p.y);
       n++;
     }
-    if (!n) return { theta: Math.PI / 2, omega: 0, sx: 0, sy: 0, grounded: false };
+    if (!n) return { theta: Math.PI / 2, omega: 0, sx: 0, sy: 0, h: 1, grounded: false };
     sx /= n;
     let mx = 0;
     let my = 0;
@@ -1625,7 +3493,7 @@ export class Human extends Entity implements Holder {
     const rx = mx - sx;
     const ry = my - sy;
     const h2 = Math.max(0.05, rx * rx + ry * ry);
-    return { theta: Math.atan2(rx, ry), omega: (ry * vx - rx * vy) / h2, sx, sy, grounded };
+    return { theta: Math.atan2(rx, ry), omega: (ry * vx - rx * vy) / h2, sx, sy, h: Math.sqrt(h2), grounded };
   }
 
   /**
@@ -1694,11 +3562,23 @@ export class Human extends Entity implements Holder {
       const pb = l.part.localToWorld(l.a2.x, l.a2.y);
       const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
       const hpF = l.part.hp / l.part.maxHp;
-      const limit = (0.11 + 0.12 * clamp(hpF, 0, 1)) * (this.variant.kind === 'android' ? 1.6 : 1);
+      // (on Ultra Strength the joints hold together against the muscles pulling on them)
+      const limit = (0.11 + 0.12 * clamp(hpF, 0, 1)) * (this.variant.kind === 'android' ? 1.6 : 1) * (this.drugs.strength > 0 ? 1.4 : 1);
       if (d > limit) {
         l.stress += dt;
-        if (l.stress > 0.03) this.sever(l, 'tear');
+        if (l.stress > 0.03) this.rupture(l);
       } else l.stress = Math.max(0, l.stress - dt);
+    }
+
+    // ---- torn joints still hanging on: pulled too far, the last of it gives
+    if (this.tendons?.count) {
+      for (const at of this.tendons.step(dt)) {
+        if (this.variant.bleeds) {
+          this.game.particles.blood(at.x, at.y, 0, 0.5, 12, 2.5, null);
+          this.game.sound.squish(0.6, at.x);
+        } else this.game.particles.sparks(at.x, at.y, 0, 1, 8, 3);
+        this.game.sound.tear(at.x);
+      }
     }
 
     // ---- bleeding
@@ -1711,37 +3591,40 @@ export class Human extends Entity implements Holder {
     d.adrenaline = Math.max(0, d.adrenaline - dt);
     d.knockout = Math.max(0, d.knockout - dt);
     d.poison = Math.max(0, d.poison - dt);
+    this.stunned = Math.max(0, this.stunned - dt);
+    // (the newer drugs, and an infection: see afflict())
+    this.afflict(dt);
     if (this.alive) {
-      if (d.adrenaline > 0) {
-        // no pain, no shock, and a fast recovery
+      if (d.adrenaline > 0 || this.zombie) {
+        // no pain, no shock, and a fast recovery (a zombie feels nothing)
         this.pain = 0;
         this.shock = 0;
       }
-      // poison drains the blood from the inside
+      if (d.painkiller > 0) this.pain = 0;
+      // poison drains the blood from the inside (and shows, greener the worse it gets: see tone())
       if (d.poison > 0) this.blood -= dt * 2.4;
       const head = this.L('head');
       const headF = head.gone ? 0 : head.part.hp / head.part.maxHp;
       let target = 1;
       if (headF < 0.5) target = Math.min(target, headF * 1.2);
-      if (this.blood < 65) target = Math.min(target, (this.blood - 40) / 25);
+      // (a zombie goes on with no blood left in it)
+      if (this.blood < 65 && !this.zombie) target = Math.min(target, (this.blood - 40) / 25);
       if (this.pain > 0.9) target = Math.min(target, 0.4);
-      if (d.knockout > 0) target = Math.min(target, 0.05);
+      if (d.knockout > 0 || this.stunned > 0) target = Math.min(target, 0.05);
       target = clamp(target, 0, 1);
-      // consciousness drops fast, recovers slowly (quickly on adrenaline)
-      const up = d.adrenaline > 0 ? 0.03 : 0.004;
-      this.consciousness += (target - this.consciousness) * (target < this.consciousness ? 0.2 : up);
+      // consciousness drops fast, recovers slowly (quickly on adrenaline, and for a zombie)
+      // (rates per step at 120 steps a second, the same at any step length)
+      const up = d.adrenaline > 0 || this.zombie ? 0.03 : 0.004;
+      const rate = target < this.consciousness ? 0.2 : up;
+      this.consciousness += (target - this.consciousness) * (1 - Math.pow(1 - rate, dt * 120));
       this.shock = Math.max(0, this.shock - dt * 0.01);
       if (this.consciousness < 0.15 && this.state !== 'down') this.setState('down');
       this.checkDeath();
     } else {
       this.deathT += dt;
-      if (this.variant.kind === 'human') {
-        const k = Math.min(1, this.deathT / 25);
-        for (const l of this.order) {
-          if (l.gone || l.part.frozen || l.part.noCollideAll) continue;
-          l.part.setTint(1 - k * 0.12, 1 - k * 0.1, 1 - k * 0.04);
-        }
-      }
+      // part of a Life dose wears off (a fifth of a syringe every ten seconds)
+      // (a corpse's pallor comes over it: see tone())
+      this.lifeDose = Math.max(0, this.lifeDose - dt * 0.02);
     }
   }
 
@@ -1752,11 +3635,13 @@ export class Human extends Entity implements Holder {
     if (head.gone || head.part.hp <= 0) cause = 'head';
     else if (!head.attached) cause = 'decapitated';
     else if (up.part.hp <= 0) cause = 'torso';
-    else if (this.blood < 35) cause = 'blood';
+    // (a zombie doesn't need its blood)
+    else if (this.blood < 35 && !this.zombie) cause = 'blood';
     else {
       let trauma = 0;
-      for (const l of this.order) if (!l.gone) trauma += Math.max(0, 1 - l.part.hp / l.part.maxHp) * (l.spec.cy > 24 ? 1.2 : 0.6);
-      if (trauma > 6.5) cause = 'trauma';
+      // (a mangled limb counts as badly as a lost one, however far below nothing its health went)
+      for (const l of this.order) if (!l.gone) trauma += clamp(1 - l.part.hp / l.part.maxHp, 0, 1.5) * (l.spec.cy > 24 ? 1.2 : 0.6);
+      if (trauma > (this.zombie ? ZOMBIE.trauma : 6.5)) cause = 'trauma';
     }
     if (cause) this.die();
   }
@@ -1764,6 +3649,7 @@ export class Human extends Entity implements Holder {
   die(): void {
     if (!this.alive) return;
     this.alive = false;
+    this.lifeDose = 0;
     this.dropAll();
     this.consciousness = 0;
     this.setState('down');
@@ -1786,43 +3672,101 @@ export class Human extends Entity implements Holder {
       p.paintPixel(EYE.x, EYE.y, fc.eyeDead);
       p.paintPixel(MOUTH.x, MOUTH.y, fc.mouthDead);
     } else if (this.consciousness < 0.3) {
-      p.paintPixel(EYE.x, EYE.y, fc.eyeClosed!);
+      p.paintPixel(EYE.x, EYE.y, this.zombie ? ZOMBIE_SKIN[1] : fc.eyeClosed!);
     } else {
-      p.paintPixel(EYE.x, EYE.y, fc.eye);
-      p.paintPixel(MOUTH.x, MOUTH.y, fc.mouth);
+      // (a zombie stares, pale-eyed and slack-mouthed)
+      p.paintPixel(EYE.x, EYE.y, this.zombie ? ZOMBIE_EYE : fc.eye);
+      p.paintPixel(MOUTH.x, MOUTH.y, this.zombie ? ZOMBIE_MOUTH : fc.mouth);
     }
   }
 
   frame(_dt: number): void {
+    // (turned or cured on the host, a guest's copy changes its skin as it hears of it)
+    if (this.zombie !== this.dressedZombie) {
+      this.redress();
+      this.faceState = -1;
+    }
     const want = !this.alive ? 0 : this.consciousness < 0.3 ? 1 : 2;
     if (want !== this.faceState) {
       this.faceState = want;
       this.setFace();
     }
+    this.tone();
+    this.tendons?.draw();
   }
   private faceState = 2;
+  /** Limbs wrenched out of their joints that still hang on by flesh (see rupture()). */
+  private tendons: Tendons | null = null;
+
+  /**
+   * (a limb hanging on by flesh pulls with the body it hangs from too, as the
+   * body with it: dragged away, the flesh stretches and tears rather than the
+   * hand just trailing behind the cursor)
+   */
+  limpMass(p: Part): number {
+    const group = new Set(this.connectedParts(p));
+    let m = super.limpMass(p);
+    for (const q of this.tendons?.tiedTo(group) ?? []) m += super.limpMass(q);
+    return m;
+  }
 
   // ---------------------------------------------------------------- damage
 
-  onGrab(p: Part, held: boolean): void {
+  onGrab(p: Part, held: boolean, at?: V2): void {
     this.held = held;
     this.grabbedPart = held ? p : null;
+    this.seat?.grabbed(held ? p : null);
     this.rouse();
     if (held) this.setState('down');
     else {
       this.stateT = 0;
+      this.catchT = 0.6;
       this.applyDamping();
     }
+    this.updateMotors(true);
+    // let go of over a vehicle, they get in (last: getting in may turn them round, which makes them anew)
+    if (!held && !this.seat && at) this.board(at);
   }
   private grabbedPart: Part | null = null;
+
+  /** Let go of at `at`: gets into the vehicle it's over, if any has room (see Car.takeIn()). */
+  private board(at: V2): void {
+    for (const e of this.game.entities) {
+      const v = e as Entity & { takeIn?: (who: Human, at: V2) => boolean };
+      if (v !== this && !v.destroyed && v.takeIn?.(this, at)) return;
+    }
+  }
+
+  /**
+   * Sits them in a vehicle's seat (whoever has it holds them there: see Car),
+   * or (null) out of it: `stand`, put on their feet beside it, they stay up if
+   * they can.
+   */
+  sit(seat: Seat | null, stand = false): void {
+    this.seat = seat;
+    this.stateT = 0;
+    if (seat || !stand || !this.alive || this.limp || this.strength() < 0.6 || !this.legsWork()) this.setState('down');
+    else this.setState('stand');
+    // (just out, they may still find their feet: see catching())
+    if (!seat) this.catchT = 0.6;
+    this.applyDamping();
+    this.updateMotors(true);
+  }
 
   onImpact(info: ImpactInfo): void {
     const l = this.limbOf(info.part);
     if (!l || l.gone) return;
+    // arms and legs knocking against the foe's in a fight: what blows do is worked
+    // out where they land (see strike()), fists and shins clashing don't break them
+    if (this.foe && info.other?.entity === this.foe && /^(hand|lowerArm|upperArm|foot|lowerLeg)/.test(l.spec.key)) return;
     const mEff = info.part.mass * (l.spec.cy > 24 ? 2.6 : 2.2);
     // energy from this limb's own motion (falling onto something; not their own
-    // feet set down climbing)...
-    const Eself = this.climbing ? 0 : 0.5 * Math.min(mEff, info.otherMass) * info.selfSpeed * info.selfSpeed;
+    // feet set down climbing, nor the fist or foot of a blow they're throwing:
+    // see strike()), at most a little over what the body as a whole carries (a
+    // foot or a hand whipped down as they topple over hits fast, but nothing like
+    // a body coming down: that's a fall, a slam or a throw)...
+    const own = l.attached ? Math.min(info.selfSpeed, this.bodySpeed() * 1.5) : info.selfSpeed;
+    const Eself = this.climbing || this.throwing(l) ? 0 : 0.5 * Math.min(mEff, info.otherMass) * own * own;
     // ...plus energy delivered by the other object, which the rest of the body
     // backs up (a crate dropped on a head crushes it against the body)
     const backing = l.attached ? Math.max(mEff, this.totalMass() * 0.8) : mEff;
@@ -1832,10 +3776,15 @@ export class Human extends Entity implements Holder {
     const frag = l.spec.fragility / this.variant.toughness;
     const E0 = (24 * mEff) / frag;
     if (E <= E0) return;
-    const frac = (E - E0) / ((115 * mEff) / frag);
+    // above that, the harm climbs fast: a head slammed into the floor at 10 m/s is
+    // done for, a leg at 10 m/s breaks (falling over or landing a jump stays below E0)
+    const frac = (E - E0) / ((55 * mEff) / frag);
     this.injure(l, frac * l.spec.hp, 'blunt', info.point, { x: -info.normal.x, y: -info.normal.y });
+    if (this.variant.bleeds) this.game.sound.fleshHit(frac, info.point.x);
+    else this.game.sound.impact('metal', frac, info.point.x);
     // a hard hit knocks a standing person over
-    if ((frac > 0.08 || Eother > 150) && this.state === 'stand' && l.spec.cy > 24) this.setState('down');
+    // (a lesser knock just shoves them: their balance decides whether they go over)
+    if ((frac > 0.2 || Eother > 400) && this.state === 'stand' && l.spec.cy > 24) this.setState('down');
   }
 
   onBullet(hit: BulletHit): void {
@@ -1850,11 +3799,19 @@ export class Human extends Entity implements Holder {
     if (this.variant.bleeds) {
       const ps = this.game.particles;
       ps.blood(hit.point.x, hit.point.y, -hit.dir.x + (Math.random() - 0.5), -hit.dir.y + 0.3, 6 + dmg * 0.3, 2.2, p.body);
-      if (hit.exit) ps.blood(hit.exit.x, hit.exit.y, hit.dir.x, hit.dir.y, 10 + dmg * 0.5, 4.5, p.body);
+      ps.mist(hit.point.x, hit.point.y, -hit.dir.x, -hit.dir.y, 2, 0.2);
+      // spatter out of the exit wound: a cone of it, faster and more the harder the round
+      if (hit.exit) ps.splatter(hit.exit.x, hit.exit.y, hit.dir.x, hit.dir.y, 8 + Math.sqrt(hit.energy) * 0.6, 3 + Math.sqrt(hit.energy) / 9, 0.35, p.body);
       this.game.sound.squish(0.3, hit.point.x, 0.5);
     } else {
       this.game.particles.sparks(hit.point.x, hit.point.y, -hit.dir.x, -hit.dir.y, 6, 4);
     }
+    // a heavy round takes a chunk out where it comes out, and a nick where it goes in
+    // (shot to pieces, or clean through, the limb may go: see Chunks)
+    const look = this.variant.bleeds ? FLESH : PLATING;
+    takeChunk(this, l, hit.point, hit.dir, hit.energy, hit.exit ? 'in' : 'stop', look, hit.round);
+    if (hit.exit) takeChunk(this, l, hit.exit, hit.dir, hit.energy, 'out', look, hit.round);
+    if (l.gone) return;
     // a bullet through the brain (not a stray fragment or a spent pellet: those
     // wound and stun, and kill only when they add up)
     if (l.spec.key === 'head' && hit.damage > 16 && this.variant.kind === 'human') {
@@ -1904,14 +3861,21 @@ export class Human extends Entity implements Holder {
       return;
     }
     if (kind === 'explosion') {
-      // big blasts tear off limbs or gib them entirely
+      // big blasts blow limbs apart (see gib()); lesser ones take a chunk out of the
+      // side facing them, and may tear them off
       const frac = amt / l.spec.hp;
-      if (frac > 2.6 && l.spec.key !== 'upperTorso') {
-        this.gib(l);
+      if (frac > 3.2 && l.spec.key !== 'upperTorso') {
+        this.gib(l, dir);
         return;
       }
       this.injure(l, amt, 'explosion', point, dir);
-      if (frac > 1.1 && l.joint && !l.severed && Math.random() < 0.6) this.sever(l, 'blast');
+      if (point && dir && !l.gone) takeChunk(this, l, point, dir, blastEnergy(frac), 'stop', this.variant.bleeds ? FLESH : PLATING);
+      if (l.gone) return;
+      // (torn loose, a limb may still hang on by a strip of flesh)
+      if (frac > 1.1 && l.joint && !l.severed && Math.random() < 0.6) {
+        if (frac < 2 && Math.random() < 0.5) this.rupture(l);
+        else this.sever(l, 'blast');
+      }
       // shrapnel wounds
       if (point && Math.random() < Math.min(0.9, frac * 2)) this.addWound(l, point.x, point.y, -(dir?.x ?? 0), -(dir?.y ?? 1), 0.3 + frac, false);
       return;
@@ -1942,15 +3906,17 @@ export class Human extends Entity implements Holder {
         this.addWound(l, point.x, point.y, -(dir?.x ?? 0), -(dir?.y ?? 0), dmg * 0.006, false);
         this.game.particles.blood(point.x, point.y, -(dir?.x ?? 0), -(dir?.y ?? 0) + 0.5, dmg * 0.3, 2.2, p.body);
       }
-      // fractures
-      if (!l.broken && dmg > l.spec.hp * 0.42 && l.joint && l.spec.key !== 'head') {
+      // fractures: one hard knock, or a lesser one to a limb already badly hurt
+      if (!l.broken && l.joint && l.spec.key !== 'head' && (dmg > l.spec.hp * 0.42 || (dmg > l.spec.hp * 0.15 && p.hp < l.spec.hp * 0.3))) {
         l.broken = true;
         this.game.sound.bone(p.x);
         this.updateMotors(true);
       }
-      // catastrophic blunt trauma
-      if (p.hp < -l.spec.hp * 1.3 && dmg > l.spec.hp * 1.1) {
-        if (l.spec.key === 'head' || l.spec.muscle < 1) this.gib(l);
+      // crushed: a limb already spent, knocked hard again (or one enormous blow)
+      if (p.hp < -l.spec.hp * 0.4 && dmg > l.spec.hp * 0.3) {
+        // (the upper torso holds the rest together: it stays, as with blasts)
+        if (l.spec.key === 'head') this.gib(l);
+        else if (l.joint && Math.random() < 0.5) this.rupture(l);
         else if (l.joint) this.sever(l, 'blast');
       }
     }
@@ -1967,32 +3933,17 @@ export class Human extends Entity implements Holder {
   /** Records a wound (entry or exit) and paints it on the sprite. */
   private addWound(l: Limb, wx: number, wy: number, ox: number, oy: number, rate: number, hole: boolean, cutDir?: V2): void {
     const p = l.part;
-    const { ix, iy } = p.worldToPixel(wx, wy);
-    // snap into the sprite so the wound sits on solid pixels
-    let bx = ix;
-    let by = iy;
-    if (!p.solidAt(bx, by)) {
-      let best = 1e9;
-      for (let j = -3; j <= 3; j++) for (let i = -3; i <= 3; i++) {
-        if (p.solidAt(ix + i, iy + j) && i * i + j * j < best) {
-          best = i * i + j * j;
-          bx = ix + i;
-          by = iy + j;
-        }
-      }
-    }
+    // on the body a pixel or two in from where it struck (not a nick in the outline), on solid pixels
+    const { x: bx, y: by } = woundSpot(p, wx, wy, -ox, -oy);
     if (this.variant.bleeds) {
-      if (hole) {
-        p.paintPixel(bx, by, 0x2a0505);
-        for (const [i, j] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) p.paintPixel(bx + i, by + j, 0x8a1212, 0.75);
-      } else if (cutDir) {
+      if (cutDir && !hole) {
         const ld = p.worldToLocal(p.x + cutDir.x, p.y + cutDir.y);
         const len = Math.hypot(ld.x, ld.y) || 1;
         const sx = Math.round((ld.x / len) * this.f);
         const sy = -Math.round(ld.y / len);
         for (let k = -2; k <= 2; k++) p.paintPixel(bx + sx * k, by + sy * k, k === 0 ? 0x3a0606 : 0x7d0e0e);
       } else {
-        p.paintPixel(bx, by, 0x7d0e0e, 0.8);
+        paintWound(p, bx, by, rate, hole);
       }
     } else {
       p.paintPixel(bx, by, 0x1a1c1f);
@@ -2021,6 +3972,8 @@ export class Human extends Entity implements Holder {
         // clotting (stumps clot slower)
         w.rate *= Math.exp(-dt * (w.spurt ? 0.02 : 0.045));
         if (this.blood <= 0) continue;
+        // it runs down the body from the wound, too
+        if (ps.bloodEnabled) seep(p, w, dt);
         const n = w.rate * pulse * dt * (w.spurt ? 26 : 12);
         if (Math.random() < n) {
           const wp = p.pixelToWorld(w.ix, w.iy);
@@ -2075,6 +4028,21 @@ export class Human extends Entity implements Holder {
     this.updateMotors(true);
   }
 
+  /**
+   * A joint wrenched apart: the limb comes out of its socket (as when severed: the
+   * muscles have nothing to pull on, and it bleeds) but stays hanging on by
+   * stretched flesh until that's pulled too far (see Tendons).
+   */
+  rupture(l: Limb): void {
+    const parent = l.parent;
+    if (!l.joint || l.severed || !parent) return;
+    this.sever(l, 'tear');
+    if (l.gone || parent.gone) return;
+    const p = l.part;
+    const flesh = this.variant.bleeds ? { outer: this.variant.skin.skin[2], inner: 0x8e1a1a } : { outer: 0x3a3f46, inner: 0xb87333 };
+    (this.tendons ??= new Tendons(this.game, this.zBase - 0.0004)).add(parent.part, l.a1, p, l.a2, Math.min(p.w, p.h) * PX, flesh);
+  }
+
   private stump(l: Limb, at: V2, rate: number, spurt: boolean): void {
     const p = l.part;
     const { ix, iy } = p.worldToPixel(at.x, at.y);
@@ -2099,27 +4067,33 @@ export class Human extends Entity implements Holder {
     l.wounds.push({ ix: bx, iy: by, dx: local.x / ll, dy: local.y / ll, rate, spurt });
   }
 
-  /** Destroys a limb in a shower of gore. */
-  gib(l: Limb): void {
+  /**
+   * Blows a limb apart: it breaks up into a few pieces (see Chunks.breakUp()),
+   * flung `dir` (a blast's way) if given, in a burst of blood. What hung from it
+   * is cut loose, hanging on from the piece it was joined to.
+   */
+  gib(l: Limb, dir?: V2): void {
     if (l.gone) return;
     const p = l.part;
-    // detach children so they fall free
-    for (const c of l.children) if (!c.severed) this.sever(c, 'blast');
+    const hung = l.children.filter((c) => !c.severed && !c.gone);
+    for (const c of hung) this.sever(c, 'blast');
     if (l.joint) this.sever(l, 'blast');
     const ps = this.game.particles;
+    const d = dir ?? { x: 0, y: 1 };
     if (this.variant.bleeds) {
-      ps.blood(p.x, p.y, 0, 1, 50, 4.5, null);
-      for (let i = 0; i < 26; i++) {
+      ps.splatter(p.x, p.y, d.x, d.y + 0.3, 50, 6, Math.PI, null);
+      for (let i = 0; i < 12; i++) {
         const c = [0x8e1a1a, 0x6b0e0e, 0xc46b6b, 0xe3d9c4][i % 4];
         ps.debris(p.x, p.y, Math.random() - 0.5, 1, 1, c, 5);
       }
       this.game.sound.gib(p.x);
     } else {
       ps.sparks(p.x, p.y, 0, 1, 25, 7);
-      ps.debris(p.x, p.y, 0, 1, 18, 0x59616b, 5);
+      ps.debris(p.x, p.y, 0, 1, 10, 0x59616b, 5);
       this.game.sound.impact('metal', 1, p.x);
       this.game.sound.spark(p.x);
     }
+    breakUp(this, l, this.variant.bleeds ? FLESH : PLATING, hung, dir);
     l.gone = true;
     if (l.spec.key === 'head' || l.spec.key === 'upperTorso') this.die();
     this.removePart(p);
@@ -2147,8 +4121,13 @@ export class Human extends Entity implements Holder {
   // ---------------------------------------------------------------- UI / state
 
   heal(): void {
+    // (without a head nothing brings them back: it would only start the clock again)
+    const head = this.L('head');
+    if (!this.alive && (head.gone || !head.attached)) return;
     this.rouse();
-    this.drugs.adrenaline = this.drugs.knockout = this.drugs.poison = 0;
+    for (const k of Object.keys(this.drugs) as (keyof typeof this.drugs)[]) this.drugs[k] = 0;
+    this.stiffen(false);
+    this.stunned = 0;
     this.alive = true;
     this.consciousness = 1;
     this.blood = 100;
@@ -2164,14 +4143,19 @@ export class Human extends Entity implements Holder {
       l.part.burning = 0;
       l.part.charred = 0;
       l.part.refreshTint();
+      // (the blood and scorching washed off too; bandages stay on)
+      washBlood(l.part, 1);
     }
     this.setFace();
     this.setState('down');
     this.updateMotors(true);
   }
 
-  contextActions(): ContextAction[] {
+  /** `part`: the limb right-clicked (its bone can be broken or mended). */
+  contextActions(part?: Part): ContextAction[] {
     const acts: ContextAction[] = [];
+    const seat = this.seat;
+    if (seat) acts.push({ label: 'Get out', action: () => seat.leave() });
     if (this.alive) acts.push({ label: 'Jump', hint: 'J', disabled: this.state !== 'stand', action: () => this.jump() });
     if (this.grips.length) {
       acts.push({ label: 'Use held item', hint: 'F', action: () => this.activate() });
@@ -2180,9 +4164,18 @@ export class Human extends Entity implements Holder {
     if (this.alive) {
       acts.push({ label: 'Kill', action: () => this.die() });
       acts.push({ label: 'Limp', checked: this.limp, action: () => { this.limp = !this.limp; this.setState('down'); this.updateMotors(true); } });
+      if (this.foe) acts.push({ label: 'Stop fighting', action: () => this.stopFighting() });
       acts.push({ label: 'Wander about', checked: this.wander, action: () => { this.wander = !this.wander; if (!this.wander) this.stay(4); else this.goalT = 0; } });
+      // (picked again, a pose is let go of)
+      for (const [p, label] of POSE_NAMES) acts.push({ label, checked: this.pose === p, action: () => this.setPose(this.pose === p ? null : p) });
     }
-    acts.push({ label: this.alive ? 'Heal' : 'Revive', action: () => this.heal() });
+    const headless = this.L('head').gone || !this.L('head').attached;
+    acts.push({ label: this.alive ? 'Heal' : 'Revive', disabled: !this.alive && headless, action: () => this.heal() });
+    // the limb right-clicked: its bone broken, or mended (not the skull)
+    const l = part ? this.limbOf(part) : undefined;
+    if (l && !l.gone && l.joint && l.spec.key !== 'head') {
+      acts.push(l.broken ? { label: 'Mend bone', action: () => this.setBroken(l, false) } : { label: 'Break bone', action: () => this.setBroken(l, true) });
+    }
     return acts;
   }
 
@@ -2212,7 +4205,7 @@ export class Human extends Entity implements Holder {
 
   /** Called when an item is dropped near this person: grab it if a hand is close. */
   tryHold(item: Item, at?: V2): boolean {
-    if (!this.alive || this.consciousness < 0.3 || item.holder || !item.hold || this.destroyed) return false;
+    if (!this.alive || this.zombie || this.consciousness < 0.3 || item.holder || !item.hold || this.destroyed) return false;
     const gw = item.gripWorld();
     if (!gw) return false;
     let best: Limb | null = null;
@@ -2265,7 +4258,8 @@ export class Human extends Entity implements Holder {
     return false;
   }
 
-  private attach(item: Item, hand: Limb): void {
+  /** Puts the item in the hand (and the other hand on its second grip, if `support` and it's free); `quiet`: no sound. */
+  private attach(item: Item, hand: Limb, support = true, quiet = false): void {
     const world = this.game.physics.world;
     const f = this.f;
     const hp = hand.part;
@@ -2287,24 +4281,24 @@ export class Human extends Entity implements Holder {
       (ip.noCollide ??= new Set()).add(l.part);
       (l.part.noCollide ??= new Set()).add(ip);
     }
-    let support: Grip['support'] = null;
-    const g2 = item.gripLocal(true);
+    let steady: Grip['support'] = null;
+    const g2 = support ? item.gripLocal(true) : null;
     if (g2) {
       const other = this.L(hand.spec.key === 'handF' ? 'handB' : 'handF');
       if (this.ok(other.spec.key) && !this.handBusy(other)) {
         const sj = world.createImpulseJoint(RAPIER.JointData.spring(0, 260, 3, ha, g2), other.part.body, ip.body, true);
         sj.setContactsEnabled(false);
-        support = { hand: other, joint: sj };
+        steady = { hand: other, joint: sj };
       }
     }
     item.holder = this;
     this.dropped = this.dropped.filter((d) => d.item !== item);
-    this.grips.push({ item, hand, joint, support, t: 0 });
+    this.grips.push({ item, hand, joint, support: steady, t: 0 });
     // A hand is ~1000x lighter (rotationally) than a rifle, which leaves the joint's
     // angular lock badly conditioned; give the hand some of the item's inertia.
     hp.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, hand.extraI + ip.body.principalInertia() * 0.5, true);
     this.activatable = true;
-    this.game.sound.impact('metal', 0.25, hp.x);
+    if (!quiet) this.game.sound.impact(ip.mat.sound, 0.25, hp.x);
     this.updateMotors(true);
   }
 
@@ -2346,10 +4340,10 @@ export class Human extends Entity implements Holder {
         this.dropItem(it);
         continue;
       }
-      // a hard yank rips the item out of the hand
+      // a hard yank rips the item out of the hand (twice as hard on Ultra Strength)
       const a = g.hand.part.localToWorld(0, -PX);
       const b = it.gripWorld()!;
-      if (Math.hypot(a.x - b.x, a.y - b.y) > 0.1) {
+      if (Math.hypot(a.x - b.x, a.y - b.y) > (this.might > 1 ? 0.2 : 0.1)) {
         this.dropItem(it);
         continue;
       }
@@ -2387,9 +4381,13 @@ export class Human extends Entity implements Holder {
       if (ip.frozen) continue;
       g.t += dt;
       const m = ip.mass;
-      const err = wrapAngle(this.f * (g.item.hold?.angle ?? 0) - ip.body.rotation());
+      // (a weapon in a fight: held on the shoulder, and swung round hard (see
+      // swingPath()); a gun aimed at the foe: tipped onto them)
+      const swung = this.swingAt?.item === g.item;
+      const want = swung ? this.swingAt!.angle : (g.item.hold?.angle ?? 0) + (this.aiming ? this.tilt : 0);
+      const err = wrapAngle(this.f * want - ip.body.rotation());
       // a gentle trim on top of the arm pose (the arm muscles do the lifting)
-      const ramp = clamp(g.t / 0.8, 0, 1) * str;
+      const ramp = clamp(g.t / 0.8, 0, 1) * str * (!swung ? 1 : this.blow?.item === g.item ? 3 : 1.5);
       const kp = (30 + 20 * m) * ramp;
       const kd = (2.5 + 1.2 * m) * ramp;
       const cap = (6 + 5 * m) * ramp;
@@ -2414,9 +4412,8 @@ export class Human extends Entity implements Holder {
       const g1 = g.item.gripLocal();
       const g2 = g.support ? g.item.gripLocal(true) : null;
       const span = g1 && g2 ? Math.abs(g2.x - g1.x) : 0;
-      const reach = g2 ? clamp(0.6 - span, 0.24, 0.6) : 0.64;
-      const drop = g2 ? -0.1 : -0.03;
-      const aim = this.armIK(side, f * reach, drop, g.item.hold?.angle ?? 0);
+      const { x: reach, y: drop } = this.holdReach(g);
+      const aim = this.armIK(side, reach, drop, (g.item.hold?.angle ?? 0) + (this.aiming ? this.tilt : 0));
       if (aim) {
         out[('upperArm' + side) as LimbKey] = aim.upper;
         out[('lowerArm' + side) as LimbKey] = aim.lower;
@@ -2425,7 +4422,7 @@ export class Human extends Entity implements Holder {
       if (g.support) {
         const s2 = g.support.hand.spec.key.endsWith('F') ? 'F' : 'B';
         // where the second grip will be once the aiming arm is in place
-        const sup = this.armIK(s2, f * (reach + span), drop + (g2 && g1 ? g2.y - g1.y : 0), null);
+        const sup = this.armIK(s2, reach + f * span, drop + (g2 && g1 ? g2.y - g1.y : 0), null);
         if (sup) {
           out[('upperArm' + s2) as LimbKey] = sup.upper;
           out[('lowerArm' + s2) as LimbKey] = sup.lower;
@@ -2434,6 +4431,14 @@ export class Human extends Entity implements Holder {
       }
     }
     return out;
+  }
+
+  /** Where the hand holding an item goes (relative to the shoulder: see armIK()): out in front, tucked in for a two-handed one. */
+  private holdReach(g: Grip): V2 {
+    const g1 = g.item.gripLocal();
+    const g2 = g.support ? g.item.gripLocal(true) : null;
+    const span = g1 && g2 ? Math.abs(g2.x - g1.x) : 0;
+    return { x: this.f * (g2 ? clamp(0.6 - span, 0.24, 0.6) : 0.64), y: g2 ? -0.1 : -0.03 };
   }
 
   private shoulder(side: 'F' | 'B'): V2 | null {
@@ -2474,8 +4479,18 @@ export class Human extends Entity implements Holder {
     return this.grips.map((g) => g.item);
   }
 
+  /** Use: works what's in hand; a weapon with nothing to switch on (a bat, a sword) is swung instead. */
   activate(): void {
-    for (const g of this.grips) g.item.activate();
+    for (const g of this.grips) {
+      if (g.item.def.category === 'Melee' && g.item.activate === Entity.prototype.activate) this.swing(g.item);
+      else g.item.activate();
+    }
+  }
+
+  /** A swing of what's in hand at whatever is in front of them (see strike()). */
+  private swing(item: Item): void {
+    if (this.blow || this.state !== 'stand' || this.consciousness < 0.5) return;
+    this.throwBlow(item);
   }
 
   setActiveHeld(on: boolean): void {
@@ -2483,7 +4498,42 @@ export class Human extends Entity implements Holder {
     for (const g of this.grips) g.item.setActiveHeld(on);
   }
 
+  /**
+   * Puts them on a side (see Teams), in its colour: a person's shirt, an android's
+   * chest panel and shoulders. Null: on none (in their own clothes again).
+   */
+  setTeam(team: TeamId | null): void {
+    this.team = team;
+    for (const k of SHIRT) {
+      const l = this.limbs.get(k);
+      if (l && !l.gone) dress(l.part, this.teamArt(k, team));
+    }
+    // (their own side is left be)
+    if (this.foe && allies(this, this.foe)) this.stopFighting();
+    this.scanT = 0;
+  }
+
+  /** The sprite a part wears on a team (or on none). */
+  private teamArt(k: LimbKey, team: TeamId | null): PixelArt {
+    const { kind } = this.variant;
+    // (a zombie in the clothes they had on, its skin grey-green)
+    const skin = this.zombie && kind === 'human' ? { ...this.variant.skin, skin: ZOMBIE_SKIN } : this.variant.skin;
+    const skinKey = this.zombie && kind === 'human' ? `${this.variant.skinKey}+zombie` : this.variant.skinKey;
+    if (!team) return limbArt(kind, k, skin, skinKey);
+    if (kind === 'human') return limbArt(kind, k, { ...skin, shirt: TEAMS[team].ramp }, `${skinKey}+${team}`);
+    // (an android has no shirt: its chest panel, and a band round each shoulder)
+    const base = limbArt(kind, k, skin, skinKey);
+    if (k === 'upperTorso') return dye(`${kind}:${skinKey}:${k}`, base, team, 4, 8, 2, 8);
+    if (k === 'upperArmF' || k === 'upperArmB') return dye(`${kind}:${skinKey}:${k}`, base, team, 2, 5);
+    return base;
+  }
+
   protected onDestroy(): void {
+    this.foe = null;
+    this.blow = null;
+    this.fetch = null;
+    this.freeWeapon(null);
+    this.tendons?.clear();
     this.dropAll();
     for (const d of this.dropped) if (!d.item.destroyed) this.forgetItem(d.item);
     this.dropped.length = 0;
@@ -2491,8 +4541,11 @@ export class Human extends Entity implements Holder {
 
   /** Short status line (shown in tooltips/tests). */
   status(): string {
-    const drugs = (Object.keys(this.drugs) as (keyof typeof this.drugs)[]).filter((k) => this.drugs[k] > 0).map((k) => ` · ${k}`).join('');
-    return `${this.alive ? (this.consciousness > 0.3 ? 'conscious' : 'unconscious') : 'dead'} · blood ${this.blood.toFixed(0)}%${drugs} · ${this.state}${this.climbing ? ' · climbing' : this.jumping ? ' · jumping' : ''}`;
+    // (on adrenaline: how much faster it has them going)
+    const drugs = (Object.keys(this.drugs) as (keyof typeof this.drugs)[]).filter((k) => this.drugs[k] > 0)
+      .map((k) => ` · ${k}${k === 'adrenaline' && this.rush > 1.05 ? ` ×${this.rush.toFixed(1)}` : ''}`).join('');
+    const undead = this.zombie ? ' · zombie' : this.infection > 0 ? ' · infected' : '';
+    return `${this.alive ? (this.consciousness > 0.3 ? 'conscious' : 'unconscious') : 'dead'} · blood ${this.blood.toFixed(0)}%${drugs}${undead} · ${this.state}${this.climbing ? ' · climbing' : this.jumping ? ' · jumping' : ''}`;
   }
 
   /** Which way they're climbing right now (null: they aren't). */
@@ -2507,19 +4560,35 @@ export class Human extends Entity implements Holder {
       consciousness: this.consciousness,
       limp: this.limp,
       severed: this.order.filter((l) => l.severed && !l.gone).map((l) => l.spec.key),
+      torn: this.order.filter((l) => l.severed && !l.gone && this.tendons?.holds(l.part)).map((l) => l.spec.key),
       broken: this.order.filter((l) => l.broken).map((l) => l.spec.key),
       standing: this.state === 'stand',
       wander: this.wander,
       drugs: { ...this.drugs },
+      pain: this.pain,
+      shock: this.shock,
+      ...(this.stunned > 0 ? { stunned: this.stunned } : {}),
+      ...(this.infection > 0 ? { infection: this.infection } : {}),
+      ...(this.zombie ? { zombie: true } : {}),
+      ...(this.pose ? { pose: this.pose } : {}),
+      ...(this.alive ? {} : { deathT: this.deathT }),
+      // each limb's wounds: where on it, which way they open, how fast they bleed, whether they spurt
+      wounds: Object.fromEntries(this.order.filter((l) => !l.gone && l.wounds.length).map((l) => [l.spec.key, l.wounds.map((w) => [w.ix, w.iy, w.dx, w.dy, w.rate, w.spurt ? 1 : 0])])),
+      ...(this.team ? { team: this.team } : {}),
     };
   }
 
   serializeLinks(ref: (e: Entity) => number): Record<string, unknown> | undefined {
     const grips = this.grips.map((g) => ({ item: ref(g.item), hand: g.hand.spec.key })).filter((g) => g.item >= 0);
-    return grips.length ? { grips } : undefined;
+    // (who they're fighting, if that's saved too)
+    const foe = this.foe ? ref(this.foe) : -1;
+    if (!grips.length && foe < 0) return undefined;
+    return foe >= 0 ? { grips, foe } : { grips };
   }
 
   restoreLinks(links: Record<string, unknown>, get: (i: number) => Entity | undefined): void {
+    const foe = typeof links.foe === 'number' ? get(links.foe) : undefined;
+    if (foe) this.fight(foe, false);
     for (const g of (links.grips as { item: number; hand: LimbKey }[] | undefined) ?? []) {
       const it = get(g.item) as Item | undefined;
       const hand = this.limbs.get(g.hand);
@@ -2534,23 +4603,55 @@ export class Human extends Entity implements Holder {
   }
 
   protected restoreExtra(x: Record<string, unknown>): void {
-    this.blood = (x.blood as number) ?? 100;
-    this.consciousness = (x.consciousness as number) ?? 1;
     this.limp = !!x.limp;
     this.wander = !!x.wander;
     Object.assign(this.drugs, (x.drugs as Partial<typeof this.drugs>) ?? {});
+    this.zombie = x.zombie === true;
+    this.infection = typeof x.infection === 'number' && Number.isFinite(x.infection) ? clamp(x.infection, 0, 1) : this.zombie ? 1 : 0;
+    const pose = POSE_NAMES.find(([p]) => p === x.pose);
+    this.pose = pose ? pose[0] : null;
+    // (in a zombie's skin, and their side's colours, before the wounds and blood are painted back on)
+    if (this.zombie) this.redress();
+    if (isTeamId(x.team)) this.setTeam(x.team);
+    // (limbs torn out but still hanging on by flesh are torn out again)
+    const torn = (x.torn as LimbKey[]) ?? [];
     for (const k of (x.severed as LimbKey[]) ?? []) {
       const l = this.limbs.get(k);
-      if (l && !l.gone) this.sever(l, 'cut');
+      if (l && !l.gone) {
+        if (torn.includes(k)) this.rupture(l);
+        else this.sever(l, 'cut');
+      }
     }
     for (const k of (x.broken as LimbKey[]) ?? []) {
       const l = this.limbs.get(k);
       if (l) l.broken = true;
     }
-    if (x.alive === false) this.die();
+    // (after the severing: cutting them off again opened fresh stumps, and hurt)
+    const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+    this.blood = num(x.blood, 100);
+    this.consciousness = num(x.consciousness, 1);
+    this.pain = num(x.pain, this.pain);
+    this.shock = num(x.shock, this.shock);
+    this.stunned = num(x.stunned, 0);
+    const wounds = x.wounds as Record<string, unknown[][]> | undefined;
+    if (wounds && typeof wounds === 'object') {
+      for (const l of this.order) {
+        if (l.gone) continue;
+        const list = Array.isArray(wounds[l.spec.key]) ? wounds[l.spec.key] : [];
+        l.wounds = list
+          .filter((w) => Array.isArray(w) && w.slice(0, 5).every((v) => typeof v === 'number' && Number.isFinite(v)))
+          .map((w) => ({ ix: w[0] as number, iy: w[1] as number, dx: w[2] as number, dy: w[3] as number, rate: Math.max(0, w[4] as number), spurt: !!w[5] }));
+      }
+    }
+    if (x.alive === false) {
+      this.die();
+      this.deathT = num(x.deathT, 0);
+    }
     // people who were standing stay up (flipping or duplicating someone shouldn't floor them)
     this.setState(x.standing && this.alive && this.consciousness > 0.5 ? 'stand' : 'down');
     this.updateMotors(true);
+    // (frozen stiff in the shape they were saved in)
+    if (this.drugs.freeze > 0) this.stiffen(true, true);
   }
 }
 

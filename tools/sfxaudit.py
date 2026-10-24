@@ -26,8 +26,6 @@ SFX = os.path.join(ROOT, 'public')
 SR = 44100
 # noise is what these are: a flat floor is the sound, not hiss
 NOISY = ('liquid/sizzle', 'liquid/steam', 'liquid/pour', 'explosion/fuse', 'fire/')
-# mains hum: low by nature (it is meant to be felt more than heard)
-LOW_BY_NATURE = ('machine/hum_loop',)
 
 
 def decode(path):
@@ -129,7 +127,7 @@ def main():
                 why.append(f"clipped ({r['clip']} samples)")
             if not loop and r['floor'] > -30 and r['flat'] > 0.3 and not key.startswith(NOISY):
                 why.append(f"hiss (floor {r['floor']:.0f} dB, flatness {r['flat']:.2f})")
-            if r['low'] > 0.5 and key not in LOW_BY_NATURE:
+            if r['low'] > 0.5:
                 why.append(f"rumble ({r['low']:.0%} below 60 Hz)")
             if loop and r.get('seam', 0) > 8:
                 why.append(f"seam (jump {r['seam']:.0f}x a normal step)")

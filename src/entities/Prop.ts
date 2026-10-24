@@ -2,7 +2,7 @@ import { Entity } from '../world/Entity';
 import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
 import type { ItemDef, SpawnOptions, ImpactInfo, DamageKind, BulletHit } from '../world/types';
-import type { PhysMaterial } from '../world/Materials';
+import { GLASS, type PhysMaterial } from '../world/Materials';
 import type { PixelArt } from '../art/PixelArt';
 import type { V2 } from '../engine/math';
 
@@ -18,12 +18,21 @@ export interface PropConfig {
   linearDamping?: number;
   /** Hit points; props with finite HP shatter into debris when destroyed. */
   hp?: number;
+  /** Hit points per kg instead: then knocks break it alike whatever its size (see onImpact()). */
+  hpPerKg?: number;
+  /** Its sprite is its own, not shared with the rest of its kind (a resized or drawn one). */
+  ownTexture?: boolean;
 }
+
+/** Wooden things' hit points per kg: about three hard slams into the floor (10 m/s), or more long falls. */
+export const WOOD_HP = 8;
 
 /** A single rigid object: crates, boxes, planks, furniture... */
 export class Prop extends Entity {
   readonly main: Part;
   protected cfg: PropConfig;
+  /** Broken already: it's only taken away at the end of the step, and more hits may land meanwhile (a shotgun's pellets). */
+  private shattered = false;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -42,31 +51,53 @@ export class Prop extends Entity {
       ccd: cfg.ccd,
       angularDamping: cfg.angularDamping,
       linearDamping: cfg.linearDamping,
-      textureKey: def.id,
+      textureKey: cfg.ownTexture ? undefined : def.id,
       maxHp: cfg.hp ?? Infinity,
     });
+    if (cfg.hpPerKg) this.main.maxHp = this.main.hp = cfg.hpPerKg * this.main.mass;
+  }
+
+  /** Can be broken (shatters when its hit points run out). */
+  get breakable(): boolean {
+    return Number.isFinite(this.main.maxHp);
   }
 
   onImpact(info: ImpactInfo): void {
-    if (this.cfg.hp === undefined) return;
+    if (!this.breakable) return;
+    if (this.cfg.hpPerKg) {
+      // sturdy things (wood): the harm grows with the knock's speed, not its square, so
+      // a whip into the floor (25+ m/s) takes a third of it and drops and bumps little
+      const mass = this.main.mass;
+      const share = Math.min(1, info.otherMass / mass);
+      const harm = share * mass * 0.14 * Math.max(0, info.speed - 6);
+      if (harm > 0.5) this.damage(info.part, harm, 'blunt', info.point, info.normal);
+      return;
+    }
     const m = Math.min(info.otherMass, 400);
     const e = 0.5 * Math.min(m, this.main.mass * 6) * Math.max(0, info.speed - 4) ** 2;
     if (e > 30) this.damage(info.part, e / 40, 'blunt', info.point, info.normal);
   }
 
   onBullet(hit: BulletHit): void {
+    // glass shatters at a bullet, whatever gun it came from (a share of a pistol's damage left a pane standing)
+    if (this.breakable && hit.part.mat === GLASS) {
+      this.shatter(hit.point);
+      return;
+    }
     // same share of the bullet's damage as the default, but breakable props now break
     this.damage(hit.part, hit.damage * 0.2, 'bullet', hit.point, hit.dir);
   }
 
   damage(part: Part, amount: number, kind: DamageKind, point?: V2, _dir?: V2): void {
-    if (this.cfg.hp === undefined) return;
+    if (!this.breakable) return;
     part.hp -= amount * (kind === 'fire' ? 0.3 : 1);
     if (part.hp <= 0 && !this.destroyed) this.shatter(point);
   }
 
   /** Breaks into debris particles and disappears. */
   shatter(_point?: V2): void {
+    if (this.shattered) return;
+    this.shattered = true;
     const p = this.main;
     const g = this.game;
     const n = Math.min(60, Math.round((p.w * p.h) / 10));

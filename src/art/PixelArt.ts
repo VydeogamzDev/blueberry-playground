@@ -29,11 +29,6 @@ export function mix(a: Color, b: Color, t: number): Color {
   return fromRgb(r1 + (r2 - r1) * t, g1 + (g2 - g1) * t, b1 + (b2 - b1) * t);
 }
 
-export function cssColor(c: Color, a = 1): string {
-  const [r, g, b] = rgb(c);
-  return a >= 1 ? `rgb(${r},${g},${b})` : `rgba(${r},${g},${b},${a})`;
-}
-
 /**
  * A tiny indexed raster used to author pixel-art sprites in code.
  * Row 0 is the TOP of the sprite. Pixels are 0xRRGGBB or CLEAR.
@@ -204,30 +199,6 @@ export class PixelArt {
     return !this.filled(x - 1, y) || !this.filled(x + 1, y) || !this.filled(x, y - 1) || !this.filled(x, y + 1);
   }
 
-  /**
-   * Top-left lighting: brightens pixels near the upper/left silhouette edge and
-   * darkens pixels near the lower/right edge. Call before outline().
-   */
-  bevel(light = 1.14, dark = 0.84, depth = 2): this {
-    const out = this.px.slice();
-    for (let y = 0; y < this.h; y++) {
-      for (let x = 0; x < this.w; x++) {
-        const c = this.get(x, y);
-        if (c === CLEAR) continue;
-        let up = false;
-        let down = false;
-        for (let d = 1; d <= depth; d++) {
-          if (!this.filled(x, y - d) || !this.filled(x - d, y)) up = true;
-          if (!this.filled(x, y + d) || !this.filled(x + d, y)) down = true;
-        }
-        if (up && !down) out[y * this.w + x] = shade(c, light);
-        else if (down && !up) out[y * this.w + x] = shade(c, dark);
-      }
-    }
-    this.px.set(out);
-    return this;
-  }
-
   /** Darkens the silhouette rim to form an outline using each pixel's own hue. */
   outline(f = 0.55): this {
     const out = this.px.slice();
@@ -251,18 +222,6 @@ export class PixelArt {
       this.px[i] = shade(c, 1 + (r * 2 - 1) * amount);
     }
     return this;
-  }
-
-  /** Multiplies every filled pixel. */
-  tint(f: number): this {
-    for (let i = 0; i < this.px.length; i++) if (this.px[i] !== CLEAR) this.px[i] = shade(this.px[i], f);
-    return this;
-  }
-
-  flipX(): PixelArt {
-    const p = new PixelArt(this.w, this.h);
-    for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) p.px[y * this.w + (this.w - 1 - x)] = this.px[y * this.w + x];
-    return p;
   }
 
   /** Copies another art onto this one (CLEAR pixels skipped). */

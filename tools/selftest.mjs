@@ -5,6 +5,7 @@
  *   npm test -- liquids      only tests whose name contains "liquids"
  *   SEED=7 npm test          with Math.random seeded, to replay a failure
  *   npm test -- --nosimd     on the plain build of Rapier (browsers without WebAssembly SIMD)
+ *   npm test -- --standalone on the one-file page instead (build it first: npm run standalone)
  *   npm run bench            time crowded scenes instead (npm run bench -- pile: one scene)
  *   npm run bench -- --live  run 100 people in real time on the graphics card, frames held to
  *                            a 60 Hz display (--hz=144 for another), and report the speed
@@ -25,6 +26,7 @@ const mixMode = args.includes('--mix');
 const wavMode = args.includes('--wav');
 const filter = args.find((a) => !a.startsWith('--')) ?? '';
 const query = args.includes('--nosimd') ? 'nosimd' : undefined;
+const file = args.includes('--standalone') ? 'dist-standalone/Blueberry Playground.html' : undefined;
 const seed = process.env.SEED ? Number(process.env.SEED) >>> 0 : null;
 
 let exitCode = 1;
@@ -32,7 +34,7 @@ let page;
 try {
   // the bench times the CPU: headless Chrome draws in software, and a full-size
   // window's drawing slows the physics steps beside it (by up to half)
-  page = await openGame({ still: seed !== null, query, ...(liveMode ? { gpu: true, vsync: hz } : benchMode ? { width: 320, height: 200 } : {}) });
+  page = await openGame({ still: seed !== null, query, file, ...(liveMode ? { gpu: true, vsync: hz } : benchMode ? { width: 320, height: 200 } : {}) });
   const { evaluate, errors } = page;
 
   if (seed !== null) {
@@ -89,7 +91,7 @@ try {
     if (errors.length) console.log(`\nPage errors:\n  ${errors.join('\n  ')}`);
     exitCode = errors.length ? 1 : 0;
   } else {
-    console.log(`Running self-tests${filter ? ` matching "${filter}"` : ''} in ${page.browser} (headless, ${await evaluate('bp.rapierBuild')} Rapier)...\n`);
+    console.log(`Running self-tests${filter ? ` matching "${filter}"` : ''} in ${page.browser} (headless, ${await evaluate('bp.rapierBuild')} Rapier${file ? ', the standalone page' : ''})...\n`);
     const t0 = Date.now();
     const results = JSON.parse(await evaluate(`bp.selftest(${JSON.stringify(filter)}).then((r) => JSON.stringify(r))`, 15 * 60 * 1000));
     let failed = 0;

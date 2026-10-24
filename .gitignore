@@ -1,6 +1,9 @@
 node_modules
 dist
+dist-standalone
+dist-desktop
 *.log
 .vite
 sheet_*.png
 mix-renders
+__pycache__

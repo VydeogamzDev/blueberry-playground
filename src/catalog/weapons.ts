@@ -11,10 +11,17 @@ import { Item, artRect, densityFor, type HoldSpec } from '../entities/Item';
 import { Firearm, type GunSpec } from '../entities/Firearm';
 import { Blade, type BladeSpec } from '../entities/Melee';
 import { Explosive, type BlastSpec } from '../entities/Explosive';
+import { Nuke } from '../entities/Nuke';
+import { registerRpg, registerMolotov } from './ordnance';
+import { registerCrossbow } from './crossbow';
+import * as B from '../art/bombs';
 import { Battery, Button, LightBulb, Motor, Thruster } from '../entities/Machines';
-import { Syringe, type Drug } from '../entities/Syringe';
-import { Switch, MotionSensor, Timer, LogicGate, Piston } from '../entities/Devices';
-import { Car } from '../entities/Car';
+import { Syringe, SYRINGE_STEPS, type Drug } from '../entities/Syringe';
+import { FirstAidKit, Bandage, Defibrillator } from '../entities/Medical';
+import * as Med from '../art/medical';
+import type { DefibLight, MonitorLamp } from '../art/medical';
+import { HeartMonitor, LifeDetector } from '../entities/Monitors';
+import { Switch, MotionSensor, Timer, LogicGate, Piston, ReversingSwitch, LEVER_STEPS, type LeverPos } from '../entities/Devices';
 import { Flask, FLASK_TILTS } from '../entities/Flask';
 import { LIQUID_IDS, type LiquidName } from '../systems/Liquids';
 import type { ShapeSpec } from '../world/Part';
@@ -187,7 +194,7 @@ const BOMBS: BombDef[] = [
   {
     id: 'grenade', name: 'Grenade', desc: 'Pull the pin (activate) and throw. 3 second fuse.', art: () => I.grenadeArt(true), w: 8, h: 11,
     shapes: [{ kind: 'ball', r: 3.8, y: -1.5 }, { kind: 'box', w: 4, h: 3, y: 3.5, r: 0.5 }], mass: 0.6, material: MAT.metal, hold: { grip: [3, 6] },
-    blast: { power: 70, radius: 4.5, damage: 170, shrapnel: 28, fuse: 3, pin: [0, 1] },
+    blast: { power: 70, radius: 4.5, damage: 170, shrapnel: 28, fuse: 3, pin: [0, 1], pulled: lazyArt(() => I.grenadeArt(false)) },
     tags: ['frag', 'bomb', 'throw'],
   },
   {
@@ -214,6 +221,13 @@ const BOMBS: BombDef[] = [
     blast: { power: 160, radius: 4.5, damage: 340, fuse: 0.25, pressure: true, shrapnel: 12 },
     tags: ['mine', 'trap', 'bomb'],
   },
+  {
+    id: 'bomb', name: 'Bomb', desc: 'A round black-powder bomb. Light the fuse (activate) and watch it burn down: 5 seconds. Fire and fuse cords light it too.',
+    art: () => B.roundBombArt(), w: 18, h: 22,
+    shapes: [{ kind: 'ball', r: 8, x: -1, y: -3 }, artRect(18, 22, 5, 3, 6, 4)], mass: 6, material: MAT.metal, hold: { grip: [8, 5] },
+    blast: { power: 150, radius: 6.5, damage: 300, fuse: 5, fusePath: B.ROUND_FUSE, fuseArt: B.roundBombArt, burnTime: 0.3 },
+    tags: ['round', 'cartoon', 'fuse', 'black powder'],
+  },
 ];
 
 function buttonArt(): PixelArt {
@@ -230,9 +244,11 @@ const TOOLS: { id: string; tool: string; name: string; desc: string; tags: strin
   { id: 'tool-weld', tool: 'weld', name: 'Fixed Connector', desc: 'Drag between two objects to weld them rigidly together. Click to weld an object to whatever is behind it, or to the background.', tags: ['weld', 'glue', 'attach'] },
   { id: 'tool-spring', tool: 'spring', name: 'Spring', desc: 'Drag between two objects to connect them with a spring.', tags: ['elastic', 'bungee'] },
   { id: 'tool-hinge', tool: 'hinge', name: 'Hinge', desc: 'Drag between two objects: they rotate freely around the start point. Click to hinge an object to whatever is behind it, or to the background.', tags: ['axle', 'joint', 'rotate'] },
-  { id: 'tool-pin', tool: 'pin', name: 'Pin', desc: 'Click an object to pin it to the background at that point.', tags: ['nail', 'anchor', 'fix'] },
-  { id: 'tool-wire', tool: 'wire', name: 'Wire', desc: 'Connect devices electrically: batteries, buttons, lights, motors, guns, explosives.', tags: ['cable', 'electric', 'power'] },
-  { id: 'tool-remove', tool: 'remove', name: 'Remove Connections', desc: 'Click an object to remove all of its connections.', tags: ['delete', 'cut', 'detach'] },
+  { id: 'tool-pin', tool: 'pin', name: 'Pin', desc: 'Click an object to pin it there: to whatever is behind it (it turns on the pin), else to the background. Drag from one object to another to hinge them.', tags: ['nail', 'anchor', 'fix'] },
+  { id: 'tool-wire', tool: 'wire', name: 'Wire', desc: 'Connect devices electrically: batteries, buttons, lights, motors, guns, explosives. Power reaching a gun fires it, and reaching a bomb sets it off.', tags: ['cable', 'electric', 'power'] },
+  { id: 'tool-fuse', tool: 'fuse', name: 'Fuse', desc: 'The Rope’s other kind (the Rope’s key twice). Drag between objects to lay a fuse cord; click a fuse to light it (fire and blasts light it too). It burns along and sets off the explosives it reaches, one after another.', tags: ['cord', 'wick', 'chain', 'detonate'] },
+  { id: 'tool-remove', tool: 'remove', name: 'Remove Connections', desc: 'Click a connection (its line or its knot) to remove it; Shift+click an object to remove all of its connections; drag a box to remove every connection it crosses.', tags: ['delete', 'cut', 'detach'] },
+  { id: 'tool-shape', tool: 'shape', name: 'Shape', desc: 'Draw solid objects: drag out a box (Shift: round), or click corner points and click the first one again. Pick the material below.', tags: ['draw', 'build', 'custom', 'polygon'] },
 ];
 
 // ------------------------------------------------------------------ registration
@@ -244,6 +260,8 @@ export function registerWeapons(): void {
     item(g.id, g.name, 'Weapons', g.desc, g.art, (game, def, art, x, y, opts) =>
       new Firearm(game, def, { art, material: MAT.metal, shapes, density, angularDamping: 0.3 }, g.hold, g.gun, x, y, opts), g.tags);
   }
+  registerRpg();
+  registerCrossbow();
 }
 
 export function registerMelee(): void {
@@ -267,28 +285,80 @@ export function registerExplosives(): void {
     item(b.id, b.name, 'Explosives', b.desc, b.art, (game, def, art, x, y, opts) =>
       new Explosive(game, def, { art, material: b.material, shapes, density, angularDamping: 0.25 }, b.hold, b.blast, x, y, opts), b.tags);
   }
+  registerMolotov();
+  const nukeShapes = rects(64, 24, [[5, 4, 59, 16], [1, 0, 12, 4], [1, 20, 12, 4]], 1.5);
+  item('nuke', 'Thermonuclear Bomb', 'Explosives', 'Set its yield (0.1 kt to 50 Mt) and countdown in its menu, then activate it. The smallest levels a block; the biggest, the whole map.',
+    () => B.nukeArt(10, false), (game, def, art, x, y, opts) =>
+      new Nuke(game, def, { art, material: MAT.metal, shapes: nukeShapes, density: densityFor(300, nukeShapes), angularDamping: 0.3 }, B.nukeArt, x, y, opts),
+    ['nuclear', 'atomic', 'hydrogen', 'h-bomb', 'yield']);
 }
 
 // ------------------------------------------------------------------ medical
 
 const SYRINGES: { drug: Drug; name: string; desc: string; tags: string[] }[] = [
-  { drug: 'healing', name: 'Healing Syringe', desc: 'Stab it into someone: heals wounds, burns and broken bones, restores blood and cures poison.', tags: ['heal', 'medkit', 'health'] },
-  { drug: 'adrenaline', name: 'Adrenaline Syringe', desc: 'Kills pain and shock, wakes people up and gets them back on their feet fast.', tags: ['stim', 'wake', 'epinephrine'] },
-  { drug: 'knockout', name: 'Knockout Syringe', desc: 'Sedative. Puts a person to sleep for half a minute.', tags: ['sedative', 'sleep', 'tranquilizer'] },
-  { drug: 'life', name: 'Life Syringe', desc: 'Brings the dead back to life, as long as they still have a head.', tags: ['revive', 'resurrect'] },
-  { drug: 'poison', name: 'Poison Syringe', desc: 'Slowly drains the life out of whoever it is injected into.', tags: ['toxin', 'kill', 'venom'] },
+  { drug: 'healing', name: 'Healing Syringe', desc: 'Push the needle into someone (or Use it touching them, or in their hand): over a second or so it closes wounds, mends bones, clears burns and blood, restores blood and gets them back up.', tags: ['heal', 'medkit', 'health'] },
+  { drug: 'adrenaline', name: 'Adrenaline Syringe', desc: 'Kills pain and shock, wakes people up and gets them back on their feet fast. Each dose has them (or an animal) walking and running much faster for about 45 seconds.', tags: ['stim', 'wake', 'epinephrine'] },
+  { drug: 'knockout', name: 'Knockout Syringe', desc: 'Sedative. Puts a person or an animal to sleep for half a minute.', tags: ['sedative', 'sleep', 'tranquilizer'] },
+  { drug: 'life', name: 'Life Syringe', desc: 'Brings the dead back to life, healed, as long as they still have a head. Heals the living a little.', tags: ['revive', 'resurrect'] },
+  { drug: 'poison', name: 'Poison Syringe', desc: 'Slowly drains the life out of whoever it is injected into, turning them a sickly green.', tags: ['toxin', 'kill', 'venom'] },
+  { drug: 'death', name: 'Death Syringe', desc: 'Stops the heart the moment it goes in. A defibrillator can still start it again.', tags: ['kill', 'lethal', 'heart'] },
+  { drug: 'coagulation', name: 'Coagulation Syringe', desc: 'Thickens the blood: every bleeding wound closes up over a few seconds, and new ones stop quickly for a while after.', tags: ['clot', 'bleeding', 'stop bleeding'] },
+  { drug: 'painkiller', name: 'Painkiller Syringe', desc: 'Takes all pain away for about a minute: no writhing, no fainting from it, and they get up again sooner.', tags: ['morphine', 'pain', 'analgesic'] },
+  { drug: 'strength', name: 'Ultra Strength Syringe', desc: 'For about a minute their muscles are far stronger: a firmer grip, and their punches send people flying.', tags: ['strong', 'steroid', 'super', 'power'] },
+  { drug: 'freeze', name: 'Freeze Syringe', desc: 'Freezes them stiff where they stand, pale and blue, for about half a minute. Fire thaws them sooner.', tags: ['ice', 'cold', 'frozen', 'stiff'] },
+  { drug: 'bone', name: 'Bone Eating Syringe', desc: 'Eats away at the bones: one breaks after another, every second or so, until none are left whole.', tags: ['break', 'fracture', 'osteo'] },
+  { drug: 'acid', name: 'Acid Syringe', desc: 'Acid in the blood melts the body from the inside: the flesh blisters and drips, and limbs fall off one by one.', tags: ['melt', 'corrosive', 'dissolve'] },
+  { drug: 'pink', name: 'Pink Syringe', desc: 'Nobody knows what is in it: it does what one of the other syringes does, a different one each time.', tags: ['random', 'mystery', 'surprise'] },
+  { drug: 'zombie', name: 'Zombie Syringe', desc: 'Infects them: a few seconds later they turn, greying and shambling, and go for the living. A bite passes it on. Only destroying the head stops one for good.', tags: ['undead', 'virus', 'infect', 'infection'] },
+  { drug: 'cure', name: 'Zombie Cure Syringe', desc: 'Clears the zombie infection, before or after they turn (as long as the head is whole): they are themselves again.', tags: ['antidote', 'undead', 'vaccine', 'infection'] },
 ];
 
 export function registerMedical(): void {
-  const empty = lazyArt(() => I.syringeArt(null));
   const shapes = rects(20, 7, [[0, 1, 15, 5], [15, 2, 2, 3], [17, 3, 3, 1]], 0.3);
   const density = densityFor(0.08, shapes);
   for (const s of SYRINGES) {
-    item(`syringe-${s.drug}`, s.name, 'Medical', s.desc, () => I.syringeArt(I.DRUG_RAMPS[s.drug]), (game, def, art, x, y, opts) => {
+    // (its art with the plunger pushed in each step of the way, made when first needed)
+    const steps = Array.from({ length: SYRINGE_STEPS + 1 }, (_, k) => lazyArt(() => I.syringeArt(I.DRUG_RAMPS[s.drug], 1 - k / SYRINGE_STEPS)));
+    item(`syringe-${s.drug}`, s.name, 'Medical', s.desc, steps[0], (game, def, art, x, y, opts) => {
       const blade: BladeSpec = { blade: [15, 19], tipLen: 3, edge: 'none', sharpness: 0, stab: true, maxDepth: 0.08, grip: 140, stabSpeed: 1.4, stabDamage: 0.08 };
-      return new Syringe(game, def, { art, material: MAT.plastic, shapes, density, angularDamping: 0.3, ccd: true }, { grip: [10, 3] }, blade, s.drug, empty, x, y, opts);
+      return new Syringe(game, def, { art, material: MAT.plastic, shapes, density, angularDamping: 0.3, ccd: true }, { grip: [10, 3] }, blade, s.drug, (k) => steps[k](), x, y, opts);
     }, ['syringe', 'needle', 'drug', ...s.tags]);
   }
+  const kitFull = lazyArt(() => Med.firstAidArt(false));
+  const kitEmpty = lazyArt(() => Med.firstAidArt(true));
+  const kitArt = (empty: boolean) => (empty ? kitEmpty() : kitFull());
+  const kitShapes = rects(16, 13, [[0, 2, 16, 11], [4, 0, 8, 2]], 0.8);
+  item('first-aid-kit', 'First Aid Kit', 'Medical', 'Drag it onto someone hurt (or Use it while it touches them): over a few seconds it patches up their wounds, bones, burns and blood. Three uses.',
+    kitFull, (game, def, art, x, y, opts) =>
+      new FirstAidKit(game, def, { art, material: MAT.plastic, shapes: kitShapes, density: densityFor(1.2, kitShapes), angularDamping: 0.3 }, { grip: [8, 1] }, kitArt, x, y, opts),
+    ['medkit', 'heal', 'health', 'first aid', 'kit']);
+  const rollShapes: ShapeSpec[] = [{ kind: 'ball', r: 4.5, x: -1.5, y: 0 }, artRect(12, 9, 4, 6, 8, 3)];
+  item('bandage', 'Bandage', 'Medical', 'Drag it onto a bleeding limb (or Use it while it touches one) to wrap it: that limb stops bleeding, and the bandage stays on.',
+    Med.bandageArt, (game, def, art, x, y, opts) =>
+      new Bandage(game, def, { art, material: MAT.plastic, shapes: rollShapes, density: densityFor(0.1, rollShapes), angularDamping: 0.3 }, { grip: [4, 4] }, x, y, opts),
+    ['gauze', 'wrap', 'bleeding', 'heal']);
+  const lights = new Map<DefibLight, () => PixelArt>();
+  const defibArt = (light: DefibLight) => {
+    let a = lights.get(light);
+    if (!a) lights.set(light, (a = lazyArt(() => Med.defibArt(light))));
+    return a();
+  };
+  const defibShapes = rects(16, 11, [[0, 2, 16, 8], [4, 0, 6, 2]], 0.8);
+  item('defibrillator', 'Defibrillator', 'Medical', 'Use it to charge it (a couple of seconds); charged, it shocks whoever its paddle (the front) is against. Restarts the heart of someone who died less than a minute ago; jolts the living awake.',
+    () => defibArt('off'), (game, def, art, x, y, opts) =>
+      new Defibrillator(game, def, { art, material: MAT.plastic, shapes: defibShapes, density: densityFor(2.5, defibShapes), angularDamping: 0.3 }, { grip: [7, 1] }, defibArt, x, y, opts),
+    ['defib', 'aed', 'revive', 'shock', 'heart', 'paddles']);
+  const lamps = new Map<MonitorLamp, () => PixelArt>();
+  const monitorArt = (lamp: MonitorLamp) => {
+    let a = lamps.get(lamp);
+    if (!a) lamps.set(lamp, (a = lazyArt(() => Med.heartMonitorArt(lamp))));
+    return a();
+  };
+  const monitorShapes = rects(20, 15, [[0, 0, 20, 14], [2, 14, 16, 1]], 0.8);
+  item('heart-monitor', 'Heart Monitor', 'Medical', 'Use it next to someone to clip its leads on (or wire it to them): its screen traces their heartbeat and it beeps with every beat, each beat also powering its other wires for a moment. When the heart stops it flatlines, with a long tone.',
+    () => monitorArt('off'), (game, def, art, x, y, opts) =>
+      new HeartMonitor(game, def, { art, material: MAT.plastic, shapes: monitorShapes, density: densityFor(4, monitorShapes), angularDamping: 0.3 }, monitorArt, x, y, opts),
+    ['ecg', 'ekg', 'heart', 'pulse', 'monitor', 'vitals', 'heartbeat']);
 }
 
 const FLASKS: { liquid: LiquidName; name: string; desc: string; tags: string[] }[] = [
@@ -319,7 +389,7 @@ export function registerMachinery(): void {
     const shapes = rects(10, 16, [[0, 2, 10, 14], [3, 0, 4, 2]]);
     return new Battery(game, def, { art, material: MAT.metal, shapes, density: densityFor(2.5, shapes) }, x, y, opts);
   }, ['power', 'electric', 'cell']);
-  item('button', 'Button', 'Machinery', 'Sends a pulse through its wires when pressed or activated.', buttonArt, (game, def, art, x, y, opts) => {
+  item('button', 'Button', 'Machinery', 'Sends a pulse through its wires when pressed or activated: it switches lights, thrusters and motors, flips levers, fires guns and sets off bombs. It doesn’t carry a battery’s power (a Switch does).', buttonArt, (game, def, art, x, y, opts) => {
     const shapes = rects(14, 6, [[0, 2, 14, 4], [3, 0, 8, 2]]);
     return new Button(game, def, { art, material: MAT.metal, shapes, density: densityFor(1.2, shapes) }, x, y, opts);
   }, ['switch', 'trigger', 'electric']);
@@ -328,33 +398,45 @@ export function registerMachinery(): void {
     const shapes: ShapeSpec[] = [{ kind: 'ball', r: 4, y: 2 }, artRect(8, 12, 2, 7, 4, 5)];
     return new LightBulb(game, def, { art, material: MAT.plastic, shapes, density: densityFor(0.25, shapes), hp: 4 }, bulbOn, x, y, opts);
   }, ['lamp', 'lightbulb', 'electric']);
-  item('thruster', 'Thruster', 'Machinery', 'Pushes forward while active or powered.', I.thrusterArt, (game, def, art, x, y, opts) => {
+  item('thruster', 'Thruster', 'Machinery', 'Pushes forward while active or powered: one lifts a person, a few lift a car. Set its thrust in its menu, from 300 N to 4800 N (1200 N to start with).', I.thrusterArt, (game, def, art, x, y, opts) => {
     const shapes = rects(14, 10, [[5, 1, 9, 8], [0, 1, 6, 8]]);
-    return new Thruster(game, def, { art, material: MAT.metal, shapes, density: densityFor(3, shapes) }, 260, x, y, opts);
+    // (a push 20 times its own weight from standing, fading toward THRUST_TOP m/s)
+    return new Thruster(game, def, { art, material: MAT.metal, shapes, density: densityFor(6, shapes) }, 1200, x, y, opts);
   }, ['rocket', 'jet', 'engine']);
   const housing = lazyArt(I.motorHousingArt);
   const rotor = lazyArt(I.rotorArt);
-  item('motor', 'Motor', 'Machinery', 'An electric motor. Weld things to its rotor; activate or power it to spin.', I.motorHousingArt, (game, def, _art, x, y, opts) =>
-    new Motor(game, def, { housing, rotor, rotorShape: { kind: 'ball', r: 7 }, speed: 9, torque: 80 }, x, y, opts), ['engine', 'rotor', 'spin']);
+  // (enough torque to swing a plank hanging from its rotor by one end up and round: 17 kg a metre out takes 170 N*m)
+  item('motor', 'Motor', 'Machinery', 'An electric motor. Weld things to its rotor; activate or power it to spin. Set its speed and torque (100 to 1600 N·m) in its menu.', I.motorHousingArt, (game, def, _art, x, y, opts) =>
+    new Motor(game, def, { housing, rotor, rotorShape: { kind: 'ball', r: 7 }, speed: 9, torque: 400 }, x, y, opts), ['engine', 'rotor', 'spin']);
   const wheel = lazyArt(I.wheelArt);
-  item('motor-wheel', 'Motor Wheel', 'Machinery', 'A powered rubber wheel on a motor hub.', I.wheelArt, (game, def, _art, x, y, opts) =>
+  item('motor-wheel', 'Motor Wheel', 'Machinery', 'A powered rubber wheel on a motor hub. Set its speed and torque (15 to 240 N·m) in its menu.', I.wheelArt, (game, def, _art, x, y, opts) =>
     new Motor(game, def, { housing: rotor, rotor: wheel, rotorShape: { kind: 'ball', r: 10 }, rotorMaterial: MAT.rubber, rotorDensity: 60, speed: 14, torque: 60, hubOnTop: true }, x, y, opts),
   ['wheel', 'car', 'drive']);
 }
 
 export function registerDevices(): void {
   const on = lazyArt(() => M.switchArt(true));
-  item('switch', 'Switch', 'Machinery', 'A lever switch. Power only flows through it while it is on. A pulse flips it.', () => M.switchArt(false), (game, def, art, x, y, opts) => {
+  item('switch', 'Switch', 'Machinery', 'A lever switch. On, it powers what is wired to it (gates and timers too); wired to a battery, it lets the power through only while on. A button’s pulse flips it.', () => M.switchArt(false), (game, def, art, x, y, opts) => {
     const shapes = rects(14, 12, [[0, 6, 14, 6], [5, 4, 4, 2]]);
     return new Switch(game, def, { art, material: MAT.metal, shapes, density: densityFor(1, shapes) }, on, x, y, opts);
   }, ['lever', 'toggle', 'electric']);
+  const lever = new Map(LEVER_STEPS.map((p) => [p, lazyArt(() => M.reverserArt(p))]));
+  item('reversing-switch', 'Reversing Switch', 'Machinery', 'A three-way lever: on, off and reverse (F steps through them, as does a button’s pulse). Wired like a Switch, but in reverse what it powers runs backwards: motors and motor wheels spin the other way, thrusters push backwards and pistons pull in.', () => M.reverserArt('off'), (game, def, art, x, y, opts) => {
+    const shapes = rects(16, 12, [[0, 6, 16, 6], [6, 4, 4, 2]]);
+    return new ReversingSwitch(game, def, { art, material: MAT.metal, shapes, density: densityFor(1, shapes) }, (p: LeverPos) => lever.get(p)!(), x, y, opts);
+  }, ['lever', 'reverse', 'forward', 'backwards', 'direction', 'toggle', 'electric']);
   const seen = lazyArt(() => M.sensorArt(true));
   item('sensor', 'Motion Sensor', 'Machinery', 'A tripwire beam. Powers its wires and sends a pulse when something crosses it.', () => M.sensorArt(false), (game, def, art, x, y, opts) => {
     const shapes = rects(12, 10, [[0, 1, 12, 8]]);
     return new MotionSensor(game, def, { art, material: MAT.plastic, shapes, density: densityFor(0.6, shapes) }, seen, x, y, opts);
   }, ['detector', 'tripwire', 'laser', 'trigger']);
+  const alive = lazyArt(() => Med.lifeDetectorArt(true));
+  item('life-detector', 'Life Detector', 'Machinery', 'A sensor that only sees the living: while someone alive (a person or an animal, not a zombie or a body) is in its beam, it powers its wires, and it pulses them when one first comes into view.', () => Med.lifeDetectorArt(false), (game, def, art, x, y, opts) => {
+    const shapes = rects(12, 10, [[0, 1, 12, 8]]);
+    return new LifeDetector(game, def, { art, material: MAT.plastic, shapes, density: densityFor(0.6, shapes) }, alive, x, y, opts);
+  }, ['sensor', 'detector', 'alive', 'life', 'heartbeat', 'trigger']);
   const tick = lazyArt(() => M.timerArt(true));
-  item('timer', 'Timer', 'Machinery', 'Pulses its output (right side) every interval while on, or while its input (left side) is powered.', () => M.timerArt(false), (game, def, art, x, y, opts) => {
+  item('timer', 'Timer', 'Machinery', 'Pulses its output (right side) every interval while on, or while its input (left side) is powered. Set the interval in its menu; a pulse on its input starts or stops it.', () => M.timerArt(false), (game, def, art, x, y, opts) => {
     const shapes = rects(14, 12, [[0, 0, 14, 12]]);
     return new Timer(game, def, { art, material: MAT.metal, shapes, density: densityFor(0.8, shapes) }, tick, x, y, opts);
   }, ['clock', 'pulse', 'repeat', 'delay']);
@@ -375,15 +457,8 @@ export function registerDevices(): void {
   }
   const base = lazyArt(M.pistonBaseArt);
   const rod = lazyArt(M.pistonRodArt);
-  item('piston', 'Piston', 'Machinery', 'Pushes its plate out 1 m while on or powered. Weld things to the plate or the cylinder.', M.pistonBaseArt, (game, def, _art, x, y, opts) =>
+  item('piston', 'Piston', 'Machinery', 'Pushes its plate out 1 m while on or powered. Weld things to the plate or the cylinder: several can lift one thing together, even set a little out of line.', M.pistonBaseArt, (game, def, _art, x, y, opts) =>
     new Piston(game, def, { base, rod, stroke: 1, force: 4000 }, x, y, opts), ['pusher', 'hydraulic', 'actuator']);
-}
-
-export function registerVehicles(): void {
-  const body = lazyArt(M.carBodyArt);
-  const wheel = lazyArt(M.carWheelArt);
-  item('car', 'Car', 'Vehicles', 'A small hatchback. Activate to drive (or wire it to power); reverse from its menu.', M.carBodyArt, (game, def, _art, x, y, opts) =>
-    new Car(game, def, { body, wheel, axles: [[15, 22], [59, 22]], wheelR: 8, speed: 22, torque: 170 }, x, y, opts), ['vehicle', 'auto', 'drive']);
 }
 
 type GateKindId = 'and' | 'or' | 'xor' | 'not';

@@ -51,54 +51,56 @@ function rampOfAny(c: Color): [Ramp, number] | null {
   return null;
 }
 
-export function crateArt(): PixelArt {
-  const S = 28;
-  const a = new PixelArt(S, S);
-  const W = WOOD;
-  a.rect(0, 0, S, S, W[2]);
+export function crateArt(W = 28, H = 28): PixelArt {
+  const a = new PixelArt(W, H);
+  const R = WOOD;
+  a.rect(0, 0, W, H, R[2]);
   // inner planks with dark gaps
-  for (let i = 0; i < 4; i++) {
-    const y = 3 + i * 5.5;
-    a.hline(3, S - 4, Math.round(y), W[1]);
+  const boards = Math.max(1, Math.round((H - 6) / 5.5));
+  for (let i = 0; i < boards; i++) {
+    const y = 3 + (i * (H - 6)) / boards;
+    a.hline(3, W - 4, Math.round(y), R[1]);
   }
-  grain(a, W, 4, 3, 3, S - 6, S - 6);
+  grain(a, R, 4, 3, 3, W - 6, H - 6);
   // diagonal brace (lighter board) with a shadow under it
-  for (let k = -1; k <= 1; k++) a.line(3, S - 4 + k, S - 4, 3 + k, WOOD_PALE[2]);
-  a.line(4, S - 2, S - 2, 4, W[1]);
+  for (let k = -1; k <= 1; k++) a.line(3, H - 4 + k, W - 4, 3 + k, WOOD_PALE[2]);
+  a.line(4, H - 2, W - 2, 4, R[1]);
   // frame boards
   const F = WOOD_PALE;
-  for (const [x, y, w, h] of [[0, 0, S, 3], [0, S - 3, S, 3], [0, 0, 3, S], [S - 3, 0, 3, S]]) a.rect(x, y, w, h, F[2]);
-  grain(a, F, 9, 0, 0, S, 3);
-  grain(a, F, 10, 0, S - 3, S, 3);
-  grain(a, F, 11, 0, 3, 3, S - 6, true);
-  grain(a, F, 12, S - 3, 3, 3, S - 6, true);
+  for (const [x, y, w, h] of [[0, 0, W, 3], [0, H - 3, W, 3], [0, 0, 3, H], [W - 3, 0, 3, H]]) a.rect(x, y, w, h, F[2]);
+  grain(a, F, 9, 0, 0, W, 3);
+  grain(a, F, 10, 0, H - 3, W, 3);
+  grain(a, F, 11, 0, 3, 3, H - 6, true);
+  grain(a, F, 12, W - 3, 3, 3, H - 6, true);
   // inner shadow under the frame
-  a.hline(3, S - 4, 3, W[0]);
-  a.vline(3, 3, S - 4, W[0]);
-  a.hline(3, S - 4, S - 4, W[3]);
-  a.vline(S - 4, 4, S - 4, W[3]);
+  a.hline(3, W - 4, 3, R[0]);
+  a.vline(3, 3, H - 4, R[0]);
+  a.hline(3, W - 4, H - 4, R[3]);
+  a.vline(W - 4, 4, H - 4, R[3]);
   finish(a);
-  for (const [x, y] of [[1, 1], [S - 2, 1], [1, S - 2], [S - 2, S - 2], [1, 13], [S - 2, 13]]) a.set(x, y, STEEL_LT[3]);
+  // nails at the corners, and down the sides of a tall one
+  const ys = [1, H - 2];
+  for (let n = Math.max(1, Math.round((H - 3) / 13)), i = 1; i < n; i++) ys.push(Math.round(1 + (i * (H - 3)) / n) - 1);
+  for (const y of ys) a.set(1, y, STEEL_LT[3]).set(W - 2, y, STEEL_LT[3]);
   return a;
 }
 
-export function metalBoxArt(): PixelArt {
-  const S = 22;
-  const a = new PixelArt(S, S);
+export function metalBoxArt(W = 22, H = 22): PixelArt {
+  const a = new PixelArt(W, H);
   const M = STEEL;
-  a.rect(0, 0, S, S, M[2]);
+  a.rect(0, 0, W, H, M[2]);
   // recessed panel
-  a.rect(3, 3, S - 6, S - 6, M[1]);
-  a.hline(3, S - 4, 3, M[0]);
-  a.vline(3, 3, S - 4, M[0]);
-  a.hline(4, S - 4, S - 4, M[3]);
-  a.vline(S - 4, 4, S - 4, M[3]);
+  a.rect(3, 3, W - 6, H - 6, M[1]);
+  a.hline(3, W - 4, 3, M[0]);
+  a.vline(3, 3, H - 4, M[0]);
+  a.hline(4, W - 4, H - 4, M[3]);
+  a.vline(W - 4, 4, H - 4, M[3]);
   // cross brace
-  a.line(5, 5, S - 6, S - 6, M[2]);
-  a.line(5, S - 6, S - 6, 5, M[2]);
-  a.line(6, 5, S - 5, S - 6, M[3]);
+  a.line(5, 5, W - 6, H - 6, M[2]);
+  a.line(5, H - 6, W - 6, 5, M[2]);
+  a.line(6, 5, W - 5, H - 6, M[3]);
   finish(a);
-  for (const [x, y] of [[1, 1], [S - 2, 1], [1, S - 2], [S - 2, S - 2]]) a.set(x, y, M[4]);
+  for (const [x, y] of [[1, 1], [W - 2, 1], [1, H - 2], [W - 2, H - 2]]) a.set(x, y, M[4]);
   return a;
 }
 
@@ -160,46 +162,86 @@ export function tableArt(): PixelArt {
   return finish(a);
 }
 
-export function brickArt(): PixelArt {
-  const a = new PixelArt(12, 6);
+/** Bricks laid in courses with mortar between, over whatever is filled in `a`. */
+function brickwork(a: PixelArt, seed: number): void {
   const B = BRICK;
-  a.rect(0, 0, 12, 6, B[2]);
+  const mortar = CONCRETE[3];
+  const rng = new RNG(seed);
+  for (let y = 0; y < a.h; y++) {
+    const course = Math.floor(y / 6);
+    const shift = course % 2 ? 6 : 0;
+    for (let x = 0; x < a.w; x++) {
+      if (!a.filled(x, y)) continue;
+      a.set(x, y, y % 6 === 5 || (x + shift) % 12 === 11 ? mortar : B[2]);
+    }
+  }
+  const n = Math.round((a.w * a.h) / 10);
+  for (let i = 0; i < n; i++) {
+    const x = rng.int(0, a.w - 1);
+    const y = rng.int(0, a.h - 1);
+    if (a.get(x, y) === B[2]) a.set(x, y, rng.next() < 0.5 ? B[1] : B[3]);
+  }
+}
+
+/** A clay brick; made bigger, a stretch of brick wall. */
+export function brickArt(W = 12, H = 6): PixelArt {
+  const a = new PixelArt(W, H);
+  const B = BRICK;
+  if (W > 16 || H > 8) {
+    a.rect(0, 0, W, H, B[2]);
+    brickwork(a, 5);
+    return finish(a);
+  }
+  a.rect(0, 0, W, H, B[2]);
   const rng = new RNG(5);
-  for (let i = 0; i < 7; i++) a.set(rng.int(1, 10), rng.int(1, 4), rng.next() < 0.5 ? B[1] : B[3]);
+  const n = Math.round((7 * W * H) / 72);
+  for (let i = 0; i < n; i++) a.set(rng.int(1, W - 2), rng.int(1, H - 2), rng.next() < 0.5 ? B[1] : B[3]);
   return finish(a);
 }
 
-export function beamArt(len = 96): PixelArt {
-  const a = new PixelArt(len, 6);
+export function beamArt(len = 96, H = 6): PixelArt {
+  const a = new PixelArt(len, H);
   const M = STEEL;
   // I-beam seen from the side: flanges top and bottom, web between
-  a.rect(0, 0, len, 6, M[2]);
-  a.rect(0, 2, len, 2, M[1]);
-  for (let x = 6; x < len - 3; x += 12) a.set(x, 2, M[0]).set(x, 3, M[0]);
+  const f = Math.max(1, Math.round(H / 3));
+  const web = H - 2 * f;
+  a.rect(0, 0, len, H, M[2]);
+  a.rect(0, f, len, web, M[1]);
+  // holes along the web
+  const hy = f + Math.max(0, Math.floor((web - 2) / 2));
+  for (let x = 6; x < len - 3; x += 12) for (let y = hy; y < Math.min(f + web, hy + 2); y++) a.set(x, y, M[0]);
   finish(a);
   return a;
 }
 
-export function plankArt(len = 64): PixelArt {
-  const a = new PixelArt(len, 5);
-  a.rect(0, 0, len, 5, WOOD[2]);
-  grain(a, WOOD, 17, 0, 0, len, 5);
+export function plankArt(len = 64, H = 5): PixelArt {
+  const a = new PixelArt(len, H);
+  a.rect(0, 0, len, H, WOOD[2]);
+  grain(a, WOOD, 17, 0, 0, len, H);
+  // boards 5 pixels wide side by side, each nailed at both ends
+  for (let y = 5; y < H - 1; y += 5) a.hline(0, len - 1, y, WOOD_DARK[1]);
   finish(a);
-  a.set(2, 2, STEEL_LT[3]).set(len - 3, 2, STEEL_LT[3]);
+  for (let y = 2; y < H; y += 5) a.set(2, y, STEEL_LT[3]).set(len - 3, y, STEEL_LT[3]);
   return a;
 }
 
-export function concreteBlockArt(): PixelArt {
-  const a = new PixelArt(24, 16);
+export function concreteBlockArt(W = 24, H = 16): PixelArt {
+  const a = new PixelArt(W, H);
   const C = CONCRETE;
-  a.rect(0, 0, 24, 16, C[2]);
+  a.rect(0, 0, W, H, C[2]);
   const rng = new RNG(31);
-  for (let i = 0; i < 26; i++) a.set(rng.int(1, 22), rng.int(1, 14), rng.next() < 0.6 ? C[1] : C[3]);
-  // the two hollow cores
-  for (const x of [4, 14]) {
-    a.rect(x, 4, 6, 8, C[0]);
-    a.hline(x, x + 5, 11, C[1]);
-    a.vline(x + 5, 4, 11, C[1]);
+  const n = Math.round((26 * W * H) / 384);
+  for (let i = 0; i < n; i++) a.set(rng.int(1, W - 2), rng.int(1, H - 2), rng.next() < 0.6 ? C[1] : C[3]);
+  // the hollow cores
+  if (H >= 12 && W >= 10) {
+    const cores = Math.max(1, Math.round(W / 12));
+    const gap = (W - cores * 6) / (cores + 1);
+    for (let i = 0; i < cores; i++) {
+      const x = Math.round(gap + i * (6 + gap));
+      a.rect(x, 4, 6, H - 8, C[0]);
+      a.hline(x, x + 5, H - 5, C[1]);
+      a.vline(x + 5, 4, H - 5, C[1]);
+    }
   }
   return finish(a);
 }
@@ -220,23 +262,156 @@ export function tireArt(): PixelArt {
   return finish(a);
 }
 
-export function bucketArt(): PixelArt {
-  const a = new PixelArt(14, 14);
-  const M = STEEL;
-  a.poly([[0, 0], [14, 0], [12, 14], [2, 14]], M[2]);
-  a.hline(0, 13, 1, M[3]);
-  a.hline(1, 12, 5, M[1]);
-  a.hline(2, 11, 10, M[1]);
-  cylinder(a, 0, 13, 0, 13);
-  return finish(a, { light: false, shadow: false });
+/** The bucket's sprite size: its bail (handle) over rows 0-6, the rim at rows 7-8, the base at rows 27-28. */
+export const BUCKET_W = 22;
+export const BUCKET_H = 29;
+
+/** Where the bucket's left side starts on a row: the rim's lip sticks out, then it narrows to the base. */
+function bucketSide(y: number): number {
+  return y < 9 ? 0 : Math.round(1 + ((y - 9) * 2) / 19);
 }
 
-export function glassPaneArt(): PixelArt {
-  const a = new PixelArt(4, 40);
-  a.rect(0, 0, 4, 40, GLASS[2]);
-  a.vline(1, 2, 37, GLASS[4]);
-  for (let y = 5; y < 36; y += 9) a.set(2, y, GLASS[3]);
+/** The pixels inside the bucket, from the rim down to its floor: where what it holds shows. */
+export function bucketInside(): [number, number][] {
+  const out: [number, number][] = [];
+  for (let y = 7; y <= 26; y++) {
+    const s = bucketSide(y) + (y < 9 ? 3 : 2);
+    for (let x = s; x <= BUCKET_W - 1 - s; x++) out.push([x, y]);
+  }
+  return out;
+}
+
+/**
+ * A metal bucket, cut away to show its inside. `level` (0..1) of a liquid of
+ * `color` lies in it, settled to whichever side is down (`tilt`: its rotation,
+ * radians, counter-clockwise).
+ */
+export function bucketArt(level = 0, color = 0, tilt = 0): PixelArt {
+  const W = BUCKET_W;
+  const a = new PixelArt(W, BUCKET_H);
+  const M = STEEL;
+  for (let y = 7; y < BUCKET_H; y++) {
+    const s = bucketSide(y);
+    a.hline(s, W - 1 - s, y, M[2]);
+  }
+  // the inside: the far wall, in shadow, darker toward the bottom
+  const inside = bucketInside();
+  for (const [x, y] of inside) a.set(x, y, y < 12 ? M[1] : M[0]);
+  // rolled rim, ribs round the sides, and the base
+  for (const x of [0, 1, 2, W - 3, W - 2, W - 1]) a.set(x, 7, M[3]);
+  for (const y of [15, 22]) {
+    const s = bucketSide(y);
+    a.set(s, y, M[1]).set(s + 1, y, M[1]).set(W - 1 - s, y, M[1]).set(W - 2 - s, y, M[1]);
+  }
+  a.hline(3, W - 4, 27, M[1]);
+  finish(a, { light: false, shadow: false });
+  // what's in it, filling the lowest of the inside first (as for a flask)
+  const n = Math.round(Math.max(0, Math.min(1, level)) * inside.length);
+  if (n > 0) {
+    const gx = -Math.sin(tilt);
+    const gy = Math.cos(tilt);
+    const cells = inside.map(([x, y]) => [x, y, x * gx + y * gy] as [number, number, number]);
+    cells.sort((p, q) => q[2] - p[2] || Math.abs(p[0] - (W - 1) / 2) - Math.abs(q[0] - (W - 1) / 2));
+    const surface = cells[n - 1][2];
+    const top = mix(color, 0xffffff, 0.22);
+    const deep = mix(color, 0x000000, 0.18);
+    for (let k = 0; k < n; k++) {
+      const [x, y, h] = cells[k];
+      a.set(x, y, h < surface + 0.9 ? top : h > surface + 6 ? deep : color);
+    }
+  }
+  // the bail, hinged on lugs at the rim (drawn after the outline pass: it's a wire)
+  let px = 1;
+  let py = 7;
+  for (let x = 1; x <= W - 2; x++) {
+    const t = (x - (W - 1) / 2) / ((W - 3) / 2);
+    const y = Math.round(7 - 7 * Math.sqrt(Math.max(0, 1 - t * t)));
+    a.line(px, py, x, y, STEEL_LT[1]);
+    px = x;
+    py = y;
+  }
+  a.line(px, py, W - 2, 7, STEEL_LT[1]);
+  a.set(1, 7, M[4]).set(W - 2, 7, M[4]);
+  return a;
+}
+
+export function glassPaneArt(W = 4, H = 40): PixelArt {
+  const a = new PixelArt(W, H);
+  a.rect(0, 0, W, H, GLASS[2]);
+  glassGlints(a);
   return finish(a, { light: false, shadow: false, soft: false });
+}
+
+/** A highlight down the left side, glints, and on a wide pane a couple of diagonal streaks. */
+function glassGlints(a: PixelArt): void {
+  const { w: W, h: H } = a;
+  const G = GLASS;
+  for (let y = 2; y <= H - 3; y++) a.paint(1, y, G[4]);
+  for (let y = 5; y < H - 4; y += 9) a.paint(2, y, G[3]);
+  if (W < 10 || H < 6) return;
+  const len = Math.min(W, H) * 0.5;
+  for (const [fx, fy] of [[0.35, 0.3], [0.6, 0.55]]) {
+    const x = Math.round(W * fx);
+    const y = Math.round(H * fy);
+    for (let k = -len / 2; k <= len / 2; k++) {
+      a.paint(Math.round(x + k), Math.round(y - k), G[4]);
+      a.paint(Math.round(x + k + 1), Math.round(y - k), G[3]);
+    }
+  }
+}
+
+/** Materials a drawn shape can be made of (see entities/Shape). */
+export type ShapeMaterialId = 'wood' | 'metal' | 'concrete' | 'brick' | 'rubber' | 'glass';
+
+/**
+ * Dresses whatever is filled in `a` (a drawn shape's outline) in a material:
+ * wood grain in boards, steel plate, concrete, brickwork, rubber or glass.
+ */
+export function materialArt(a: PixelArt, mat: ShapeMaterialId, seed = 7): PixelArt {
+  const fill = (c: Color) => {
+    for (let i = 0; i < a.px.length; i++) if (a.px[i] !== -1) a.px[i] = c;
+  };
+  const speckle = (r: Ramp, per: number, lo = 1, hi = 3) => {
+    const rng = new RNG(seed);
+    const n = Math.round((a.w * a.h) / per);
+    for (let i = 0; i < n; i++) {
+      const x = rng.int(0, a.w - 1);
+      const y = rng.int(0, a.h - 1);
+      if (a.get(x, y) === r[2]) a.set(x, y, rng.next() < 0.5 ? r[lo] : r[hi]);
+    }
+  };
+  switch (mat) {
+    case 'wood':
+      fill(WOOD[2]);
+      grain(a, WOOD, seed, 0, 0, a.w, a.h);
+      for (let y = 5; y < a.h - 1; y += 6) for (let x = 0; x < a.w; x++) a.paint(x, y, WOOD_DARK[1]);
+      return finish(a);
+    case 'metal':
+      fill(STEEL[2]);
+      speckle(STEEL, 40);
+      finish(a);
+      // rivets in rows, clear of the edge
+      for (let y = 3; y < a.h; y += 8) for (let x = 3; x < a.w; x += 8) {
+        if (a.filled(x - 2, y) && a.filled(x + 2, y) && a.filled(x, y - 2) && a.filled(x, y + 2)) a.set(x, y, STEEL[4]);
+      }
+      return a;
+    case 'concrete':
+      fill(CONCRETE[2]);
+      speckle(CONCRETE, 15);
+      return finish(a);
+    case 'brick':
+      fill(BRICK[2]);
+      brickwork(a, seed);
+      return finish(a);
+    case 'rubber':
+      fill(RUBBER[2]);
+      speckle(RUBBER, 30);
+      return finish(a);
+    case 'glass':
+      fill(GLASS[2]);
+      glassGlints(a);
+      return finish(a, { light: false, shadow: false, soft: false });
+  }
 }
 
 export function ballArt(): PixelArt {

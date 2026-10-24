@@ -2,8 +2,9 @@ import type { V2 } from '../engine/math';
 import type { Game } from './Game';
 import type { Entity } from './Entity';
 import type { Part } from './Part';
+import type { Snapshot } from './Snapshot';
 
-export type Category = 'Characters' | 'Objects' | 'Weapons' | 'Melee' | 'Explosives' | 'Medical' | 'Machinery' | 'Vehicles' | 'Tools';
+export type Category = 'Characters' | 'Objects' | 'Weapons' | 'Melee' | 'Explosives' | 'Medical' | 'Machinery' | 'Vehicles' | 'Contraptions' | 'Tools';
 
 export const CATEGORIES: { id: Category; icon: string; label: string }[] = [
   { id: 'Characters', icon: 'human', label: 'Characters' },
@@ -14,14 +15,21 @@ export const CATEGORIES: { id: Category; icon: string; label: string }[] = [
   { id: 'Medical', icon: 'syringe', label: 'Medical' },
   { id: 'Machinery', icon: 'gear', label: 'Machinery' },
   { id: 'Vehicles', icon: 'car', label: 'Vehicles' },
+  { id: 'Contraptions', icon: 'blueprint', label: 'Contraptions' },
   { id: 'Tools', icon: 'wrench', label: 'Tools' },
 ];
+
+/** What an object was made with beyond its kind: a size, a drawn outline (see ItemDef.resizable). */
+export type EntityConfig = Record<string, unknown>;
+
+/** How small and large (sprite pixels) a resized or drawn object may be. */
+export const SIZE_LIMITS = { min: 2, max: 512 };
 
 export interface SpawnOptions {
   flip?: boolean;
   angle?: number;
-  /** Spawn point is the object's bottom center rather than its center. */
-  fromState?: boolean;
+  /** Its size or shape, when not the default (see Entity.config). */
+  config?: EntityConfig;
 }
 
 export interface ItemDef {
@@ -38,6 +46,14 @@ export interface ItemDef {
   halfHeight?: number;
   /** Search keywords. */
   tags?: string[];
+  /** Can be made any size: its config's w and h (sprite pixels) are its size. */
+  resizable?: boolean;
+  /** Not listed in the toybox (drawn shapes: made with the Shape tool). */
+  hidden?: boolean;
+  /** A saved contraption: spawns this group of things (see world/Contraptions). */
+  snapshot?: Snapshot;
+  /** A picture of it (a data URL), for contraptions. */
+  thumb?: string;
 }
 
 export interface ContextAction {
@@ -80,6 +96,8 @@ export interface BulletHit {
   energy: number;
   damage: number;
   exit: V2 | null;
+  /** The round itself: the same for each hit it makes (one round through two limbs is one round). */
+  round?: object;
 }
 
 export interface PartState {
@@ -97,13 +115,21 @@ export interface PartState {
   oil?: number;
   /** What wounds and scorching painted on the sprite, when anything (see Part.paintData()). */
   paint?: string;
+  /** Ignores gravity (see Part.setWeightless()). */
+  weightless?: boolean;
 }
 
 export interface EntityState {
   def: string;
   flip: boolean;
   parts: PartState[];
+  /** Its size or shape, for resized and drawn objects (see Entity.config). */
+  config?: EntityConfig;
   extra?: Record<string, unknown>;
   /** References to other entities in the same snapshot (held items, lodged blades). */
   links?: Record<string, unknown>;
+  /** Its drawing depth, once put in front of or behind things by hand (see Entity.setDepth()). */
+  z?: number;
+  /** Which entity it was (undo's own captures only, never saved: see History). */
+  uid?: number;
 }

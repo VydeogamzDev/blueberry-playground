@@ -38,6 +38,19 @@ try {
   const chest = `bp.game.entities[0].limbs.get('upperTorso').part`;
 
   await sleep(500);
+  // the main menu is up at boot, over the sandbox: it fits the phone, a tap on it reaches nothing behind, and Play goes in
+  const mm = await ev(`(() => { const m = document.querySelector('.main-menu'); const r = [...m.querySelectorAll('.mm-btn')].map((b) => b.getBoundingClientRect()); return { open: bp.ui.mainMenu.open, shown: m.classList.contains('shown'), buttons: r.length, fit: r.every((b) => b.left >= 0 && b.top >= 0 && b.right <= innerWidth && b.bottom <= innerHeight && b.height >= 36) }; })()`);
+  check('the main menu is up at boot, its buttons on the screen and big enough to tap', mm.open && mm.shown && mm.buttons >= 5 && mm.fit, JSON.stringify(mm));
+  const n0 = await ev(`bp.game.sound.muted = true; bp.controls.arm(bp.getItem('crate')); bp.game.entities.length`);
+  await tap({ x: 200, y: 830 });
+  const n1 = await ev(`(() => { const n = bp.game.entities.length; bp.controls.arm(null); return n; })()`);
+  check('a tap on the menu spawns nothing in the sandbox behind it', n1 === n0, `${n0} -> ${n1} objects`);
+  await tap(await centerOf(`document.querySelector('.main-menu .mm-play')`));
+  await sleep(400);
+  const gone = await ev(`({ open: bp.ui.mainMenu.open, hidden: document.querySelector('.main-menu').classList.contains('hidden') })`);
+  check('tapping Play closes it', !gone.open && gone.hidden, JSON.stringify(gone));
+  // (the rest is played in the sandbox, whatever happened above)
+  await ev(`bp.ui.mainMenu.close(); true`);
   await ev(`bp.kit.reset(); bp.game.sound.muted = true; true`);
   const lay = await ev(`({ touch: document.body.classList.contains('touch'), collapsed: document.querySelector('.catalog').classList.contains('collapsed'), tb: (() => { const r = document.querySelector('.toolbar').getBoundingClientRect(); return [r.left, r.right]; })(), w: innerWidth })`);
   check('a phone starts in the touch layout with the catalog folded', lay.touch && lay.collapsed, JSON.stringify(lay));
@@ -50,9 +63,14 @@ try {
   const armed = await ev(`({ armed: bp.controls.armed?.id, collapsed: document.querySelector('.catalog').classList.contains('collapsed') })`);
   check('tapping an item arms it and folds the catalog', armed.armed === 'human' && armed.collapsed, JSON.stringify(armed));
 
-  await tap(await screenOf('({ x: bp.game.renderer.camX, y: 1 })'));
+  // (a tap shows where it would go; tapping it again puts it there)
+  const spot = await screenOf('({ x: bp.game.renderer.camX, y: 1 })');
+  await tap(spot);
+  const shown = await ev(`({ waiting: bp.controls.placer.waiting, n: bp.game.entities.length })`);
+  await tap(spot);
   await sleep(1500);
-  check('tapping empty space spawns it', (await ev(`bp.game.entities.length`)) === 1);
+  const placed = await ev(`bp.game.entities.length`);
+  check('tapping empty space shows it there, and tapping it again places it', shown.waiting && shown.n === 0 && placed === 1, `${JSON.stringify(shown)}, then ${placed}`);
   const empty = await screenOf('({ x: bp.game.renderer.camX + 2.5, y: 3 })');
   await longPress(empty);
   const disarmed = await ev(`({ armed: bp.controls.armed, n: bp.game.entities.length, menu: !!document.querySelector('.ctx') })`);
@@ -86,7 +104,8 @@ try {
   await touch('touchEnd', []);
   await sleep(150);
   check('a long press on a person opens their menu, which stays open', menu === 'Human' && (await ev(`!!document.querySelector('.ctx')`)), String(menu));
-  await tap(empty);
+  // (off the menu, which takes most of a phone's height: beside it, in the sandbox)
+  await tap(await ev(`(() => { const r = document.querySelector('.ctx').getBoundingClientRect(); return { x: Math.round(r.left > 100 ? (r.left + 46) / 2 : (r.right + innerWidth) / 2), y: Math.round(innerHeight * 0.6) }; })()`));
   check('tapping elsewhere closes the menu', await ev(`!document.querySelector('.ctx')`));
 
   await sleep(300);
@@ -147,9 +166,50 @@ try {
   check('and spawns nothing', (await ev(`bp.game.entities.length`)) === 1);
 
   await ev(`bp.ui.toggleHelp(); true`);
-  const helpTop = await ev(`(() => { const t = document.querySelector('.help-touch').getBoundingClientRect().top; const k = document.querySelector('.help-panel > .keys').getBoundingClientRect().top; return t < k; })()`);
+  const helpTop = await ev(`(() => { const t = document.querySelector('.help-touch'); const others = [...t.parentElement.children].filter((e) => e !== t && e.offsetHeight); return others.length > 0 && others.every((e) => t.getBoundingClientRect().top < e.getBoundingClientRect().top); })()`);
   check('help lists the touch controls first', helpTop);
   await ev(`bp.ui.toggleHelp(); true`);
+  check('the tool bar has a Detail button (the detail view has no key on a phone)', await ev(`(() => { const b = document.querySelector('.tb-btn[title^="Detail"]'); return !!b && b.offsetWidth > 0; })()`));
+
+  // a vehicle: tapped, the drive buttons show at the screen's sides; held, it drives
+  // (from the view a sandbox starts with: the pinch and pan above left it anywhere)
+  const home = `(() => { const r = bp.game.renderer; r.zoom = r.targetZoom = r.fitZoom; const h = bp.game.home(); r.camX = h.x; r.camY = h.y; return true; })()`;
+  await ev(home);
+  await ev(`(() => { bp.kit.reset(); bp.ui.closeContextMenu(); window.__car = bp.kit.spawn('car', bp.game.renderer.camX, 1); bp.kit.advance(0.8); return true; })()`);
+  await tap(await screenOf('window.__car.body'));
+  const pad = await ev(`({ sel: bp.controls.selection.has(window.__car), shown: !document.querySelector('.drivepad').classList.contains('hidden'), aim: [...document.querySelectorAll('.pad-up, .pad-down')].every((b) => b.classList.contains('hidden')) })`);
+  check('tapping a car shows the drive buttons (and no tank aim ones)', pad.sel && pad.shown && pad.aim, JSON.stringify(pad));
+  await touch('touchStart', [await screenOf('window.__car.body')]);
+  await sleep(700);
+  await touch('touchEnd', []);
+  await sleep(150);
+  const hints = await ev(`(() => { const m = document.querySelector('.ctx'); return m ? [...m.querySelectorAll('.ctx-hint')].filter((h) => h.offsetWidth > 0).length : -1; })()`);
+  check('its menu shows no keys', hints === 0, String(hints));
+  await ev(`bp.ui.closeContextMenu(); true`);
+  const x0 = await ev(`window.__car.body.x`);
+  await touch('touchStart', [await button('▶')]);
+  await sleep(1200);
+  await touch('touchEnd', []);
+  const x1 = await ev(`window.__car.body.x`);
+  check('holding ▶ drives it', x1 > x0 + 0.3, `${x0.toFixed(2)} -> ${x1.toFixed(2)}`);
+
+  // on its side: the view keeps the floor in sight, the tool bar fits, the vitals stay above the selection's bar
+  await ev(home);
+  await send('Emulation.setDeviceMetricsOverride', { width: 844, height: 390, deviceScaleFactor: 2, mobile: true, screenOrientation: { type: 'landscapePrimary', angle: 90 } });
+  await sleep(600);
+  await ev(`(() => { bp.kit.reset(); window.__man = bp.kit.spawn('human', bp.game.renderer.camX, 0.9); bp.kit.advance(0.6); return true; })()`);
+  await tap(await screenOf(`window.__man.limbs.get('upperTorso').part`));
+  await sleep(200);
+  const side = await ev(`(() => {
+    const r = (s) => document.querySelector(s).getBoundingClientRect();
+    const tb = r('.toolbar'), bar = r('.touchbar:not(.buildbar)'), v = r('.vitals');
+    return { floor: Math.round(bp.game.renderer.worldToScreen(0, 0).y), h: innerHeight, tb: [tb.left, tb.right, innerWidth], bar: Math.round(bar.top), vitals: Math.round(v.bottom), sel: bp.controls.selection.size };
+  })()`);
+  check('turned on its side, the floor stays in sight', side.floor > side.h * 0.55 && side.floor < side.h * 0.9, JSON.stringify(side));
+  check('and the tool bar fits on the screen', side.tb[0] >= 0 && side.tb[1] <= side.tb[2], JSON.stringify(side.tb));
+  check('and the vitals stay above the selection’s bar', side.sel === 1 && side.vitals <= side.bar, JSON.stringify(side));
+  await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+  await sleep(400);
   check('no page errors', !errors.length, errors.join('\n      '));
 } catch (e) {
   console.error(`Touch test run failed: ${e.message}`);

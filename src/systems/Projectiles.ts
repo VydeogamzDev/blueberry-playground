@@ -31,8 +31,6 @@ interface Bullet {
   push: number;
   ignore: RAPIER.RigidBody | null;
   life: number;
-  tx: number;
-  ty: number;
   tracer: boolean;
   bounces: number;
 }
@@ -172,11 +170,13 @@ export class Projectiles {
   }
 
   fire(x: number, y: number, dx: number, dy: number, speed: number, o: BulletOpts): void {
+    // (a gun's: shrapnel flies without tracers; a guest's are the host's, counted there)
+    if (o.tracer !== false && !this.game.net?.guest) this.game.stats.add('bullets');
     const l = Math.hypot(dx, dy) || 1;
     this.bullets.push({
       x, y, vx: (dx / l) * speed, vy: (dy / l) * speed,
       energy: o.energy, energy0: o.energy, damage: o.damage, push: o.push ?? 0.012,
-      ignore: o.ignore ?? null, life: o.life ?? 1.2, tx: x, ty: y, tracer: o.tracer ?? true, bounces: 0,
+      ignore: o.ignore ?? null, life: o.life ?? 1.2, tracer: o.tracer ?? true, bounces: 0,
     });
   }
 
@@ -184,9 +184,7 @@ export class Projectiles {
     const world = this.game.physics.world;
     for (let i = this.bullets.length - 1; i >= 0; i--) {
       const b = this.bullets[i];
-      b.tx = b.x;
-      b.ty = b.y;
-      b.vy += -9.81 * dt * 0.15;
+      b.vy += this.game.gravity * dt * 0.15;
       const speed = Math.hypot(b.vx, b.vy);
       let dx = b.vx / speed;
       let dy = b.vy / speed;
@@ -208,6 +206,13 @@ export class Projectiles {
         const toi = hit.timeOfImpact;
         const hx = ox + dx * toi;
         const hy = oy + dy * toi;
+        // a guest's bullets are only tracers: what they hit, and how, is the host's (see net/Effects)
+        if (this.game.net?.guest) {
+          alive = false;
+          ox = hx;
+          oy = hy;
+          break;
+        }
         const part = this.game.physics.partOf(hit.collider);
         const nx = hit.normal.x;
         const ny = hit.normal.y;
@@ -275,9 +280,15 @@ export class Projectiles {
           energy: b.energy,
           damage: b.damage * frac * (penetrates ? 1 : 0.85),
           exit: penetrates ? { x: ex, y: ey } : null,
+          round: b,
         });
-        this.impulse(part, hx, hy, dx, dy, absorbed * b.push);
-        this.materialFx(part, hx, hy, nx, ny, dx, dy, penetrates ? ex : null, ey);
+        // (shot to pieces by it, the part is gone, its body freed: asking Rapier about
+        // the body would bring it down; a round that went through flies on)
+        const gone = part.destroyed;
+        if (!gone) {
+          this.impulse(part, hx, hy, dx, dy, absorbed * b.push);
+          this.materialFx(part, hx, hy, nx, ny, dx, dy, penetrates ? ex : null, ey);
+        }
         if (!penetrates) {
           alive = false;
           ox = hx;
@@ -292,7 +303,7 @@ export class Projectiles {
         remaining = Math.max(0, (remaining - toi - thickness) * k);
         ox = ex + dx * 0.003;
         oy = ey + dy * 0.003;
-        b.ignore = part.body;
+        b.ignore = gone ? null : part.body;
       }
       b.x = ox;
       b.y = oy;
@@ -304,7 +315,7 @@ export class Projectiles {
   }
 
   private impulse(part: Part, x: number, y: number, dx: number, dy: number, mag: number): void {
-    if (part.frozen) return;
+    if (part.frozen || part.destroyed) return;
     part.body.applyImpulseAtPoint({ x: dx * mag, y: dy * mag }, { x, y }, true);
   }
 

@@ -6,7 +6,10 @@
   --dim: #7d848c;
   --accent: #e2bd57;
   --danger: #d0584a;
-  --font: 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+  /* pixel-style but easy to read small (DotGothic16); titles in a chunkier pixel face (Tiny5) */
+  --font: 'DotGothic16', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
+  --font-title: 'Tiny5', 'DotGothic16', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'DotGothic16', Consolas, monospace;
 }
 
 * {
@@ -46,6 +49,23 @@ body {
 button {
   font: inherit;
   color: inherit;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+/* titles and headings in the chunkier pixel face */
+.panel-title,
+.panel-sub,
+.cat-title,
+.ctx-title,
+.tut-title,
+.set-preset,
+.mm-name {
+  font-family: var(--font-title);
 }
 
 canvas.cat-icon,
@@ -161,14 +181,6 @@ canvas.cat-icon,
   align-content: start;
 }
 
-.items::-webkit-scrollbar {
-  width: 6px;
-}
-
-.items::-webkit-scrollbar-thumb {
-  background: #3a3e44;
-}
-
 .item {
   background: #1d1f23;
   border: 1px solid #2b2f34;
@@ -201,6 +213,36 @@ canvas.cat-icon,
   border-radius: 2px;
   /* a lit backdrop so dark sprites (guns, tires) keep their silhouette */
   background: radial-gradient(ellipse at 50% 45%, #41464d 0%, #30343a 55%, #25282c 100%);
+}
+
+.item-thumb {
+  max-width: 62px;
+  max-height: 54px;
+  image-rendering: pixelated;
+}
+
+.items-note {
+  grid-column: 1 / -1;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #aeb4ba;
+  padding: 6px 4px;
+}
+
+.items-btn {
+  grid-column: 1 / -1;
+  background: #2e3237;
+  border: 1px solid #454a51;
+  border-radius: 3px;
+  color: inherit;
+  font: inherit;
+  font-size: 11.5px;
+  padding: 5px;
+  cursor: pointer;
+}
+
+.items-btn:hover {
+  background: #3a3f45;
 }
 
 .item-name {
@@ -282,6 +324,267 @@ canvas.cat-icon,
   margin: 0 4px;
 }
 
+/* ---------------- tool bar: tools and powers (right) ---------------- */
+.tools {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px;
+}
+
+.tools.hidden,
+.catalog.hidden,
+.tool-list.hidden {
+  display: none;
+}
+
+.tool-tab {
+  border: 0;
+  background: #212428;
+  color: var(--accent);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.tool-tab:hover {
+  background: #2e3237;
+}
+
+.tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tool-btn {
+  position: relative;
+  width: 54px;
+  height: 38px;
+  border: 0;
+  background: transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.tool-btn:hover {
+  background: #2e3237;
+}
+
+.tool-btn.active {
+  background: #3a3423;
+  box-shadow: inset 0 0 0 1px rgba(226, 189, 87, 0.6);
+}
+
+.tool-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: #b6bcc3;
+  color: #b6bcc3;
+}
+
+.tool-btn.active svg {
+  fill: var(--accent);
+  color: var(--accent);
+}
+
+.tool-btn canvas {
+  image-rendering: pixelated;
+}
+
+.tool-key {
+  position: absolute;
+  left: 4px;
+  top: 2px;
+  font-size: 9px;
+  color: var(--dim);
+  font-family: var(--mono);
+}
+
+/* ---------------- detail view, hidden interface ---------------- */
+.shape-mats {
+  display: grid;
+  grid-template-columns: repeat(2, 26px);
+  gap: 2px;
+  justify-content: center;
+  padding: 4px 0 2px;
+  border-top: 1px solid #33373d;
+  margin-top: 2px;
+}
+
+.shape-mats.hidden {
+  display: none;
+}
+
+/* the kinds of the tool slot in hand (Rope, Fuse cord), or the springs' stiffnesses */
+.tool-vars {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 3px;
+  border-top: 1px solid #33373d;
+  margin-top: 2px;
+}
+
+.tool-vars.hidden,
+.tool-vars .hidden,
+.tb-btn.hidden,
+.touch-btn.hidden {
+  display: none;
+}
+
+.tool-btn.tool-var {
+  height: 22px;
+  font-size: 10px;
+  line-height: 1.1;
+  color: #b6bcc3;
+  text-align: center;
+}
+
+.tool-btn.tool-var.active {
+  color: var(--accent);
+}
+
+.edit-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 2px;
+}
+
+.mat-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.mat-btn canvas {
+  image-rendering: pixelated;
+}
+
+.mat-btn:hover {
+  background: #2e3237;
+}
+
+.mat-btn.active {
+  box-shadow: inset 0 0 0 1px rgba(226, 189, 87, 0.8);
+  background: #3a3423;
+}
+
+.dialog-panel {
+  min-width: 300px;
+}
+
+.dialog-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 8px 0 0;
+}
+
+/* an object's numbers (Edit gun…): label, slider, box to type in */
+.edit-panel {
+  min-width: 400px;
+}
+
+.edit-row {
+  display: grid;
+  grid-template-columns: 1fr 130px 64px;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid #2a2d31;
+}
+
+.edit-range,
+.set-row input[type='range'] {
+  accent-color: var(--accent);
+}
+
+/* checkboxes in the interface's pixel style (the browser's own is a white box with a blue tick):
+   a dark square; on, its border and a square inside it in the accent */
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 2px solid #4a5058;
+  border-radius: 0;
+  background: #121315;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+input[type='checkbox']:hover {
+  border-color: #6b727b;
+}
+
+input[type='checkbox']:checked {
+  border-color: var(--accent);
+  background: linear-gradient(var(--accent), var(--accent)) center / 6px 6px no-repeat, #121315;
+}
+
+input[type='checkbox']:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+input[type='checkbox']:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.edit-range {
+  width: 100%;
+  margin: 0;
+}
+
+.edit-num {
+  width: 64px;
+  font: 11px var(--mono);
+  color: #e8e1cc;
+  background: #121315;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 2px 4px;
+}
+
+.edit-num:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.detail-view {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none !important;
+}
+
+#ui.ui-hidden > :not(.toast):not(.detail-view):not(.overlay):not(.ctx) {
+  display: none !important;
+}
+
 /* ---------------- context menu ---------------- */
 .ctx {
   position: absolute;
@@ -292,6 +595,11 @@ canvas.cat-icon,
   padding: 3px 0;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
   z-index: 50;
+  /* a person's menu is taller than a phone: it scrolls rather than run off the screen */
+  max-height: calc(100% - 8px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .ctx-title {
@@ -368,7 +676,7 @@ canvas.cat-icon,
 
 .key {
   color: #e8e1cc;
-  font-family: Consolas, monospace;
+  font-family: var(--mono);
   white-space: nowrap;
 }
 
@@ -405,6 +713,378 @@ canvas.cat-icon,
   gap: 8px;
 }
 
+.set-iters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.set-iters-slider {
+  width: 110px;
+}
+
+.set-iters-num {
+  width: 46px;
+  font: 11px var(--mono);
+  background: #1c1e21;
+  color: var(--text);
+  border: 1px solid #3a3f45;
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.set-iters .set-note {
+  color: var(--dim);
+  font-size: 11px;
+  min-width: 130px;
+}
+
+/* Settings > World's lightning chance: the slider and its % */
+.set-lightning {
+  width: 110px;
+}
+
+.set-iters .set-lightning + .set-note {
+  min-width: 34px;
+}
+
+/* ---------------- controls (key bindings), pause menu ---------------- */
+.panel-note {
+  color: var(--dim);
+  margin: -4px 0 6px;
+}
+
+/* the Controls panel: a search box above, Close and Reset below, only the list between them scrolls */
+.help-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(680px, 94vw);
+  padding: 0;
+  overflow: hidden;
+}
+
+.help-head {
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.help-search {
+  width: 100%;
+  margin-top: 4px;
+  font: inherit;
+  color: var(--text);
+  background: #121315 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Ccircle cx='5' cy='5' r='3.5' fill='none' stroke='%237d848c' stroke-width='1.5'/%3E%3Cpath d='M7.6 7.6 11 11' stroke='%237d848c' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat 8px 50%;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 5px 8px 5px 26px;
+  outline: none;
+}
+
+.help-search:focus {
+  border-color: var(--accent);
+}
+
+.help-search::placeholder {
+  color: var(--dim);
+}
+
+.help-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 18px 12px;
+}
+
+.help-foot {
+  padding: 10px 18px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.help-foot .panel-close,
+.help-foot .panel-btn {
+  margin-top: 0;
+}
+
+/* Settings: sections that scroll between the title and the buttons, like the Controls panel */
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(580px, 94vw);
+  padding: 0;
+  overflow: hidden;
+}
+
+.help-foot {
+  flex-wrap: wrap;
+}
+
+.set-presets {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.set-preset {
+  font: inherit;
+  color: var(--text);
+  background: #121315;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.set-preset:hover {
+  border-color: #6a7079;
+}
+
+.set-preset.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(226, 189, 87, 0.08);
+}
+
+.set-custom {
+  margin-left: 4px;
+  color: var(--accent);
+}
+
+.set-custom[hidden] {
+  display: none;
+}
+
+.set-row[hidden] {
+  display: none;
+}
+
+/* Settings > Saves and sync: a folder or a state with its buttons, on the right */
+.set-sync {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
+}
+
+.set-sync .set-note,
+.set-row > .set-note {
+  color: var(--dim);
+  text-align: right;
+}
+
+.set-sync .set-note.set-error {
+  color: var(--danger);
+}
+
+.set-sync-name {
+  max-width: 240px;
+  margin-right: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* each section's name stays in view while its list goes by */
+.set-sec .panel-sub,
+.help-sec .panel-sub {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 0 4px;
+  padding: 12px 0 6px;
+  background: #212428;
+  border-bottom: 1px solid #2a2d31;
+}
+
+.help-panel .keys {
+  grid-template-columns: minmax(150px, max-content) 1fr;
+  gap: 0 16px;
+}
+
+.help-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  padding: 3px 6px;
+  margin: 0 -6px;
+  border-radius: 3px;
+}
+
+.help-row:hover {
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.help-panel .tips {
+  margin-top: 0;
+  gap: 2px;
+}
+
+.tip.help-row {
+  display: block;
+}
+
+.help-panel [hidden] {
+  display: none;
+}
+
+.help-none {
+  color: var(--dim);
+  padding: 28px 0;
+  text-align: center;
+}
+
+@media (max-width: 520px) {
+  .help-panel .keys {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* a command's + and × show on the row the pointer is over (on touch screens, always) */
+.help-row .bind-x {
+  visibility: hidden;
+}
+
+.help-row:hover .bind-x,
+.help-row .bind-x:focus-visible,
+.touch .help-row .bind-x {
+  visibility: visible;
+}
+
+/* slim scroll bars in the game's colours, in every panel and list (no arrow buttons) */
+#ui ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+#ui ::-webkit-scrollbar-track,
+#ui ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+#ui ::-webkit-scrollbar-thumb {
+  background: #3d4248 padding-box;
+  border: 2px solid transparent;
+  border-radius: 4px;
+}
+
+#ui ::-webkit-scrollbar-thumb:hover {
+  background-color: #565c64;
+}
+
+#ui ::-webkit-scrollbar-button {
+  display: none;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  #ui,
+  #ui * {
+    scrollbar-width: thin;
+    scrollbar-color: #454a51 transparent;
+  }
+}
+
+.bind-cell {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.bind {
+  font: 11px var(--mono);
+  color: #e8e1cc;
+  background: #121315;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 1px 7px;
+  min-width: 34px;
+  cursor: pointer;
+}
+
+.bind:hover {
+  border-color: #6a7079;
+}
+
+.bind.none {
+  color: var(--dim);
+}
+
+.bind.clash {
+  border-color: #8a5a2a;
+}
+
+.bind.wait {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.bind-x {
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 0 3px;
+}
+
+.bind-x:hover {
+  color: var(--danger);
+}
+
+.pause-panel {
+  min-width: 220px;
+}
+
+.menu-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.menu-btns .panel-btn {
+  margin-top: 0;
+}
+
+/* the pause menu's line of this game's counts, and the Statistics panel */
+.stats-strip {
+  max-width: 260px;
+  margin: -4px 0 8px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.stats-panel {
+  width: min(380px, calc(100vw - 24px));
+}
+
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 4px;
+}
+
+.stats-table th {
+  color: var(--dim);
+  font-weight: normal;
+  font-size: 11px;
+  text-align: right;
+  padding: 0 0 4px 12px;
+}
+
+.stats-table td {
+  padding: 3px 0;
+  border-top: 1px solid #2e3237;
+}
+
+.stats-table .stats-num {
+  text-align: right;
+  padding-left: 12px;
+  font-family: var(--mono);
+  color: #e8e1cc;
+  white-space: nowrap;
+}
+
 /* ---------------- status / hints ---------------- */
 .status {
   position: absolute;
@@ -413,7 +1093,7 @@ canvas.cat-icon,
   font-size: 11px;
   color: #80878f;
   pointer-events: none !important;
-  font-family: Consolas, monospace;
+  font-family: var(--mono);
 }
 
 .hint {
@@ -486,6 +1166,317 @@ canvas.cat-icon,
   color: var(--dim);
 }
 
+/* ---------------- vitals ---------------- */
+.vitals {
+  position: absolute;
+  top: 8px;
+  left: 54px;
+  width: 250px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 8px 7px;
+  font-size: 11px;
+}
+
+.vitals.hidden,
+.vitals-fx.hidden,
+.vitals-pin.hidden {
+  display: none;
+}
+
+.vitals-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.vitals-name {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.vitals-state {
+  flex: 1;
+  color: #9aa1a8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vitals-state.dead {
+  color: #e48a7f;
+}
+
+.vitals-pin {
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.vitals-x {
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.vitals-x:hover {
+  color: var(--text);
+}
+
+.vitals-ecg {
+  display: block;
+  width: 100%;
+  height: 34px;
+  background: #0b130e;
+  border: 1px solid #1d2b22;
+  border-radius: 2px;
+}
+
+.vitals-body {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.vitals-doll {
+  flex: none;
+  align-self: center;
+  image-rendering: pixelated;
+}
+
+.vitals-rows {
+  flex: 1;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  align-content: start;
+}
+
+.vitals-rows .vk {
+  color: var(--dim);
+}
+
+.vitals-rows .vv {
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.vitals-rows .vv b {
+  color: #e8e1cc;
+  font-weight: normal;
+  font-family: var(--mono);
+}
+
+.vitals-rows .vu {
+  color: #80878f;
+  margin-left: 3px;
+}
+
+.vbar {
+  display: block;
+  height: 2px;
+  margin-top: 1px;
+  background: #2a2d31;
+  border-radius: 1px;
+}
+
+.vbar i {
+  display: block;
+  height: 100%;
+  border-radius: 1px;
+}
+
+.vitals-fx {
+  margin-top: 5px;
+  color: #b9a0e0;
+}
+
+.vitals-limbs {
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px solid #2a2d31;
+  display: grid;
+  gap: 1px;
+}
+
+.vlimb {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vlimb.ok {
+  color: #7fae7a;
+}
+
+.vlimb .lv1 {
+  color: #d6b250;
+}
+
+.vlimb .lv2 {
+  color: #e0705e;
+}
+
+.vlimb .lv3 {
+  color: #ec8a3e;
+}
+
+.vlimb .lv4,
+.vlimb .lv5 {
+  color: #c85a5a;
+}
+
+@media (max-width: 1180px) {
+  /* below the tool bar, which reaches over to it beside an open toybox (and the map banner under that) */
+  .vitals {
+    top: 84px;
+  }
+}
+
+@media (max-width: 700px) {
+  /* below the tool bar, which wraps (to as many rows as it needs: see UI's --tb-bottom) */
+  .vitals {
+    top: calc(var(--tb-bottom, 74px) + 6px);
+    width: 220px;
+  }
+}
+
+/* ---------------- maps ---------------- */
+.maps-panel {
+  width: min(720px, calc(100vw - 24px));
+}
+
+.map-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(164px, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.map-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: #1c1e21;
+  border: 1px solid #3a3f45;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.map-card:hover {
+  background: #2e3237;
+}
+
+.map-card.active {
+  border-color: var(--accent);
+  background: #3a3423;
+}
+
+.map-card canvas {
+  width: 100%;
+  border-radius: 2px;
+}
+
+.map-name {
+  color: #e8e1cc;
+}
+
+.map-size {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.map-btns {
+  flex-wrap: wrap;
+}
+
+.map-btns .panel-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* the Battle panel: each side's colour, how many and what they're armed with */
+.army-panel {
+  width: min(460px, calc(100vw - 24px));
+  min-width: 0;
+}
+
+.army-side-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.army-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid #0008;
+}
+
+.army-btns {
+  margin-top: 12px;
+}
+
+.army-btns .panel-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.map-field {
+  margin: 0;
+  width: 170px;
+}
+
+/* the Terrain tool is on: what's edited, the ground's material, Done */
+.map-banner {
+  position: absolute;
+  top: 46px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 10px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  white-space: nowrap;
+  /* (on a phone a long name gives way, so Done stays on the screen) */
+  max-width: calc(100vw - 16px);
+}
+
+.map-banner.hidden {
+  display: none;
+}
+
+.map-banner-name {
+  color: var(--accent);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-banner .panel-btn {
+  margin-top: 0;
+  padding: 3px 12px;
+}
+
+@media (max-width: 700px) {
+  /* clear of the wrapped toolbar: above the hints at the bottom */
+  .map-banner {
+    top: auto;
+    bottom: 120px;
+  }
+}
+
 /* ---------------- touch ---------------- */
 /* the sandbox takes every gesture: no browser scrolling, zooming or callouts */
 #view {
@@ -495,6 +1486,11 @@ canvas.cat-icon,
 body {
   overscroll-behavior: none;
   -webkit-touch-callout: none;
+}
+
+/* nor zooming the page at a double tap or a pinch on the panels (they still scroll) */
+html {
+  touch-action: pan-x pan-y;
 }
 
 .items {
@@ -517,6 +1513,11 @@ body {
 
 .touchbar.hidden {
   display: none;
+}
+
+/* building on a touch screen: above the selection's bar */
+.touchbar.buildbar {
+  bottom: 84px;
 }
 
 .touch-btn {
@@ -542,13 +1543,142 @@ body {
 }
 
 .touch .ctx-item {
-  padding: 10px 14px;
-  font-size: 13px;
+  padding: 11px 16px;
+  font-size: 14px;
+}
+
+.touch .ctx-title {
+  padding: 6px 16px 7px;
+  font-size: 12px;
+}
+
+/* (keys, on a screen without them) */
+.touch .ctx-hint,
+.touch .mm-keys,
+body:not(.touch) .touch-only {
+  display: none;
 }
 
 .touch .tb-btn {
-  width: 36px;
-  height: 34px;
+  width: 40px;
+  height: 38px;
+}
+
+.touch .tb-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.touch .tb-select {
+  height: 32px;
+  font-size: 13px;
+}
+
+/* bigger for a finger: the panels' words, buttons, rows and switches */
+.touch .panel {
+  font-size: 13px;
+}
+
+.touch .panel-close,
+.touch .panel-btn {
+  min-height: 40px;
+  padding: 8px 16px;
+}
+
+.touch .menu-btns .panel-btn {
+  min-height: 44px;
+  font-size: 14px;
+}
+
+.touch .set-row {
+  min-height: 46px;
+  padding: 6px 0;
+}
+
+.touch .panel select,
+.touch .panel input[type='text'],
+.touch .panel input[type='number'] {
+  min-height: 34px;
+  font-size: 13px;
+}
+
+.touch .set-preset {
+  min-height: 34px;
+}
+
+.touch input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+}
+
+.touch input[type='checkbox']:checked {
+  background-size: 10px 10px;
+}
+
+.touch .set-row input[type='range'],
+.touch .edit-range {
+  height: 30px;
+}
+
+.touch .tut-text {
+  font-size: 14px;
+}
+
+.touch .tut-btn {
+  min-height: 40px;
+  padding: 8px 16px;
+}
+
+.touch .tut-x {
+  font-size: 24px;
+  padding: 4px 8px;
+}
+
+.touch .vitals {
+  font-size: 12px;
+}
+
+.touch .vitals-x {
+  padding: 6px 8px;
+  font-size: 18px;
+}
+
+/* the drive buttons: at the screen's sides, above the selection's bar, for thumbs */
+.drivepad.hidden,
+.pad-btn.hidden {
+  display: none;
+}
+
+.pad-btn {
+  position: absolute;
+  width: 64px;
+  height: 56px;
+  font-size: 22px;
+  background: rgba(36, 39, 43, 0.92);
+  z-index: 5;
+}
+
+.pad-l {
+  left: calc(56px + env(safe-area-inset-left));
+  bottom: calc(30px + env(safe-area-inset-bottom));
+}
+
+.pad-r,
+.pad-up,
+.pad-down {
+  right: calc(72px + env(safe-area-inset-right));
+}
+
+.pad-r {
+  bottom: calc(30px + env(safe-area-inset-bottom));
+}
+
+.pad-down {
+  bottom: calc(94px + env(safe-area-inset-bottom));
+}
+
+.pad-up {
+  bottom: calc(158px + env(safe-area-inset-bottom));
 }
 
 .touch .cat-btn {
@@ -582,6 +1712,11 @@ body {
     width: calc(100vw - 24px);
   }
 
+  .edit-row {
+    grid-template-columns: 1fr 90px 56px;
+    gap: 6px;
+  }
+
   .status {
     display: none;
   }
@@ -598,34 +1733,1549 @@ body {
     padding: 0 8px;
     font-size: 12px;
   }
+
+  .pad-btn {
+    font-size: 22px;
+  }
+
+  .pad-l {
+    left: calc(8px + env(safe-area-inset-left));
+    bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+
+  .pad-r,
+  .pad-up,
+  .pad-down {
+    right: calc(8px + env(safe-area-inset-right));
+  }
+
+  .pad-r {
+    bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+
+  .pad-down {
+    bottom: calc(148px + env(safe-area-inset-bottom));
+  }
+
+  .pad-up {
+    bottom: calc(212px + env(safe-area-inset-bottom));
+  }
 }
 
 /* on touch screens the touch controls come first in the help */
-.touch .help-panel {
+.touch .help-body {
   display: flex;
   flex-direction: column;
 }
 
-.touch .help-panel .panel-title {
-  order: -2;
-}
-
 .touch .help-touch {
   order: -1;
-  margin-bottom: 8px;
-}
-
-.touch .help-touch .panel-sub {
-  margin-top: 0;
-}
-
-.touch .help-panel .panel-close {
-  align-self: flex-start;
 }
 
 @media (max-width: 700px) {
   /* the open catalog needs the top of the screen */
-  .catalog:not(.collapsed) ~ .toolbar {
+  .catalog:not(.collapsed) ~ .toolbar,
+  .catalog:not(.collapsed) ~ .tools {
     display: none;
+  }
+
+  .tools {
+    right: 4px;
+  }
+
+  .tool-btn {
+    width: 44px;
+    height: 36px;
+  }
+
+  /* folded to the tool in use until tapped */
+  .tools:not(.open) .tool-btn:not(.active),
+  .tools:not(.open) .tool-tab {
+    display: none;
+  }
+}
+
+/* ---------------- multiplayer ---------------- */
+.net-panel {
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+}
+
+.net-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.net-inline .panel-btn {
+  margin-top: 0;
+}
+
+.net-input {
+  width: 150px;
+}
+
+.net-code {
+  width: 80px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-family: var(--mono);
+}
+
+.net-small {
+  margin-top: 8px;
+}
+
+.net-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0 8px;
+  border-bottom: 1px solid #2a2d31;
+}
+
+.net-room {
+  color: var(--accent);
+  font: 600 22px/1 var(--mono);
+  letter-spacing: 0.14em;
+  user-select: all;
+}
+
+.net-head .panel-btn {
+  margin: 0 0 0 auto;
+}
+
+.net-players {
+  padding: 6px 0;
+}
+
+.net-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.net-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.net-error {
+  margin-top: 10px;
+  color: var(--danger);
+}
+
+.net-cursors {
+  position: absolute;
+  inset: 0;
+  /* (over the whole screen: not even #ui > *'s auto may let it take the clicks) */
+  pointer-events: none !important;
+  overflow: hidden;
+  z-index: 15;
+}
+
+.net-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+}
+
+.net-cursor svg {
+  display: block;
+  width: 12px;
+  height: 16px;
+  fill: currentColor;
+  stroke: #111;
+  stroke-width: 1;
+}
+
+.net-cursor span {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(17, 18, 20, 0.8);
+  color: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ---------------- friends ---------------- */
+.fr-panel .net-head {
+  flex-wrap: wrap;
+}
+
+/* (a friend code is longer than a room code: ABC-DEF) */
+.fr-panel .net-code {
+  width: 100px;
+}
+
+.fr-list {
+  margin-top: 6px;
+  border-top: 1px solid #2a2d31;
+}
+
+.fr-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid #2a2d31;
+}
+
+.fr-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #4a4f56;
+}
+
+.fr-online {
+  background: #8fdb7a;
+}
+
+.fr-hosting {
+  background: var(--accent);
+}
+
+.fr-ask {
+  background: transparent;
+  border: 1px solid var(--dim);
+}
+
+/* (narrow: the buttons go under the name) */
+.fr-who {
+  flex: 1 1 150px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.fr-name {
+  color: #e8e1cc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fr-status {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.fr-acts {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.fr-acts .panel-btn {
+  margin-top: 0;
+  padding: 4px 10px;
+}
+
+.touch .fr-acts .panel-btn {
+  min-height: 34px;
+}
+
+.fr-empty {
+  margin: 8px 0 0;
+}
+
+/* a friend's invitation: under the status toast, over the panels and the main menu */
+.fr-invite {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 70;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px 12px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 8px 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.fr-invite.hidden {
+  display: none;
+}
+
+.fr-invite .fr-acts {
+  margin-left: 0;
+}
+
+/* ---------------- main menu ---------------- */
+/* the title screen, as People Playground's: a dark screen hiding the sandbox
+   (it runs on behind), the menu's words down the left and the name on the
+   right, over the toys tumbling through the dark on a small canvas scaled up
+   (see MenuBackdrop). Above the interface, under the panels it opens (an
+   .overlay, it stays up when the interface is hidden). No blur anywhere: that
+   would slow drawing the whole screen on weak graphics. */
+.main-menu {
+  z-index: 55;
+  display: block;
+  overflow: hidden;
+  background: radial-gradient(ellipse 85% 75% at 62% 45%, #2e3036, #232529) #2a2c31;
+  opacity: 0;
+  pointer-events: none !important;
+  transition: opacity 0.35s;
+}
+
+.main-menu.shown {
+  opacity: 1;
+  pointer-events: auto !important;
+}
+
+.mm-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  pointer-events: none;
+}
+
+/* the words on the left, the name on the right; under them, a line in each corner */
+.mm-inner {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: 1fr auto;
+  gap: 16px 48px;
+  padding: calc(28px + env(safe-area-inset-top)) max(24px, 7vw) calc(16px + env(safe-area-inset-bottom)) calc(max(24px, 7vw) + env(safe-area-inset-left));
+  overflow-x: hidden;
+  overflow-y: auto;
+  touch-action: pan-y;
+}
+
+.mm-side {
+  grid-area: 1 / 1;
+  align-self: center;
+  transition: transform 0.35s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.mm-title {
+  grid-area: 1 / 2;
+  align-self: center;
+  justify-self: end;
+  text-align: right;
+  transition: transform 0.35s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* in from the sides as the menu comes up, apart again as it fades into the sandbox */
+.main-menu:not(.shown) .mm-side {
+  transform: translateX(-24px);
+}
+
+.main-menu:not(.shown) .mm-title {
+  transform: translateX(24px);
+}
+
+.mm-name {
+  color: #e9e7e2;
+  font-size: clamp(34px, 6vw, 104px);
+  font-weight: 400;
+  line-height: 1.02;
+  letter-spacing: 0.02em;
+  text-wrap: balance;
+}
+
+.mm-name-a {
+  color: #93a9ec;
+}
+
+.mm-tag {
+  margin-top: 0.9em;
+  color: #6f757d;
+  font-size: 12px;
+  letter-spacing: 0.32em;
+}
+
+/* the pages of words, all in one place and only the one shown in sight: a
+   submenu slides in from the right as the list it came from slides off left */
+.mm-pages {
+  display: grid;
+}
+
+.mm-page {
+  grid-area: 1 / 1;
+  /* (a short page in the middle of the space the longest takes) */
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(28px);
+  transition: opacity 0.2s, transform 0.28s cubic-bezier(0.2, 0.7, 0.2, 1), visibility 0s 0.28s;
+}
+
+.mm-page.past {
+  transform: translateX(-28px);
+}
+
+.mm-page.on {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+  transition: opacity 0.2s 0.05s, transform 0.28s cubic-bezier(0.2, 0.7, 0.2, 1), visibility 0s;
+}
+
+.mm-head {
+  margin: 0 0 10px 8px;
+  color: #6f757d;
+  font-size: 12px;
+  letter-spacing: 0.32em;
+  text-transform: lowercase;
+}
+
+/* a word, lowercase as People Playground's; picked out (by the cursor or the
+   keys), it steps right, behind a mark */
+.mm-btn {
+  position: relative;
+  min-height: 38px;
+  padding: 4px 8px;
+  background: none;
+  border: 0;
+  color: #a9adb4;
+  font-size: 19px;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  text-align: left;
+  text-transform: lowercase;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.18s cubic-bezier(0.2, 0.7, 0.2, 1), color 0.15s;
+}
+
+.mm-btn:focus {
+  outline: none;
+}
+
+.mm-btn::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  background: var(--accent);
+  transform: scale(0);
+  transition: transform 0.15s;
+}
+
+.mm-btn.sel {
+  color: #f1efe9;
+  transform: translateX(12px);
+}
+
+.mm-btn.sel::before {
+  transform: none;
+}
+
+.mm-btn:active {
+  color: var(--accent);
+}
+
+/* a submenu's word */
+.mm-btn.mm-sub::after {
+  content: '›';
+  margin-left: 8px;
+  color: #6f757d;
+}
+
+/* the first of a group (Quit stands apart, as in People Playground) */
+.mm-btn.mm-gap {
+  margin-top: 14px;
+}
+
+/* a guided tour: how long it takes and a tick once done beside its title, a line about it under */
+.mm-min {
+  margin-left: 10px;
+  color: #6f757d;
+  font-size: 12px;
+}
+
+.mm-done {
+  margin-left: 8px;
+  color: #8fc17a;
+  font-size: 14px;
+}
+
+.mm-blurb {
+  display: block;
+  max-width: min(320px, 70vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #747a82;
+  font-size: 12px;
+  text-transform: none;
+}
+
+/* the tour to start with, while none has been taken */
+.mm-btn.mm-fresh {
+  color: var(--accent);
+}
+
+/* the picked-out word's line (two lines kept for it: the list doesn't shift as it changes) */
+.mm-hint {
+  height: 2.8em;
+  max-width: 290px;
+  margin: 12px 0 0 8px;
+  overflow: hidden;
+  color: #747a82;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.mm-foot,
+.mm-ver {
+  align-self: end;
+  color: #5c6168;
+  font-size: 11px;
+}
+
+.mm-foot {
+  grid-area: 2 / 1;
+}
+
+.mm-ver {
+  grid-area: 2 / 2;
+  justify-self: end;
+  text-align: right;
+}
+
+/* (no Esc key on a phone) */
+.touch .mm-foot {
+  display: none;
+}
+
+/* bigger words for a finger */
+.touch .mm-btn {
+  min-height: 44px;
+  font-size: 20px;
+}
+
+.mm-credits,
+.mm-howto {
+  width: 460px;
+  max-width: calc(100vw - 24px);
+}
+
+.mm-credits p,
+.mm-howto p {
+  margin: 0 0 8px;
+  color: #aeb4ba;
+}
+
+.mm-howto .keys {
+  margin-bottom: 12px;
+}
+
+.mm-credit-src {
+  margin-top: 8px;
+  color: #e8e1cc;
+  font-size: 11px;
+}
+
+.mm-credit-names {
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* a phone upright: the name at the top, the words under it */
+@media (max-width: 640px) {
+  .mm-inner {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr auto auto;
+    row-gap: 12px;
+  }
+
+  .mm-title {
+    grid-area: 1 / 1;
+    justify-self: start;
+    text-align: left;
+  }
+
+  .main-menu:not(.shown) .mm-title {
+    transform: translateX(-24px);
+  }
+
+  .mm-name {
+    font-size: clamp(34px, 11vw, 64px);
+  }
+
+  .mm-tag {
+    margin-top: 0.6em;
+  }
+
+  .mm-side {
+    grid-area: 2 / 1;
+  }
+
+  .mm-foot {
+    grid-area: 3 / 1;
+  }
+
+  .mm-ver {
+    grid-area: 4 / 1;
+    justify-self: start;
+    text-align: left;
+  }
+}
+
+/* a phone on its side */
+@media (max-height: 520px) {
+  .mm-inner {
+    gap: 6px 32px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .mm-btn,
+  .touch .mm-btn {
+    min-height: 36px;
+    font-size: 17px;
+  }
+
+  .mm-btn.mm-gap {
+    margin-top: 8px;
+  }
+
+  .mm-hint {
+    display: none;
+  }
+
+  .mm-name {
+    font-size: clamp(28px, 6vw, 60px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .main-menu,
+  .mm-side,
+  .mm-title,
+  .mm-page,
+  .mm-page.on,
+  .mm-btn,
+  .mm-btn::before {
+    transition: none;
+  }
+}
+
+/* ---- tutorial ------------------------------------------------------------------- */
+
+.tut-card {
+  position: absolute;
+  top: 62px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(400px, calc(100vw - 24px));
+  background: var(--panel-2);
+  border: 1px solid #454a51;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 10px 12px 10px;
+  z-index: 40;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.2s;
+}
+
+.tut-card.hidden {
+  display: none;
+}
+
+.tut-card.cheer {
+  border-left-color: #7cc36a;
+}
+
+.tut-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tut-count {
+  color: var(--dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tut-title {
+  flex: 1;
+  font-size: 14px;
+  color: var(--accent);
+}
+
+.tut-card.cheer .tut-title {
+  color: #7cc36a;
+}
+
+.tut-x {
+  background: none;
+  border: 0;
+  color: var(--dim);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.tut-x:hover {
+  color: var(--text);
+}
+
+.tut-text {
+  margin: 6px 0 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.tut-text b {
+  color: #e6e9ec;
+}
+
+.tut-text kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  border: 1px solid #5a6068;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: #2b2f34;
+  color: #e6e9ec;
+  font: 11px/16px var(--mono);
+  text-align: center;
+}
+
+.tut-bar {
+  height: 3px;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.tut-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+
+.tut-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tut-btn {
+  background: #2b2f34;
+  border: 1px solid #454a51;
+  border-radius: 3px;
+  color: var(--text);
+  padding: 4px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tut-btn:hover {
+  border-color: #5a6068;
+}
+
+.tut-next {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #1b1c1f;
+  font-weight: 600;
+}
+
+.tut-next:hover {
+  border-color: #f0d27c;
+  background: #f0d27c;
+}
+
+.tut-skip {
+  color: var(--dim);
+}
+
+/* (its tip is the point it's at: the element is moved there, the drawing bobs above it) */
+.tut-arrow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  z-index: 35;
+  pointer-events: none !important;
+}
+
+.tut-arrow.hidden {
+  display: none;
+}
+
+.tut-arrow::after {
+  content: '';
+  position: absolute;
+  left: -11px;
+  bottom: 0;
+  border: 11px solid transparent;
+  border-top: 16px solid var(--accent);
+  border-bottom: 0;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5));
+  animation: tut-bob 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes tut-bob {
+  from {
+    transform: translateY(-14px);
+  }
+  to {
+    transform: translateY(-2px);
+  }
+}
+
+.tut-glow {
+  animation: tut-glow 0.9s ease-in-out infinite alternate !important;
+}
+
+/* what the step on isn't about: greyed out, and it does nothing (see ui/TutorialLock) */
+.tut-locked {
+  opacity: 0.3 !important;
+  filter: grayscale(1);
+  cursor: not-allowed !important;
+}
+
+@keyframes tut-glow {
+  from {
+    box-shadow: 0 0 0 2px rgba(226, 189, 87, 0.95), 0 0 4px 2px rgba(226, 189, 87, 0.3);
+  }
+  to {
+    box-shadow: 0 0 0 2px rgba(226, 189, 87, 0.95), 0 0 14px 5px rgba(226, 189, 87, 0.65);
+  }
+}
+
+/* on a phone the tool bar takes the top: the card sits above the touch bar */
+body.touch .tut-card {
+  top: auto;
+  bottom: 84px;
+}
+
+/* (over the drive buttons, upright; on its side, the screen's too short for it there: under the tool bar) */
+body.touch.driving .tut-card {
+  bottom: 276px;
+}
+
+@media (max-height: 520px) {
+  body.touch .tut-card,
+  body.touch.driving .tut-card {
+    top: calc(var(--tb-bottom, 48px) + 6px);
+    bottom: auto;
+    width: min(420px, calc(100vw - 260px));
+  }
+
+  .touch .tut-text {
+    margin: 4px 0 6px;
+    font-size: 13px;
+  }
+
+  .touch .tut-btn {
+    min-height: 34px;
+    padding: 5px 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tut-arrow::after,
+  .tut-glow {
+    animation: none !important;
+  }
+}
+
+.mm-new {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #1b1c1f;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+  vertical-align: 3px;
+}
+
+/* ---------------- the Tutorials panel: every tour, a tick on the ones done ---------------- */
+.tutorials-panel {
+  width: min(560px, calc(100vw - 24px));
+}
+
+/* (only the list scrolls, on a short screen) */
+.tour-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  max-height: min(62vh, 560px);
+  overflow-y: auto;
+}
+
+.tour-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  background: #1c1e21;
+  border: 1px solid #3a3f45;
+  border-radius: 3px;
+}
+
+.tour-row.done {
+  border-color: #4f6b46;
+}
+
+.tour-row.soon {
+  opacity: 0.5;
+}
+
+.tour-tick {
+  flex: none;
+  width: 14px;
+  color: #7cc36a;
+  font-weight: 600;
+  text-align: center;
+}
+
+.tour-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.tour-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+
+.tour-name {
+  color: #e8e1cc;
+}
+
+.tour-time {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.tour-blurb {
+  color: #aeb4ba;
+  font-size: 11px;
+}
+
+.tour-row .tour-start {
+  flex: none;
+  margin-top: 0;
+}
+
+/* ---- layout (see Layout.ts) ---------------------------------------------------------- */
+/* a piece the player moved: its anchor point (a corner, an edge's middle or its
+   centre) at --lay-x, --lay-y, scaled about that point. (Put by its transform
+   from the top left, so it has the whole screen's width to be as wide as it is.) */
+#ui > .lay-moved {
+  left: 0 !important;
+  top: 0 !important;
+  right: auto !important;
+  bottom: auto !important;
+  margin: 0 !important;
+}
+
+/* one only scaled stays where the style puts it, scaled about the point it's put by
+   (and nudged back onto the screen by --lay-cx, --lay-cy, should that take it off) */
+#ui > .lay-scaled {
+  transform: translate(var(--lay-x, 0px), var(--lay-y, 0px)) translate(var(--lay-tx, 0px), var(--lay-ty, 0px)) translate(var(--lay-cx, 0px), var(--lay-cy, 0px)) scale(var(--lay-s, 1)) !important;
+  transform-origin: var(--lay-ox, 0%) var(--lay-oy, 0%) !important;
+}
+
+#ui > .lay-sized {
+  width: var(--lay-w) !important;
+}
+
+#ui > .lay-hidden {
+  display: none !important;
+}
+
+/* the toybox scaled still reaches all the way down (or across) */
+#ui > .catalog.lay-scaled:not(.lay-dock-bottom) {
+  bottom: auto;
+  height: calc(100% / var(--lay-s));
+}
+
+#ui > .catalog.lay-scaled.lay-dock-bottom {
+  right: auto;
+  width: calc(100% / var(--lay-s));
+}
+
+.catalog.lay-tb-sized .cat-panel {
+  width: var(--lay-tb-w);
+}
+
+.catalog.lay-cols .items {
+  grid-template-columns: repeat(var(--lay-tb-cols), minmax(0, 1fr));
+}
+
+.catalog.lay-cols-auto .items,
+.catalog.lay-dock-bottom:not(.lay-cols) .items {
+  grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
+}
+
+/* the toybox down the right */
+.catalog.lay-dock-right {
+  left: auto;
+  right: 0;
+  flex-direction: row-reverse;
+}
+
+.lay-dock-right .cat-strip,
+.lay-dock-right .cat-panel {
+  border-right: 0;
+  border-left: 1px solid var(--line);
+}
+
+.catalog.collapsed.lay-dock-right .cat-panel {
+  transform: translateX(110%);
+}
+
+/* the toybox along the bottom: its shelves in a row over the panel, the search beside the shelf's name */
+.catalog.lay-dock-bottom {
+  top: auto;
+  right: 0;
+  flex-direction: column;
+}
+
+.lay-dock-bottom .cat-strip {
+  width: auto;
+  flex-direction: row;
+  padding: 4px 6px;
+  border-right: 0;
+  border-top: 1px solid var(--line);
+  overflow-x: auto;
+}
+
+.lay-dock-bottom .cat-toggle {
+  margin: 0 6px 0 0;
+}
+
+.lay-dock-bottom .cat-panel {
+  width: auto;
+  height: var(--lay-tb-h, 220px);
+  border-right: 0;
+  display: grid;
+  grid-template-columns: minmax(160px, 280px) 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.lay-dock-bottom .items {
+  grid-column: 1 / -1;
+  align-self: stretch;
+}
+
+.catalog.collapsed.lay-dock-bottom .cat-panel {
+  display: none;
+}
+
+/* (editing, the toybox shows its panel, folded or not) */
+.catalog.collapsed.lay-open .cat-panel {
+  transform: none;
+  opacity: 1;
+}
+
+.catalog.collapsed.lay-dock-bottom.lay-open .cat-panel {
+  display: grid;
+}
+
+/* the pieces left where the game puts them keep clear of a toybox on the right
+   or along the bottom (--lay-tb: how far it reaches in) */
+#ui.lay-tb-right > .toolbar:not(.lay-moved),
+#ui.lay-tb-right > .tools:not(.lay-moved) {
+  right: calc(var(--lay-tb, 0px) + 8px);
+}
+
+#ui.lay-tb-right > .status:not(.lay-moved) {
+  right: calc(var(--lay-tb, 0px) + 10px);
+}
+
+#ui.lay-tb-bottom > .status:not(.lay-moved) {
+  bottom: calc(var(--lay-tb, 0px) + 8px);
+}
+
+#ui.lay-tb-bottom > .hint:not(.lay-moved) {
+  bottom: calc(var(--lay-tb, 0px) + 10px);
+}
+
+.touch #ui.lay-tb-bottom > .hint:not(.lay-moved) {
+  bottom: calc(var(--lay-tb, 0px) + 84px);
+}
+
+#ui.lay-tb-bottom > .touchbar:not(.lay-moved) {
+  bottom: calc(var(--lay-tb, 0px) + 30px);
+}
+
+#ui.lay-tb-bottom > .touchbar.buildbar:not(.lay-moved) {
+  bottom: calc(var(--lay-tb, 0px) + 84px);
+}
+
+/* Settings › Game: the layouts, and Edit layout */
+.lay-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lay-pick .panel-btn {
+  margin-top: 0;
+  padding: 3px 10px;
+}
+
+/* ---- Edit layout: a light veil over the sandbox, the pieces over it, their frames over them */
+.lay-veil {
+  position: absolute;
+  inset: 0;
+  background: rgba(12, 13, 15, 0.38);
+  z-index: 56;
+  pointer-events: none !important;
+}
+
+/* (and they follow the pointer at once: the messages' slide would trail behind it) */
+#ui.lay-editing > .lay-piece {
+  z-index: 57 !important;
+  transition: none !important;
+}
+
+/* (a piece with nothing to show yet shows its name) */
+#ui.lay-editing > .lay-piece:empty::before {
+  content: attr(data-lay-name);
+  color: var(--dim);
+}
+
+#ui.lay-editing > .toast {
+  opacity: 1;
+}
+
+#ui > .lay-ghost {
+  opacity: 0.3 !important;
+}
+
+.lay-edit {
+  position: absolute;
+  inset: 0;
+  z-index: 58;
+  touch-action: none;
+}
+
+.lay-frame {
+  position: absolute;
+  border: 1px dashed rgba(226, 189, 87, 0.75);
+  border-radius: 3px;
+  cursor: move;
+  touch-action: none;
+}
+
+.lay-frame:hover {
+  background: rgba(226, 189, 87, 0.07);
+}
+
+.lay-frame.sel {
+  border-style: solid;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(226, 189, 87, 0.35);
+}
+
+.lay-frame.ghost {
+  border-color: rgba(125, 132, 140, 0.8);
+}
+
+/* its name (and Hide) above it; below one at the top of the screen; inside one as tall as the screen */
+.lay-tag {
+  position: absolute;
+  left: -1px;
+  bottom: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 3px 1px 5px;
+  background: var(--accent);
+  color: #1b1c1f;
+  border-radius: 3px 3px 0 0;
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.lay-frame.below .lay-tag {
+  bottom: auto;
+  top: 100%;
+  border-radius: 0 0 3px 3px;
+}
+
+.lay-frame.inside .lay-tag {
+  bottom: auto;
+  top: 4px;
+  left: 4px;
+  border-radius: 3px;
+}
+
+.lay-frame.ghost .lay-tag {
+  background: #5b6068;
+  color: var(--text);
+}
+
+.lay-tag button {
+  border: 0;
+  background: rgba(0, 0, 0, 0.18);
+  color: inherit;
+  font: inherit;
+  padding: 0 5px;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.lay-tag button:hover {
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.lay-tag button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.lay-handle {
+  position: absolute;
+  background: var(--accent);
+  border: 1px solid #1b1c1f;
+  border-radius: 2px;
+  touch-action: none;
+}
+
+/* the scale handle, on the corner away from the point the piece is scaled about */
+.lay-scale {
+  width: 11px;
+  height: 11px;
+}
+
+.lay-scale.br {
+  right: -6px;
+  bottom: -6px;
+  cursor: nwse-resize;
+}
+
+.lay-scale.bl {
+  left: -6px;
+  bottom: -6px;
+  cursor: nesw-resize;
+}
+
+.lay-scale.tr {
+  right: -6px;
+  top: -6px;
+  cursor: nesw-resize;
+}
+
+.lay-scale.tl {
+  left: -6px;
+  top: -6px;
+  cursor: nwse-resize;
+}
+
+/* the size handle, on the edge that moves */
+.lay-size {
+  top: 50%;
+  width: 7px;
+  height: 30px;
+  margin-top: -15px;
+  cursor: ew-resize;
+}
+
+.lay-size.r {
+  right: -4px;
+}
+
+.lay-size.l {
+  left: -4px;
+}
+
+.lay-size.t {
+  top: -4px;
+  left: 50%;
+  width: 30px;
+  height: 7px;
+  margin: 0 0 0 -15px;
+  cursor: ns-resize;
+}
+
+.touch .lay-scale {
+  width: 22px;
+  height: 22px;
+}
+
+.touch .lay-size {
+  width: 14px;
+  height: 44px;
+  margin-top: -22px;
+}
+
+.touch .lay-size.t {
+  width: 44px;
+  height: 14px;
+  margin: 0 0 0 -22px;
+}
+
+/* what a moved piece snapped to */
+.lay-guide {
+  position: absolute;
+  background: #6fb6ff;
+  pointer-events: none;
+}
+
+.lay-gx {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.lay-gy {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+/* where the toybox dragged would dock */
+.lay-zone {
+  position: absolute;
+  background: rgba(226, 189, 87, 0.16);
+  border: 2px dashed var(--accent);
+  pointer-events: none;
+}
+
+.lay-zone.left {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 140px;
+}
+
+.lay-zone.right {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 140px;
+}
+
+.lay-zone.bottom {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 140px;
+}
+
+.lay-guide.hidden,
+.lay-zone.hidden {
+  display: none;
+}
+
+/* the edit bar (dragged by its title) */
+.lay-bar {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(470px, calc(100vw - 24px));
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 8px 12px 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+.lay-bar-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  cursor: move;
+  touch-action: none;
+}
+
+.lay-bar-head .panel-title {
+  flex: 1;
+  margin: 0;
+}
+
+.lay-grip,
+.lay-esc {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.touch .lay-esc {
+  display: none;
+}
+
+.lay-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 5px 0;
+  border-bottom: 1px solid #2a2d31;
+}
+
+.lay-key {
+  min-width: 62px;
+  color: var(--dim);
+}
+
+.lay-sel-name {
+  flex: 1;
+  color: var(--accent);
+}
+
+.lay-bar .panel-btn {
+  margin-top: 0;
+  padding: 3px 10px;
+}
+
+.lay-bar .panel-btn.on {
+  background: #3a3423;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.lay-bar .panel-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.lay-range {
+  flex: 1;
+  min-width: 100px;
+  accent-color: var(--accent);
+}
+
+.lay-val {
+  min-width: 38px;
+  text-align: right;
+  color: #e8e1cc;
+  font-family: var(--mono);
+}
+
+.lay-note {
+  padding: 6px 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #9aa1a8;
+}
+
+.lay-foot {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.lay-gap {
+  flex: 1;
+}
+
+/* ---------------- a phone's notch, rounded corners and home bar ---------------- */
+/* (kept clear of them: env() is 0 where there are none, a computer's screen or a phone upright in its browser) */
+.toolbar {
+  top: calc(8px + env(safe-area-inset-top));
+  right: calc(8px + env(safe-area-inset-right));
+}
+
+.tools {
+  right: calc(8px + env(safe-area-inset-right));
+}
+
+.cat-strip {
+  width: calc(46px + env(safe-area-inset-left));
+  padding-top: calc(6px + env(safe-area-inset-top));
+  padding-left: env(safe-area-inset-left);
+}
+
+@media (max-width: 700px) {
+  .toolbar {
+    top: calc(6px + env(safe-area-inset-top));
+    right: calc(6px + env(safe-area-inset-right));
+  }
+
+  .tools {
+    right: calc(4px + env(safe-area-inset-right));
+  }
+}
+
+/* ---------------- touch screens: the tool bar and the vitals fitted in ---------------- */
+/* the tool bar wraps to another row rather than run off the screen (a phone on its side), clear of the open toybox */
+.touch .toolbar {
+  left: calc(54px + env(safe-area-inset-left));
+  width: fit-content;
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* (its shelves and its panel: see .cat-strip, .cat-panel) */
+.touch .catalog:not(.collapsed) ~ .toolbar {
+  left: calc(290px + env(safe-area-inset-left));
+}
+
+/* under the tool bar however many rows it takes (UI's --tb-bottom), and above the selection's bar: it scrolls if it must */
+.touch .vitals {
+  top: calc(var(--tb-bottom, 48px) + 6px);
+  max-height: calc(100% - var(--tb-bottom, 48px) - 96px);
+  overflow-y: auto;
+}
+
+/* a phone on its side: the tools folded to the one in use until tapped (as upright), clear of the tool bar;
+   that a bit narrower, to fit a row */
+@media (max-height: 520px) {
+  .tool-btn {
+    width: 44px;
+    height: 36px;
+  }
+
+  .tools:not(.open) .tool-btn:not(.active),
+  .tools:not(.open) .tool-tab {
+    display: none;
+  }
+
+  .touch .tb-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .touch .tb-sep {
+    margin: 0 2px;
   }
 }

@@ -3,6 +3,7 @@ import type { Controls } from '../tools/Controls';
 import type { Entity } from '../world/Entity';
 import type { SpawnOptions } from '../world/types';
 import { getItem, ITEMS } from '../catalog/items';
+import { LAB } from '../world/Maps';
 
 /**
  * Scripted-interaction helpers exposed as `window.bp.kit` for automated testing
@@ -11,6 +12,8 @@ import { getItem, ITEMS } from '../catalog/items';
 export function makeTestKit(game: Game, controls: Controls) {
   const cv = game.renderer.canvas;
   const r = game.renderer;
+  /** The browser's own animation frames (still() swaps in a stand-in that never calls back). */
+  const nativeRaf = window.requestAnimationFrame;
   const ev = (type: string, x: number, y: number, button = 0, target: EventTarget = cv, extra: PointerEventInit = {}) => {
     const s = r.worldToScreen(x, y);
     target.dispatchEvent(new PointerEvent(type, {
@@ -20,9 +23,23 @@ export function makeTestKit(game: Game, controls: Controls) {
   const kit = {
     items: () => ITEMS.map((i) => i.id),
     reset(): void {
+      // (a map test's map, or a map being edited, doesn't carry over: every test starts in the lab)
+      controls.terrain?.stop();
+      if (game.map.id !== LAB.id) game.setMap(LAB);
       game.resetEnvironment();
+      // (clear skies and daylight, as a fresh game has)
+      game.weather.reset();
       controls.clearSelection();
       controls.arm(null);
+      controls.setTool('drag');
+      controls.setFollow(null);
+      controls.detail = false;
+      // (building aids off: tests press at exact points, and nothing waits from the last test)
+      controls.snapping = false;
+      controls.freeAnchor = controls.chainTouch = controls.aloneTouch = false;
+      controls.connect.cancel();
+      controls.placer.cancel();
+      controls.arrange.overlaps = [];
       controls.history.clear();
       game.paused = false;
       game.timeScale = 1;
@@ -55,17 +72,35 @@ export function makeTestKit(game: Game, controls: Controls) {
         window.requestAnimationFrame(loop.loop);
       }
     },
+    /** Runs `fn` with the game's frame loop going, as a player's does (inside still(), which holds it). */
+    async live<T>(fn: () => Promise<T>): Promise<T> {
+      const held = window.requestAnimationFrame;
+      if (held === nativeRaf) return fn();
+      window.requestAnimationFrame = nativeRaf;
+      const loop = game as unknown as { loop: FrameRequestCallback; lastTime: number };
+      loop.lastTime = performance.now();
+      window.requestAnimationFrame(loop.loop);
+      try {
+        return await fn();
+      } finally {
+        window.requestAnimationFrame = held;
+        // (the frame already asked for still runs, once)
+        await new Promise((res) => setTimeout(res, 50));
+      }
+    },
     down(x: number, y: number, button = 0, extra: PointerEventInit = {}): void {
       ev('pointerdown', x, y, button, cv, extra);
     },
     move(x: number, y: number): void {
       ev('pointermove', x, y, 0, window);
     },
-    up(x: number, y: number, button = 0): void {
-      ev('pointerup', x, y, button, window);
+    up(x: number, y: number, button = 0, extra: PointerEventInit = {}): void {
+      ev('pointerup', x, y, button, window, extra);
     },
     key(code: string, down = true, extra: KeyboardEventInit = {}): void {
-      window.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true, ...extra }));
+      // (from the page, as a real key with nothing focused: at window itself, listeners
+      // run in the order they were added, capturing or not, and the main menu's couldn't stop Controls')
+      document.body.dispatchEvent(new KeyboardEvent(down ? 'keydown' : 'keyup', { code, key: code, bubbles: true, ...extra }));
     },
     press(code: string, extra: KeyboardEventInit = {}): void {
       kit.key(code, true, extra);

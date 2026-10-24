@@ -5,11 +5,6 @@
     "sfx/gun/pistol_3.ogg",
     "sfx/gun/pistol_4.ogg"
   ],
-  "gun/revolver": [
-    "sfx/gun/revolver_1.ogg",
-    "sfx/gun/revolver_2.ogg",
-    "sfx/gun/revolver_3.ogg"
-  ],
   "gun/magnum": [
     "sfx/gun/magnum_1.ogg",
     "sfx/gun/magnum_2.ogg",
@@ -40,6 +35,16 @@
     "sfx/gun/sniper_3.ogg",
     "sfx/gun/sniper_4.ogg"
   ],
+  "gun/cannon": [
+    "sfx/gun/cannon_1.ogg",
+    "sfx/gun/cannon_2.ogg",
+    "sfx/gun/cannon_3.ogg"
+  ],
+  "gun/rocket_launch": [
+    "sfx/gun/rocket_launch_1.ogg",
+    "sfx/gun/rocket_launch_2.ogg",
+    "sfx/gun/rocket_launch_3.ogg"
+  ],
   "gun/casing": [
     "sfx/gun/casing_1.ogg",
     "sfx/gun/casing_2.ogg",
@@ -56,9 +61,25 @@
     "sfx/gun/pump_2.ogg",
     "sfx/gun/pump_3.ogg"
   ],
+  "gun/rpg_reload": [
+    "sfx/gun/rpg_reload_1.ogg",
+    "sfx/gun/rpg_reload_2.ogg"
+  ],
   "gun/reload": [
     "sfx/gun/reload_1.ogg",
     "sfx/gun/reload_2.ogg"
+  ],
+  "gun/crossbow_release": [
+    "sfx/gun/crossbow_release_1.ogg",
+    "sfx/gun/crossbow_release_2.ogg"
+  ],
+  "gun/crossbow_draw": [
+    "sfx/gun/crossbow_draw_1.ogg",
+    "sfx/gun/crossbow_draw_2.ogg"
+  ],
+  "gun/crossbow_latch": [
+    "sfx/gun/crossbow_latch_1.ogg",
+    "sfx/gun/crossbow_latch_2.ogg"
   ],
   "hit/flesh": [
     "sfx/hit/flesh_1.ogg",
@@ -77,10 +98,6 @@
     "sfx/hit/ricochet_3.ogg",
     "sfx/hit/ricochet_4.ogg"
   ],
-  "hit/whizz": [
-    "sfx/hit/whizz_1.ogg",
-    "sfx/hit/whizz_2.ogg"
-  ],
   "hit/wood": [
     "sfx/hit/wood_1.ogg",
     "sfx/hit/wood_2.ogg",
@@ -96,6 +113,11 @@
     "sfx/hit/glass_2.ogg",
     "sfx/hit/glass_3.ogg",
     "sfx/hit/glass_4.ogg"
+  ],
+  "hit/bolt": [
+    "sfx/hit/bolt_1.ogg",
+    "sfx/hit/bolt_2.ogg",
+    "sfx/hit/bolt_3.ogg"
   ],
   "impact/wood_light": [
     "sfx/impact/wood_light_1.ogg",
@@ -132,16 +154,6 @@
     "sfx/impact/metal_heavy_3.ogg",
     "sfx/impact/metal_heavy_4.ogg"
   ],
-  "impact/plate_light": [
-    "sfx/impact/plate_light_1.ogg",
-    "sfx/impact/plate_light_2.ogg",
-    "sfx/impact/plate_light_3.ogg"
-  ],
-  "impact/plate_medium": [
-    "sfx/impact/plate_medium_1.ogg",
-    "sfx/impact/plate_medium_2.ogg",
-    "sfx/impact/plate_medium_3.ogg"
-  ],
   "impact/plate_heavy": [
     "sfx/impact/plate_heavy_1.ogg",
     "sfx/impact/plate_heavy_2.ogg",
@@ -163,12 +175,6 @@
     "sfx/impact/soft_3.ogg",
     "sfx/impact/soft_4.ogg"
   ],
-  "impact/soft_heavy": [
-    "sfx/impact/soft_heavy_1.ogg",
-    "sfx/impact/soft_heavy_2.ogg",
-    "sfx/impact/soft_heavy_3.ogg",
-    "sfx/impact/soft_heavy_4.ogg"
-  ],
   "impact/punch": [
     "sfx/impact/punch_1.ogg",
     "sfx/impact/punch_2.ogg",
@@ -185,11 +191,6 @@
     "sfx/impact/generic_light_1.ogg",
     "sfx/impact/generic_light_2.ogg",
     "sfx/impact/generic_light_3.ogg"
-  ],
-  "impact/plank": [
-    "sfx/impact/plank_1.ogg",
-    "sfx/impact/plank_2.ogg",
-    "sfx/impact/plank_3.ogg"
   ],
   "impact/stone": [
     "sfx/impact/stone_1.ogg",
@@ -208,6 +209,11 @@
     "sfx/impact/glass_break_2.ogg",
     "sfx/impact/glass_break_3.ogg",
     "sfx/impact/glass_break_4.ogg"
+  ],
+  "impact/bottle_smash": [
+    "sfx/impact/bottle_smash_1.ogg",
+    "sfx/impact/bottle_smash_2.ogg",
+    "sfx/impact/bottle_smash_3.ogg"
   ],
   "impact/body_fall": [
     "sfx/impact/body_fall_1.ogg",
@@ -278,16 +284,17 @@
     "sfx/explosion/debris_2.ogg",
     "sfx/explosion/debris_3.ogg"
   ],
-  "explosion/fuse": [
-    "sfx/explosion/fuse_1.ogg",
-    "sfx/explosion/fuse_2.ogg"
-  ],
   "explosion/fuse_loop": [
     "sfx/explosion/fuse_loop.ogg"
   ],
   "fire/crackle_loop": [
     "sfx/fire/crackle_loop_1.ogg",
     "sfx/fire/crackle_loop_2.ogg"
+  ],
+  "fire/whoosh": [
+    "sfx/fire/whoosh_1.ogg",
+    "sfx/fire/whoosh_2.ogg",
+    "sfx/fire/whoosh_3.ogg"
   ],
   "machine/zap": [
     "sfx/machine/zap_1.ogg",
@@ -301,19 +308,16 @@
     "sfx/machine/spark_3.ogg",
     "sfx/machine/spark_4.ogg"
   ],
-  "machine/electric_loop": [
-    "sfx/machine/electric_loop.ogg"
-  ],
   "machine/motor_loop": [
     "sfx/machine/motor_loop_1.ogg",
     "sfx/machine/motor_loop_2.ogg"
   ],
-  "machine/hum_loop": [
-    "sfx/machine/hum_loop.ogg"
-  ],
   "machine/thruster_loop": [
     "sfx/machine/thruster_loop_1.ogg",
     "sfx/machine/thruster_loop_2.ogg"
+  ],
+  "machine/turret_loop": [
+    "sfx/machine/turret_loop.ogg"
   ],
   "machine/button": [
     "sfx/machine/button_1.ogg",
@@ -330,6 +334,36 @@
     "sfx/machine/rope_snap_1.ogg",
     "sfx/machine/rope_snap_2.ogg",
     "sfx/machine/rope_snap_3.ogg"
+  ],
+  "machine/car_door": [
+    "sfx/machine/car_door_1.ogg",
+    "sfx/machine/car_door_2.ogg",
+    "sfx/machine/car_door_3.ogg"
+  ],
+  "medical/inject": [
+    "sfx/medical/inject_1.ogg",
+    "sfx/medical/inject_2.ogg",
+    "sfx/medical/inject_3.ogg",
+    "sfx/medical/inject_4.ogg"
+  ],
+  "medical/bandage": [
+    "sfx/medical/bandage_1.ogg",
+    "sfx/medical/bandage_2.ogg",
+    "sfx/medical/bandage_3.ogg",
+    "sfx/medical/bandage_4.ogg"
+  ],
+  "medical/defib_charge": [
+    "sfx/medical/defib_charge_1.ogg"
+  ],
+  "medical/defib_shock": [
+    "sfx/medical/defib_shock_1.ogg"
+  ],
+  "medical/ecg_beep": [
+    "sfx/medical/ecg_beep_1.ogg",
+    "sfx/medical/ecg_beep_2.ogg"
+  ],
+  "medical/ecg_flatline_loop": [
+    "sfx/medical/ecg_flatline_loop_1.ogg"
   ],
   "liquid/splash": [
     "sfx/liquid/splash_1.ogg",
@@ -357,9 +391,6 @@
   "liquid/pour_loop": [
     "sfx/liquid/pour_loop_1.ogg",
     "sfx/liquid/pour_loop_2.ogg"
-  ],
-  "liquid/sizzle_loop": [
-    "sfx/liquid/sizzle_loop.ogg"
   ],
   "creature/dog_bark": [
     "sfx/creature/dog_bark_1.ogg",
@@ -429,6 +460,50 @@
     "sfx/creature/fox_die_1.ogg",
     "sfx/creature/fox_die_2.ogg"
   ],
+  "creature/cow_moo": [
+    "sfx/creature/cow_moo_1.ogg",
+    "sfx/creature/cow_moo_2.ogg",
+    "sfx/creature/cow_moo_3.ogg",
+    "sfx/creature/cow_moo_4.ogg"
+  ],
+  "creature/cow_bellow": [
+    "sfx/creature/cow_bellow_1.ogg",
+    "sfx/creature/cow_bellow_2.ogg",
+    "sfx/creature/cow_bellow_3.ogg",
+    "sfx/creature/cow_bellow_4.ogg"
+  ],
+  "creature/cow_moan": [
+    "sfx/creature/cow_moan_1.ogg",
+    "sfx/creature/cow_moan_2.ogg",
+    "sfx/creature/cow_moan_3.ogg"
+  ],
+  "creature/cow_die": [
+    "sfx/creature/cow_die_1.ogg"
+  ],
+  "creature/zombie_groan": [
+    "sfx/creature/zombie_groan_1.ogg",
+    "sfx/creature/zombie_groan_2.ogg",
+    "sfx/creature/zombie_groan_3.ogg",
+    "sfx/creature/zombie_groan_4.ogg"
+  ],
+  "creature/zombie_bite": [
+    "sfx/creature/zombie_bite_1.ogg",
+    "sfx/creature/zombie_bite_2.ogg",
+    "sfx/creature/zombie_bite_3.ogg"
+  ],
+  "creature/gorse_hiss": [
+    "sfx/creature/gorse_hiss_1.ogg",
+    "sfx/creature/gorse_hiss_2.ogg",
+    "sfx/creature/gorse_hiss_3.ogg"
+  ],
+  "creature/gorse_spit": [
+    "sfx/creature/gorse_spit_1.ogg",
+    "sfx/creature/gorse_spit_2.ogg"
+  ],
+  "creature/gorse_screech": [
+    "sfx/creature/gorse_screech_1.ogg",
+    "sfx/creature/gorse_screech_2.ogg"
+  ],
   "ui/click": [
     "sfx/ui/click_1.ogg",
     "sfx/ui/click_2.ogg",
@@ -463,14 +538,144 @@
     "sfx/ui/drop_1.ogg",
     "sfx/ui/drop_2.ogg"
   ],
+  "machine/chainsaw_idle_loop": [
+    "sfx/machine/chainsaw_idle_loop_1.ogg"
+  ],
+  "machine/chainsaw_loop": [
+    "sfx/machine/chainsaw_loop_1.ogg"
+  ],
+  "machine/chainsaw_start": [
+    "sfx/machine/chainsaw_start_1.ogg"
+  ],
+  "fire/flamethrower_loop": [
+    "sfx/fire/flamethrower_loop_1.ogg"
+  ],
+  "machine/extinguisher_loop": [
+    "sfx/machine/extinguisher_loop_1.ogg"
+  ],
+  "machine/taser": [
+    "sfx/machine/taser_1.ogg",
+    "sfx/machine/taser_2.ogg"
+  ],
+  "gun/launcher": [
+    "sfx/gun/launcher_1.ogg",
+    "sfx/gun/launcher_2.ogg"
+  ],
+  "gun/battle": [
+    "sfx/gun/battle_1.ogg",
+    "sfx/gun/battle_2.ogg"
+  ],
+  "gun/clip_ping": [
+    "sfx/gun/clip_ping_1.ogg"
+  ],
+  "gun/burst": [
+    "sfx/gun/burst_1.ogg",
+    "sfx/gun/burst_2.ogg",
+    "sfx/gun/burst_3.ogg"
+  ],
+  "gun/lmg": [
+    "sfx/gun/lmg_1.ogg",
+    "sfx/gun/lmg_2.ogg",
+    "sfx/gun/lmg_3.ogg"
+  ],
+  "gun/double": [
+    "sfx/gun/double_1.ogg",
+    "sfx/gun/double_2.ogg",
+    "sfx/gun/double_3.ogg"
+  ],
+  "gun/flintlock": [
+    "sfx/gun/flintlock_1.ogg",
+    "sfx/gun/flintlock_2.ogg"
+  ],
+  "gun/flint": [
+    "sfx/gun/flint_1.ogg",
+    "sfx/gun/flint_2.ogg"
+  ],
+  "gun/break_open": [
+    "sfx/gun/break_open_1.ogg",
+    "sfx/gun/break_open_2.ogg"
+  ],
+  "gun/shell_in": [
+    "sfx/gun/shell_in_1.ogg",
+    "sfx/gun/shell_in_2.ogg"
+  ],
+  "gun/break_close": [
+    "sfx/gun/break_close_1.ogg"
+  ],
+  "machine/power_hammer": [
+    "sfx/machine/power_hammer_1.ogg",
+    "sfx/machine/power_hammer_2.ogg"
+  ],
+  "machine/air_release": [
+    "sfx/machine/air_release_1.ogg"
+  ],
+  "machine/fan_loop": [
+    "sfx/machine/fan_loop_1.ogg"
+  ],
+  "machine/siren_loop": [
+    "sfx/machine/siren_loop_1.ogg"
+  ],
+  "machine/hum_loop": [
+    "sfx/machine/hum_loop_1.ogg"
+  ],
+  "machine/electric_loop": [
+    "sfx/machine/electric_loop_1.ogg"
+  ],
+  "machine/tick": [
+    "sfx/machine/tick_1.ogg",
+    "sfx/machine/tick_2.ogg"
+  ],
+  "fire/flare_ignite": [
+    "sfx/fire/flare_ignite_1.ogg"
+  ],
+  "fire/flare_loop": [
+    "sfx/fire/flare_loop_1.ogg"
+  ],
+  "explosion/firework_launch": [
+    "sfx/explosion/firework_launch_1.ogg",
+    "sfx/explosion/firework_launch_2.ogg"
+  ],
+  "explosion/firework_burst": [
+    "sfx/explosion/firework_burst_1.ogg",
+    "sfx/explosion/firework_burst_2.ogg"
+  ],
+  "impact/balloon_pop": [
+    "sfx/impact/balloon_pop_1.ogg",
+    "sfx/impact/balloon_pop_2.ogg",
+    "sfx/impact/balloon_pop_3.ogg",
+    "sfx/impact/balloon_pop_4.ogg"
+  ],
+  "weather/rain_loop": [
+    "sfx/weather/rain_loop_1.ogg",
+    "sfx/weather/rain_loop_2.ogg"
+  ],
+  "weather/wind_loop": [
+    "sfx/weather/wind_loop_1.ogg"
+  ],
+  "weather/thunder": [
+    "sfx/weather/thunder_1.ogg",
+    "sfx/weather/thunder_2.ogg",
+    "sfx/weather/thunder_3.ogg",
+    "sfx/weather/thunder_4.ogg"
+  ],
   "loops": [
     "explosion/fuse_loop",
     "fire/crackle_loop",
-    "machine/electric_loop",
     "machine/motor_loop",
-    "machine/hum_loop",
     "machine/thruster_loop",
+    "machine/turret_loop",
+    "machine/fan_loop",
+    "machine/siren_loop",
+    "machine/hum_loop",
+    "machine/electric_loop",
     "liquid/pour_loop",
-    "liquid/sizzle_loop"
+    "machine/chainsaw_idle_loop",
+    "machine/chainsaw_loop",
+    "fire/flamethrower_loop",
+    "machine/extinguisher_loop",
+    "fire/flare_loop",
+    "weather/rain_loop",
+    "weather/wind_loop",
+    "medical/ecg_flatline_loop"
   ]
 }

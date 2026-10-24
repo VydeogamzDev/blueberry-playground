@@ -3,6 +3,7 @@ import {
   finish, draw, GUNMETAL, POLYMER, WOOD, WOOD_DARK, WOOD_PALE, OLIVE, STEEL, STEEL_LT, BRASS, COPPER, RED, KHAKI,
   YELLOW, ORANGE, GLASS, WHITE, RUBBER, LAMP, LED_RED, LED_GREEN, step, ramp, type Ramp,
 } from './palette';
+import { fuseToolIcon } from './bombs';
 
 // ------------------------------------------------------------------ firearms
 // All guns point RIGHT; the muzzle is at the right edge. Steel parts use the
@@ -367,11 +368,18 @@ export function toolIcon(kind: string): PixelArt {
       );
     case 'pin':
       return icon(['..gggg..', '.gggggg.', '.ggddgg.', '.gggggg.', '..gggg..', '...ss...', '...ss...', '...ss...', '....s...'], { g: gold, s: steel, d: dark });
+    case 'shape':
+      return icon(
+        ['....d.......', '...dwd......', '..dwwwd.....', '.dwwwwwd....', 'dwwwwwwwd...', '.dwwwwwwwd..', '..dwwwwwwwd.', '...dwwwwwwd.', '....dwwwwwd.', '.....dwwwwd.', '......ddddd.'],
+        { w: WOOD_PALE[3], d: dark },
+      );
     case 'wire':
       return icon(
         ['rr..........', 'rrr.........', '.rrr.....rr.', '..rrr...rrrr', '...rrrrrr.rr', '....rrrr..rr', '..........rr', '..dd.....rr.', '.dddd...rr..', '..dd....rr..'],
         { r: COPPER[3], d: dark },
       );
+    case 'fuse':
+      return fuseToolIcon();
     case 'remove':
     default:
       return icon(
@@ -379,6 +387,25 @@ export function toolIcon(kind: string): PixelArt {
         { r: step(RED[3], 0) },
       );
   }
+}
+
+/** The toybox's Contraptions category: a blueprint. */
+export function blueprintIcon(): PixelArt {
+  const B = ramp('#3b6ea8');
+  return finish(draw(14, 12, [
+    'BBBBBBBBBBBBBB',
+    'BbbbbbbbbbbbbB',
+    'BbbwwbbbbbbbbB',
+    'BbwbbwwwwwwbbB',
+    'BbwbbwbbbbwbbB',
+    'BbbwwbbbbbwbbB',
+    'BbbbwbbbbbwbbB',
+    'BbbbwbbwwwwbbB',
+    'BbbbwbbwbbbbbB',
+    'BbwwwwwwwbbbbB',
+    'BbbbbbbbbbbbbB',
+    'BBBBBBBBBBBBBB',
+  ], { B: B[1], b: B[2], w: WHITE[3] }), { shadow: false, light: false });
 }
 
 // ------------------------------------------------------------------ medical
@@ -390,10 +417,23 @@ export const DRUG_RAMPS = {
   knockout: ramp('#5a72d8'),
   life: ramp('#e0577e'),
   poison: ramp('#8f4fc4'),
+  death: ramp('#3a3a44'),
+  coagulation: ramp('#8a1c24'),
+  painkiller: ramp('#e6e2d6'),
+  strength: ramp('#e3c63a'),
+  freeze: ramp('#8fdcf0'),
+  bone: ramp('#a8904a'),
+  acid: ramp('#86d633'),
+  pink: ramp('#ff8fd0'),
+  zombie: ramp('#6b7d52'),
+  cure: ramp('#3fb8a8'),
 } as const;
 
-/** A syringe pointing right (needle tip at the right edge); null liquid = empty. */
-export function syringeArt(liquid: Ramp | null): PixelArt {
+/**
+ * A syringe pointing right (needle tip at the right edge); null liquid = empty.
+ * `fill` (0..1) is how much is left: the plunger's stopper pushed that far up the barrel.
+ */
+export function syringeArt(liquid: Ramp | null, fill = 1): PixelArt {
   const a = draw(20, 7, [
     '.....W..............',
     'R....WGGGGGGGGG.....',
@@ -415,6 +455,10 @@ export function syringeArt(liquid: Ramp | null): PixelArt {
   for (let x = 1; x <= 4; x++) a.set(x, 3, STEEL_LT[2]);
   for (let y = 1; y <= 5; y++) a.set(0, y, RUBBER[y === 1 ? 3 : 2]);
   a.set(17, 3, STEEL_LT[2]).set(18, 3, STEEL_LT[3]).set(19, 3, STEEL_LT[4]);
+  // part pushed in: empty glass behind the stopper, the rod showing through it
+  const pushed = liquid ? Math.round((1 - fill) * 8) : 0;
+  for (let x = 6; x < 6 + pushed; x++) a.set(x, 2, GLASS[4]).set(x, 3, STEEL_LT[2]).set(x, 4, GLASS[3]);
+  if (pushed > 0) a.set(6 + pushed, 2, RUBBER[2]).set(6 + pushed, 3, RUBBER[1]).set(6 + pushed, 4, RUBBER[1]);
   return a;
 }
 

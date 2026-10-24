@@ -177,6 +177,31 @@ export function calmGroup(game: Game, group: Entity[]): Entity[] {
 }
 
 /** Asleep but with a velocity: something pushed it without waking it. */
+/**
+ * What holds `e` has changed (a connection made afresh, loosened or cut): it,
+ * and any group it was settled into, wake and count as moving again. Woken
+ * alone, it would still read as at rest until the next check, and settle()
+ * would put it straight back to sleep, hanging where it was held.
+ */
+export function stir(game: Game, e: Entity): void {
+  const unrest = (x: Entity) => {
+    x.atRest = false;
+    x.restChecks = x.slowChecks = 0;
+  };
+  unrest(e);
+  const groups = game.slept;
+  for (let i = groups.length - 1; i >= 0; i--) {
+    const g = groups[i];
+    if (!g.some((p) => p.entity === e)) continue;
+    groups.splice(i, 1);
+    for (const p of g) {
+      unrest(p.entity);
+      if (!p.destroyed && !p.frozen) p.body.wakeUp();
+    }
+  }
+  for (const p of e.parts) if (!p.destroyed && !p.frozen) p.body.wakeUp();
+}
+
 function moving(b: RAPIER.RigidBody): boolean {
   const v = b.linvel();
   return Math.abs(v.x) + Math.abs(v.y) > 0.02;

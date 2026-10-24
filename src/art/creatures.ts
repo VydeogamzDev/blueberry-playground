@@ -4,7 +4,7 @@ import { finish, farSide, draw, ramp, type Ramp } from './palette';
 // Animal sprites, drawn facing right like everything else: shared letter scheme
 //   fur  d f F G   dark fur  q k K   light fur  l L   nose/pads n   eye e   inner ear/tongue p
 
-export type CreatureKind = 'dog' | 'cat' | 'pig' | 'fox';
+export type CreatureKind = 'dog' | 'cat' | 'pig' | 'fox' | 'cow' | 'gorse';
 
 interface Coat {
   fur: Ramp;
@@ -22,7 +22,14 @@ const COATS: Record<CreatureKind, Coat> = {
   pig: { fur: ramp('#e09f97', 0.9), dark: ramp('#b86f6c', 1.0), light: ramp('#f0c4bb', 0.8), nose: 0x7a3b3b, eye: 0x241614, pink: 0xd0827d },
   // dark = ear backs and stockings; light = white bib, muzzle and tail tip
   fox: { fur: ramp('#c8682c'), dark: ramp('#30251f', 1.05), light: ramp('#e9e1d3', 0.8), nose: 0x1a1412, eye: 0x24170f, pink: 0xc06a6a },
+  // fur = white hide; dark = black patches and hooves; light = pink muzzle and udder
+  cow: { fur: ramp('#e4e0d6', 0.8), dark: ramp('#2e2a28', 1.05), light: ramp('#e0a39a', 0.85), nose: 0x7a4440, eye: 0x1a1210, pink: 0xd08a84 },
+  // fur = dark chitin; dark = its joints and plates; light = the amber markings; nose = mandibles; eye glows
+  gorse: { fur: ramp('#4a3b33', 1.1), dark: ramp('#241c19', 1.05), light: ramp('#d08a2a', 0.9), nose: 0x8a6a3a, eye: 0xffa630, pink: 0xb04a2a },
 };
+
+/** The cow's horn nubs. */
+const HORN = [0xd8c9a0, 0xb8a882];
 
 function pal(c: Coat): Record<string, Color> {
   return {
@@ -39,6 +46,8 @@ export const CREATURE_EYE: Record<CreatureKind, { x: number; y: number; open: Co
   cat: { x: 4, y: 3, open: COATS.cat.eye, closed: COATS.cat.fur[1], dead: 0x3d3a37 },
   pig: { x: 7, y: 4, open: COATS.pig.eye, closed: COATS.pig.fur[1], dead: 0x5a3434 },
   fox: { x: 6, y: 4, open: COATS.fox.eye, closed: COATS.fox.fur[1], dead: 0x3a2418 },
+  cow: { x: 9, y: 4, open: COATS.cow.eye, closed: COATS.cow.fur[1], dead: 0x4a3a36 },
+  gorse: { x: 6, y: 2, open: COATS.gorse.eye, closed: COATS.gorse.fur[1], dead: 0x3a2a22 },
 };
 
 /**
@@ -331,7 +340,160 @@ function foxPart(base: string, c: Coat): PixelArt {
   }
 }
 
-const PARTS: Record<CreatureKind, (base: string, c: Coat) => PixelArt> = { dog: dogPart, cat: catPart, pig: pigPart, fox: foxPart };
+// ---------------------------------------------------------------- cow
+
+function cowPart(base: string, c: Coat): PixelArt {
+  const P = pal(c);
+  switch (base) {
+    case 'head': {
+      // long face sloping down to a broad pink muzzle, ear sticking out back, horn
+      // nubs, and the top of the neck on the left (it runs on into the shoulders)
+      const a = draw(15, 12, [
+        '.....kkk.......',
+        '....kKKkk......',
+        '.kkkkkkkkf.....',
+        'kKkkkkkkfff....',
+        '.kkkkkkffffff..',
+        'ffkkkfffffffff.',
+        'fffkffffffffffl',
+        'ffffffffffffllL',
+        'fffffkkkffflllL',
+        'ffffkkkkkfflll.',
+        'fffffkkkkfll...',
+        'ffffffffff.....',
+      ], P);
+      openBack(finish(a));
+      a.set(9, 4, c.eye).set(8, 3, c.dark[1]);
+      a.set(14, 7, c.nose);
+      a.set(6, 0, HORN[0]).set(6, 1, HORN[1]);
+      return a;
+    }
+    case 'chest':
+      return openBack(finish(draw(21, 14, [
+        '..fffffkkkkkkkfffff..',
+        '.fFFFFkKKKKKKkkFFFff.',
+        'ffffffkkkkkkkkkkfffff',
+        'fffffkkkkkkkkkkkkffff',
+        'fffffkkkkkkkkkkkkffff',
+        'ffffffkkkkkkkkkkfffff',
+        'fffffffkkkkkkkkffffff',
+        'ffffffffffkkkffffffff',
+        'fffffffffffffffffffff',
+        'fffffffffffffffffffff',
+        'fffffffffffffffffffff',
+        'ffffffffffffffffffff.',
+        '.fffffffffffffffffff.',
+        '...fffffffffffffff...',
+      ], P)));
+    case 'hips':
+      // hip bones at the top, the udder hanging under the belly
+      return finish(draw(19, 14, [
+        '.fff..fffffffffff..',
+        'fFFFffFFFFFFkkkFFff',
+        'ffffffffffkkkkkkfff',
+        'fffffffffkkkkkkkkff',
+        'ffffkkffkkkkkkkkkff',
+        'fffkkkkfkkkkkkkkfff',
+        'fffkkkkkfkkkkkkffff',
+        'ffffkkkffffkkffffff',
+        'fffffffffffffffffff',
+        'fffffffffffffffffff',
+        '.ffffffffffffffffff',
+        '..ffffffflllllfffff',
+        '...fffff.lllll.....',
+        '.........l.l.l.....',
+      ], P));
+    case 'tail':
+      // hangs from the tailhead, a black tuft on the end; too thin for an outline
+      return finish(draw(4, 15, [
+        'ff..', 'ff..', '.f..', '.f..', '.f..', '.f..', '.f..', '.f..', '.f..', '.f..', '.k..', 'kkk.', 'kkk.', 'kkk.', '.k..',
+      ], P), { outline: false });
+    case 'upperFront':
+      return finish(draw(5, 11, ['fffff', 'fFfff', 'fffff', 'fffff', 'fffff', 'ffff.', 'ffff.', 'ffff.', 'ffff.', 'ffff.', 'ffff.'], P));
+    case 'lowerFront':
+      return finish(draw(4, 8, ['fff.', 'fff.', 'fff.', 'fff.', 'fff.', 'ffd.', 'kkk.', 'kkkK'], P));
+    case 'upperBack':
+      // a broad thigh down to the hock
+      return finish(draw(6, 11, ['ffffff', 'fFffff', 'ffffff', 'ffffff', '.fffff', '.ffff.', '.ffff.', '..fff.', '..fff.', '..fff.', '..fff.'], P));
+    default: // lowerBack
+      return finish(draw(4, 8, ['.fff', '.fff', '.fff', '.fff', '.fff', '.ffd', '.kkk', 'kkkK'], P));
+  }
+}
+
+// ---------------------------------------------------------------- gorse
+
+function gorsePart(base: string, c: Coat): PixelArt {
+  const P = pal(c);
+  switch (base) {
+    case 'head': {
+      // a low chitin dome, an amber mark on top, mandibles hooked down in front
+      const a = draw(10, 8, [
+        '..kkkkk...',
+        '.kKlKKkf..',
+        'kffffffff.',
+        'kfffffffff',
+        'fffffffffn',
+        '.fffffffnn',
+        '..fffff.n.',
+        '.......n..',
+      ], P);
+      finish(a);
+      // the big eye (it blinks and dims, see CREATURE_EYE) and a smaller one ahead of it
+      a.set(6, 2, c.eye).set(5, 2, c.fur[1]);
+      a.set(8, 3, c.pink);
+      return a;
+    }
+    case 'chest':
+      return openBack(finish(draw(12, 9, [
+        '...kkkkkk...',
+        '.kkKlKKlKkk.',
+        'kfffffffffff',
+        'fFffffffffff',
+        'ffffffffffff',
+        'ffffffffffff',
+        'fffffffffff.',
+        '.ffffffff...',
+        '...ffff.....',
+      ], P)));
+    case 'hips':
+      // the fat abdomen, ringed with amber bands, darker underneath
+      return finish(draw(13, 12, [
+        '....flfflf...',
+        '..lFFlFFlFff.',
+        '.flfflfflffff',
+        'fflfflfflffff',
+        'fflfflfflffff',
+        'fflfflfflffff',
+        'fflfflfflffff',
+        'fflfflfflffff',
+        '.flfflfflfff.',
+        '.kkkkkkkkkkk.',
+        '..kkkkkkkkk..',
+        '....kkkkk....',
+      ], P));
+    case 'tail':
+      // the stinger, curled up behind; too thin for an outline
+      return finish(draw(6, 5, [
+        'L.....',
+        'kL....',
+        '.kkf..',
+        '..kfff',
+        '...fff',
+      ], P), { outline: false });
+    // the legs arch as a spider's: from the hip down and out to a knee jutting forward
+    // (the front pair) or back (the hind pair), then in again to a claw under it
+    case 'upperFront':
+      return finish(draw(5, 11, ['.kk..', '.fk..', '.ff..', '..ff.', '..fF.', '..ff.', '...ff', '...ff', '...ll', '...ff', '...kk'], P));
+    case 'lowerFront':
+      return finish(draw(5, 10, ['...kk', '...ff', '..ff.', '..ff.', '..ff.', '..lf.', '..f..', '..f..', '..f..', '..n..'], P));
+    case 'upperBack':
+      return finish(draw(5, 11, ['..kk.', '..kf.', '..ff.', '.ff..', '.Ff..', '.ff..', 'ff...', 'ff...', 'll...', 'ff...', 'kk...'], P));
+    default: // lowerBack
+      return finish(draw(5, 10, ['kk...', 'ff...', '.ff..', '.ff..', '.ff..', '.fl..', '..f..', '..f..', '..f..', '..n..'], P));
+  }
+}
+
+const PARTS: Record<CreatureKind, (base: string, c: Coat) => PixelArt> = { dog: dogPart, cat: catPart, pig: pigPart, fox: foxPart, cow: cowPart, gorse: gorsePart };
 
 const cache = new Map<string, PixelArt>();
 

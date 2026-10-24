@@ -1,5 +1,8 @@
 import { register, registerProps } from './items';
-import { registerWeapons, registerMelee, registerExplosives, registerMedical, registerLiquids, registerMachinery, registerDevices, registerVehicles, registerTools } from './weapons';
+import { registerWeapons, registerMelee, registerExplosives, registerMedical, registerLiquids, registerMachinery, registerDevices, registerTools } from './weapons';
+import { registerVehicles } from './vehicles';
+import { registerArsenal } from './arsenal';
+import { registerMachines2 } from './machines2';
 import { Human, VARIANTS, HUMAN_HALF_HEIGHT } from '../entities/Human';
 import { figurePreview } from '../art/human';
 import { Creature, SPECIES, creaturePreview, creatureHalfHeight } from '../entities/Creature';
@@ -33,6 +36,8 @@ function registerCharacters(): void {
     { id: 'cat', name: 'Cat', tags: ['animal', 'pet', 'ragdoll', 'creature'] as string[], description: 'A small, light cat. Twists round in the air and lands on its feet.' },
     { id: 'pig', name: 'Pig', tags: ['animal', 'farm', 'ragdoll', 'creature', 'hog'] as string[], description: 'A heavy, sturdy pig. Ambles about, oinking, and squeals when hurt.' },
     { id: 'fox', name: 'Fox', tags: ['animal', 'wild', 'ragdoll', 'creature'] as string[], description: 'A quick, wary fox. Runs from anyone who comes close.' },
+    { id: 'cow', name: 'Cow', tags: ['animal', 'farm', 'ragdoll', 'creature', 'cattle', 'moo'] as string[], description: 'A big, heavy cow. Ambles about grazing and mooing, and kicks out at anything that startles it from behind.' },
+    { id: 'gorse', name: 'Gorse', tags: ['animal', 'monster', 'hostile', 'ragdoll', 'creature', 'spider', 'bug'] as string[], description: 'A hostile four-legged thing of chitin. Goes for people and androids on sight, spitting its blood, which eats through flesh. Break its head and it can no longer spit. Acid does nothing to it; fire does a lot.' },
   ] as const;
   for (const a of animals) {
     const def: ItemDef = register({
@@ -62,4 +67,6 @@ export function registerAll(): void {
   registerDevices();
   registerVehicles();
   registerTools();
+  registerArsenal();
+  registerMachines2();
 }

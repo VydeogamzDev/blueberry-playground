@@ -246,11 +246,6 @@ export class Sprites {
     this.uploads.clear();
     for (const p of this.pages) p.batch.flush();
   }
-
-  /** Draw calls the sprites take (one per atlas page). */
-  get pageCount(): number {
-    return this.pages.length;
-  }
 }
 
 /** One part's sprite: where it is, how it's tinted, and which atlas rectangle it shows. */

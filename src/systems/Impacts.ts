@@ -15,7 +15,8 @@ export class Impacts {
   private game: Game;
   /** Impacts processed during the last step (for diagnostics). */
   lastCount = 0;
-  private seen = new Set<string>();
+  /** Collider pairs already counted this step: the higher handle of each, by the lower. */
+  private seen = new Map<number, number[]>();
 
   constructor(game: Game) {
     this.game = game;
@@ -44,10 +45,13 @@ export class Impacts {
       const maxAng = Math.max(p1 ? Math.abs(p1.av) : 0, p2 ? Math.abs(p2.av) : 0);
       if (Math.hypot(v1x - v2x, v1y - v2y) + maxAng * 0.6 < MIN_SPEED) return;
       // one impact per collider pair per step
-      // (handles are opaque f64 bit patterns, so build a string key)
-      const key = h1 < h2 ? `${h1}|${h2}` : `${h2}|${h1}`;
-      if (seen.has(key)) return;
-      seen.add(key);
+      // (handles are opaque f64 bit patterns: no one number holds two, and turning them into strings is slow)
+      const lo = h1 < h2 ? h1 : h2;
+      const hi = h1 < h2 ? h2 : h1;
+      const met = seen.get(lo);
+      if (!met) seen.set(lo, [hi]);
+      else if (met.includes(hi)) return;
+      else met.push(hi);
       const force = ev.totalForceMagnitude();
       const dir = ev.maxForceDirection();
       const dl = Math.hypot(dir.x, dir.y);
@@ -94,10 +98,11 @@ export class Impacts {
 
       const m1 = p1 && !p1.frozen ? p1.mass : Infinity;
       const m2 = p2 && !p2.frozen ? p2.mass : Infinity;
-      // orient the normal so it points into each part
+      // orient the normal so it points into p1 (and out of p2): by p1, or against the
+      // ground (no part on that side, whichever side it is), by p2
       let n1x = nx;
       let n1y = ny;
-      if (p1 && (p1.x - px) * nx + (p1.y - py) * ny < 0) {
+      if (p1 ? (p1.x - px) * nx + (p1.y - py) * ny < 0 : !!p2 && (p2.x - px) * nx + (p2.y - py) * ny > 0) {
         n1x = -nx;
         n1y = -ny;
       }
@@ -130,11 +135,14 @@ export class Impacts {
     if (strength < 0.03) return;
     const s1: ImpactSound = p1 ? p1.mat.sound : 'stone';
     const s2: ImpactSound = p2 ? p2.mat.sound : 'stone';
-    // the lighter object usually dominates the sound
-    const primary = m1 <= m2 ? s1 : s2;
+    // the lighter object usually dominates the sound; but a blow on something soft
+    // (a body, rubber) is a thud: the hard thing that hits it barely rings
+    const soft1 = s1 === 'flesh' || s1 === 'rubber';
+    const soft2 = s2 === 'flesh' || s2 === 'rubber';
+    const primary = soft1 !== soft2 ? (soft1 ? s1 : s2) : m1 <= m2 ? s1 : s2;
     const secondary = primary === s1 ? s2 : s1;
     this.game.sound.impact(primary, strength, x);
-    if (secondary !== primary && strength > 0.25) this.game.sound.impact(secondary, strength * 0.5, x);
+    if (secondary !== primary && strength > 0.25) this.game.sound.impact(secondary, strength * (soft1 !== soft2 ? 0.35 : 0.5), x);
     // sparks on hard metal impacts
     const metal = (p1?.mat.sparks ?? true) && (p2?.mat.sparks ?? true);
     if (metal && speed > 7 && (s1 === 'metal' || s2 === 'metal')) {

@@ -77,10 +77,6 @@ export function step(c: Color, d: number): Color {
   return e.ramp[Math.max(0, Math.min(4, e.level + d))];
 }
 
-export function levelOf(c: Color): number {
-  return lookup.get(c)?.level ?? 2;
-}
-
 // ---------------------------------------------------------------- materials
 
 export const SKIN = ramp('#c39274', 0.85);

@@ -7,6 +7,9 @@ import { PixelArt, type Color } from '../art/PixelArt';
 import type { PhysMaterial } from './Materials';
 import type { Entity } from './Entity';
 
+/** How many solid pixels each picture has (see Part.lost()). */
+const filledCount = new WeakMap<PixelArt, number>();
+
 /** Collider shapes in sprite-pixel units, relative to the body origin (y up). */
 export type ShapeSpec =
   | { kind: 'box'; w: number; h: number; x?: number; y?: number; r?: number; angle?: number }
@@ -38,6 +41,22 @@ export interface PartSpec {
   gravityScale?: number;
   /** Share the base image between identical parts until painted. */
   textureKey?: string;
+  /** Points connections snap to (a motor's axle, a gate's ports: see tools/AnchorSnap). */
+  attach?: AttachPoint[];
+}
+
+/** What an attach point is for: the place to fix a machine by, to fix things to it, or a wire's way in or out. */
+export type AttachRole = 'mount' | 'axle' | 'plate' | 'in' | 'out';
+
+/**
+ * A point on a part that connections snap to (see tools/AnchorSnap), in sprite
+ * pixels from the art's top-left corner (fractions allowed: 0.5 is a pixel's middle).
+ */
+export interface AttachPoint {
+  name: string;
+  x: number;
+  y: number;
+  role?: AttachRole;
 }
 
 const sharedImages = new Map<string, { image: Uint8Array; region: Region }>();
@@ -56,6 +75,8 @@ export class Part {
   flip: 1 | -1;
   readonly layer: number;
   spriteOffset: V2;
+  /** Points connections snap to, if its spec named any (see PartSpec.attach). */
+  readonly attach: AttachPoint[] | undefined;
 
   /** The sprite's RGBA bytes, (w + 2) x (h + 2) with a clear border, painted on by wounds. */
   private image: Uint8Array;
@@ -64,7 +85,13 @@ export class Part {
   private texDirty = false;
   /** paintData() as it is now, kept until the sprite is painted again (undefined: not worked out). */
   private paintStr: string | null | undefined = undefined;
+  /** Art pixels carved away (see carve()), one byte each, w x h; null: none. */
+  private holes: Uint8Array | null = null;
+  /** How many art pixels have been carved away. */
+  holeCount = 0;
   private readonly sprites: Sprites;
+  /** Its gravity scale when it isn't weightless. */
+  private readonly gravity: number;
 
   // gameplay state
   hp: number;
@@ -76,6 +103,8 @@ export class Part {
   /** Oil soaked in (0..1): makes anything burn. */
   oil = 0;
   frozen = false;
+  /** Ignores gravity ("Make weightless" in the context menu). */
+  weightless = false;
   /** Self-collision group: parts with the same non-zero group never collide. */
   group = 0;
   /** Parts that should never generate contacts with this part. */
@@ -119,6 +148,8 @@ export class Part {
     this.maxHp = spec.maxHp ?? 100;
     this.hp = this.maxHp;
     this.spriteOffset = spec.spriteOffset ?? { x: 0, y: 0 };
+    this.attach = spec.attach;
+    this.gravity = spec.gravityScale ?? 1;
 
     const world = entity.game.physics.world;
     const bd = RAPIER.RigidBodyDesc.dynamic()
@@ -334,10 +365,16 @@ export class Part {
 
   /** World point -> sprite pixel (column, row) in art space. */
   worldToPixel(wx: number, wy: number): { ix: number; iy: number } {
+    const p = this.worldToPixelF(wx, wy);
+    return { ix: Math.floor(p.x), iy: Math.floor(p.y) };
+  }
+
+  /** World point -> sprite pixel coordinates, unrounded (pixel (ix, iy) covers ix..ix+1, iy..iy+1). */
+  worldToPixelF(wx: number, wy: number): V2 {
     const l = this.worldToLocal(wx, wy);
     const lx = (l.x / PX - this.spriteOffset.x * this.flip) * this.flip;
     const ly = l.y / PX - this.spriteOffset.y;
-    return { ix: Math.floor(lx + this.w / 2), iy: Math.floor(this.h / 2 - ly) };
+    return { x: lx + this.w / 2, y: this.h / 2 - ly };
   }
 
   /** Sprite pixel center -> world point. */
@@ -388,24 +425,35 @@ export class Part {
     return this.paintStr;
   }
 
-  /** Paints back what paintData() gave, on a part with the same art. */
+  /** Paints back what paintData() gave, on a part with the same art (pixels carved away come back carved). */
   restorePaint(data: string): void {
     const b = fromBase64(data);
     const img = this.ownImage();
+    const W = this.w + 2;
+    let carved = false;
     for (let j = 0; j + 7 <= b.length; j += 7) {
-      const k = (b[j] | (b[j + 1] << 8) | (b[j + 2] << 16)) * 4;
+      const i = b[j] | (b[j + 1] << 8) | (b[j + 2] << 16);
+      const k = i * 4;
       if (k + 4 > img.length) continue;
       img[k] = b[j + 3];
       img[k + 1] = b[j + 4];
       img[k + 2] = b[j + 5];
       img[k + 3] = b[j + 6];
+      if (b[j + 6] === 0) carved = this.markHole((i % W) - 1, Math.floor(i / W) - 1) || carved;
     }
     this.paintStr = data;
+    if (carved) this.refit();
+  }
+
+  /** An art pixel's colour as it shows now (wounds, blood and all). */
+  colorAt(ix: number, iy: number): Color {
+    const o = ((iy + 1) * (this.w + 2) + ix + 1) * 4;
+    return (this.image[o] << 16) | (this.image[o + 1] << 8) | this.image[o + 2];
   }
 
   /** Paints one art pixel (only where the sprite is solid), blended by alpha. */
   paintPixel(ix: number, iy: number, color: Color, alpha = 1): boolean {
-    if (!this.art.filled(ix, iy)) return false;
+    if (!this.solidAt(ix, iy)) return false;
     const img = this.ownImage();
     const o = ((iy + 1) * (this.w + 2) + ix + 1) * 4;
     const k = 1 - alpha;
@@ -418,6 +466,11 @@ export class Part {
   /** Paints a small blob around a world point. Returns whether anything was painted. */
   paintAt(wx: number, wy: number, color: Color, radius = 0, alpha = 1): boolean {
     const { ix, iy } = this.worldToPixel(wx, wy);
+    return this.paintAtPixel(ix, iy, color, radius, alpha);
+  }
+
+  /** paintAt() around an art pixel (in pixels: where it lands doesn't hang on the pose, see net/Effects). */
+  paintAtPixel(ix: number, iy: number, color: Color, radius = 0, alpha = 1): boolean {
     let any = false;
     const r = Math.ceil(radius);
     for (let j = -r; j <= r; j++) {
@@ -431,7 +484,7 @@ export class Part {
       let best = -1;
       let bd = 1e9;
       for (let j = -2; j <= 2; j++) for (let i = -2; i <= 2; i++) {
-        if (this.art.filled(ix + i, iy + j) && i * i + j * j < bd) {
+        if (this.solidAt(ix + i, iy + j) && i * i + j * j < bd) {
           bd = i * i + j * j;
           best = (iy + j) * 10000 + (ix + i);
         }
@@ -441,15 +494,114 @@ export class Part {
     return any;
   }
 
-  /** Replaces the sprite with another of the same size (e.g. a lamp turning on). */
+  /** Replaces the sprite with another of the same size (e.g. a lamp turning on). What was carved away stays gone. */
   setArt(art: PixelArt): void {
-    this.ownImage().set(art.toRGBA(1));
+    const img = this.ownImage();
+    img.set(art.toRGBA(1));
     this.art = art;
+    const holes = this.holes;
+    if (holes) for (let i = 0; i < holes.length; i++) if (holes[i]) img[((Math.floor(i / this.w) + 1) * (this.w + 2) + (i % this.w) + 1) * 4 + 3] = 0;
   }
 
-  /** Is the given art pixel solid? */
+  /** Is the given art pixel solid (and not carved away)? */
   solidAt(ix: number, iy: number): boolean {
-    return this.art.filled(ix, iy);
+    return this.art.filled(ix, iy) && !(this.holes && this.holes[iy * this.w + ix]);
+  }
+
+  /** The share of its picture carved away (0..1). */
+  lost(): number {
+    if (!this.holeCount) return 0;
+    let n = filledCount.get(this.art);
+    if (n === undefined) {
+      n = 0;
+      for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) if (this.art.filled(x, y)) n++;
+      filledCount.set(this.art, n);
+    }
+    return n ? this.holeCount / n : 0;
+  }
+
+  /**
+   * Takes pixels off the part (`px`: x, y pairs), shot or torn away: gone from its
+   * sprite and from what counts as solid (blood, wounds and flames don't land there),
+   * with `rim` (x, y, colour triples) painted where they were torn from, and its
+   * colliders shrunk to what's left (see refit()). Saved with the paint (a carved
+   * pixel is a clear one).
+   */
+  carve(px: number[], rim: number[] = []): void {
+    if (this.destroyed) return;
+    const img = this.ownImage();
+    for (let k = 0; k + 1 < px.length; k += 2) {
+      const ix = px[k];
+      const iy = px[k + 1];
+      if (!this.markHole(ix, iy)) continue;
+      img[((iy + 1) * (this.w + 2) + ix + 1) * 4 + 3] = 0;
+    }
+    for (let k = 0; k + 2 < rim.length; k += 3) this.paintPixel(rim[k], rim[k + 1], rim[k + 2]);
+    this.refit();
+  }
+
+  private markHole(ix: number, iy: number): boolean {
+    if (!this.solidAt(ix, iy)) return false;
+    (this.holes ??= new Uint8Array(this.w * this.h))[iy * this.w + ix] = 1;
+    this.holeCount++;
+    return true;
+  }
+
+  /**
+   * Its box colliders shrunk to the pixels it has left, once a whole end of it is
+   * gone (a hand shot off a forearm doesn't leave the forearm its full length),
+   * keeping their density; shapes of other kinds stay as they are.
+   */
+  private refit(): void {
+    if (!this.holeCount || this.destroyed) return;
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (let y = 0; y < this.h; y++) {
+      for (let x = 0; x < this.w; x++) {
+        if (!this.solidAt(x, y)) continue;
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+    }
+    if (x1 < x0) return;
+    // (the edges of what's left, in the body's frame)
+    const a = this.pixelToLocal(x0, y0);
+    const b = this.pixelToLocal(x1, y1);
+    const lx0 = Math.min(a.x, b.x) - PX / 2;
+    const lx1 = Math.max(a.x, b.x) + PX / 2;
+    const ly0 = Math.min(a.y, b.y) - PX / 2;
+    const ly1 = Math.max(a.y, b.y) + PX / 2;
+    for (const c of this.colliders) {
+      const t = c.shape.type;
+      if ((t !== RAPIER.ShapeType.Cuboid && t !== RAPIER.ShapeType.RoundCuboid) || Math.abs(c.rotationWrtParent() ?? 0) > 1e-3) continue;
+      const he = c.halfExtents();
+      const at = c.translationWrtParent();
+      if (!he || !at) continue;
+      const r0 = t === RAPIER.ShapeType.RoundCuboid ? c.roundRadius() : 0;
+      const hx = he.x + r0;
+      const hy = he.y + r0;
+      const bx0 = Math.max(at.x - hx, lx0);
+      const bx1 = Math.min(at.x + hx, lx1);
+      const by0 = Math.max(at.y - hy, ly0);
+      const by1 = Math.min(at.y + hy, ly1);
+      // (nothing much left of it, or less than a pixel off each side: as it is)
+      if (bx1 - bx0 < PX || by1 - by0 < PX) continue;
+      const slack = PX * 0.75;
+      if (bx0 - (at.x - hx) < slack && at.x + hx - bx1 < slack && by0 - (at.y - hy) < slack && at.y + hy - by1 < slack) continue;
+      const W = bx1 - bx0;
+      const H = by1 - by0;
+      const r = Math.max(0, Math.min(r0, Math.min(W, H) / 2 - 0.05 * PX));
+      // (density was scaled up for the rounding: see addShape())
+      const base = c.density() * (4 * Math.max(1e-9, he.x * he.y)) / (4 * hx * hy);
+      c.setHalfExtents({ x: W / 2 - r, y: H / 2 - r });
+      if (t === RAPIER.ShapeType.RoundCuboid) c.setRoundRadius(r);
+      c.setTranslationWrtParent({ x: (bx0 + bx1) / 2, y: (by0 + by1) / 2 });
+      c.setDensity((base * (W * H)) / Math.max(1e-9, (W - 2 * r) * (H - 2 * r)));
+    }
   }
 
   // ---- state ---------------------------------------------------------------
@@ -462,15 +614,25 @@ export class Part {
     this.refreshTint();
   }
 
+  setWeightless(on: boolean): void {
+    if (this.weightless === on || this.destroyed) return;
+    this.weightless = on;
+    this.body.setGravityScale(on ? 0 : this.gravity, true);
+  }
+
   setNoCollideAll(on: boolean): void {
     this.noCollideAll = on;
     this.contactGroups = on || this.onlyStatic ? GROUPS_NOCOLLIDE : GROUPS_DYNAMIC;
+    // (a limb blown off keeps the setting, so its body reads right, but its
+    // colliders went with it: Rapier panics at the touch of one)
+    if (this.destroyed) return;
     for (const c of this.colliders) c.setCollisionGroups(this.contactGroups);
   }
 
   setOnlyStatic(): void {
     this.onlyStatic = true;
     this.contactGroups = GROUPS_NOCOLLIDE;
+    if (this.destroyed) return;
     for (const c of this.colliders) c.setCollisionGroups(GROUPS_NOCOLLIDE);
   }
 

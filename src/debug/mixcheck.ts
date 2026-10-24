@@ -93,7 +93,7 @@ export interface Level {
 
 /**
  * Checks the sound mix by measurement rather than by ear, exposed as
- * `bp.mixcheck()` and run by `npm run mixcheck`. It records what the game plays
+ * `bp.mixcheck.scenes()` and `bp.mixcheck.levels()` and run by `npm run mixcheck`. It records what the game plays
  * through a few busy scenes (on simulated time, the same rate limits and voice
  * limit applying), renders that offline through the real master bus, and reports
  * peaks, clipping and loudness; and it measures every game sound on its own, so
@@ -390,6 +390,16 @@ export function makeMixCheck(game: Game, controls: Controls) {
       for (const k of snd.keys().filter((k) => k.startsWith('creature/'))) measure(k, () => snd.play(k, { gain: 0.6, x }));
       measure('liquid splash', () => snd.play('liquid/splash', { gain: 0.9, x }));
       measure('glass break', () => snd.play('impact/glass_break', { gain: 0.9, x }));
+      // the RPG and the tank's gun, a Molotov going up, getting into a car, the medical kit (at the gains they're played at)
+      measure('rocket launch', () => snd.play('gun/rocket_launch', { gain: 1.4, x }));
+      measure('tank cannon', () => snd.play('gun/cannon', { gain: 1.1, x }));
+      measure('bottle smash', () => snd.play('impact/bottle_smash', { gain: 0.9, x }));
+      measure('fire whoosh', () => snd.play('fire/whoosh', { gain: 0.4, x }));
+      measure('car door', () => snd.play('machine/car_door', { gain: 0.38, x }));
+      measure('inject', () => snd.play('medical/inject', { gain: 0.7, x }));
+      measure('bandage', () => snd.play('medical/bandage', { gain: 0.9, x }));
+      measure('defib charge', () => snd.play('medical/defib_charge', { gain: 0.55, x }));
+      measure('defib shock', () => snd.play('medical/defib_shock', { gain: 0.45, x }));
     } finally {
       snd.tap = null;
       snd.clock = () => performance.now();

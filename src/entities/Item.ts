@@ -3,7 +3,7 @@ import { PX } from '../engine/constants';
 import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
 import type { Entity } from '../world/Entity';
-import type { ItemDef, SpawnOptions } from '../world/types';
+import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
 import type { V2 } from '../engine/math';
 
 /** Where a hand holds an item, in art pixels (x right, y down from the top). */
@@ -91,13 +91,23 @@ export class Item extends Prop {
     return this.totalMass() + (this.holder ? Math.min(80, this.holder.totalMass()) * 0.5 : 0);
   }
 
+  /** In someone's hand, it can be dropped from its own menu (guns, bombs and blades offer it among their own entries). */
+  contextActions(): ContextAction[] {
+    return this.holder ? [{ label: 'Drop', action: () => this.holder?.dropItem(this) }] : [];
+  }
+
   onGrab(_part: Part, held: boolean, at?: V2): void {
-    if (held || !this.hold || this.holder || this.destroyed) return;
-    // dropping an item onto someone's hand makes them hold it
+    if (!held) this.offer(at);
+  }
+
+  offer(at?: V2): boolean {
+    if (!this.hold || this.holder || this.destroyed) return false;
+    // dragging an item into someone's hand (or dropping it there) makes them hold it
     for (const e of this.game.entities) {
       const h = e as Entity & Partial<Holder>;
-      if (e !== this && !e.destroyed && h.tryHold && h.tryHold(this, at)) return;
+      if (e !== this && !e.destroyed && h.tryHold && h.tryHold(this, at)) return true;
     }
+    return false;
   }
 
   protected onDestroy(): void {

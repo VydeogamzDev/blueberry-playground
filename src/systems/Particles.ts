@@ -62,7 +62,8 @@ class Layer {
   readonly cap: number;
   count = 0;
   private warmed = false;
-  readonly x: Float32Array;
+  /** (64 bits: far out on an endless map, 32 can't hold the little a slow particle moves in a step) */
+  readonly x: Float64Array;
   readonly y: Float32Array;
   readonly vx: Float32Array;
   readonly vy: Float32Array;
@@ -90,7 +91,7 @@ class Layer {
 
   constructor(cap: number, additive: boolean, z: number) {
     this.cap = cap;
-    this.x = new Float32Array(cap);
+    this.x = new Float64Array(cap);
     this.y = new Float32Array(cap);
     this.vx = new Float32Array(cap);
     this.vy = new Float32Array(cap);
@@ -226,8 +227,6 @@ const BLOOD_FILTER = groups(GROUP.DEBRIS, GROUP.STATIC | GROUP.DYNAMIC);
 const RUNOFF_FILTER = groups(GROUP.DEBRIS, GROUP.STATIC);
 /** Flag on `liq` for a drop running off something on its way to the floor. */
 const RUNOFF = 0x80;
-/** Share of drops that run off what they hit (the rest soak in); blood always sticks. */
-const RUNOFF_CHANCE: Record<number, number> = { [Liquid.Water]: 0.7, [Liquid.Acid]: 0.6, [Liquid.Oil]: 0.45 };
 /**
  * Droplets in flight before new blood thins out: each one ray-casts its path
  * every step, and a battle of 100 people keeps a thousand of them in the air
@@ -243,6 +242,8 @@ export class Particles {
   private game: Game;
   private ray = new RAPIER.Ray({ x: 0, y: 0 }, { x: 1, y: 0 });
   bloodEnabled = true;
+  /** Share of effect particles made (Settings > Graphics): smoke, sparks, flames, dust; blood, liquids and flashes always are. */
+  detail = 1;
   /** Droplets (blood and liquids) alive after the last step. */
   private drops = 0;
 
@@ -258,6 +259,7 @@ export class Particles {
   }
 
   emit(kind: PK, x: number, y: number, o: EmitOpts = {}): void {
+    if (this.detail < 1 && kind !== PK.Blood && kind !== PK.Flash && !o.liquid && Math.random() > this.detail) return;
     const L = kind === PK.Spark || kind === PK.Flash || kind === PK.Ember ? this.additive
       : kind === PK.Fire ? this.fireL : kind === PK.Smoke ? this.smokeL : this.normal;
     const i = L.add();
@@ -304,6 +306,61 @@ export class Particles {
     }
   }
 
+  /**
+   * Blood flung hard (a heavy round coming out, a limb blown apart): a spray of
+   * drops along (dx, dy), `spread` either side of it (rad: π all round), most
+   * nearly as fast as `speed` (m/s), that splatter what they hit (see
+   * Liquids.landDroplet()), and a red mist hanging a moment where it burst out.
+   */
+  splatter(x: number, y: number, dx: number, dy: number, amount: number, speed: number, spread = 0.35, ignore: RAPIER.RigidBody | null = null): void {
+    if (!this.bloodEnabled) return;
+    const thin = Math.min(1, DROP_BUDGET / (this.drops + 1));
+    const n = Math.min(80, thin < 1 ? Math.floor(amount * thin + Math.random()) : Math.round(amount));
+    this.drops += n;
+    const ang0 = Math.atan2(dy, dx);
+    for (let k = 0; k < n; k++) {
+      // (the fast ones the narrower: a cone, its slow drops falling short of the rest)
+      const fast = Math.random();
+      const s = speed * (0.35 + fast * 0.65);
+      const ang = ang0 + (Math.random() * 2 - 1) * spread * (1.3 - fast * 0.6);
+      const shadeRand = Math.random();
+      this.emit(PK.Blood, x + (Math.random() - 0.5) * PX * 2, y + (Math.random() - 0.5) * PX * 2, {
+        vx: Math.cos(ang) * s,
+        vy: Math.sin(ang) * s,
+        life: 3,
+        size: PX * (Math.random() < 0.4 ? 2 : 1),
+        color: shadeRand < 0.33 ? 0x7d0d0d : shadeRand < 0.66 ? 0x941616 : 0x660909,
+        gravity: 1,
+        drag: 0.3,
+        ignore,
+      });
+    }
+    this.mist(x, y, dx, dy, Math.min(10, 2 + Math.round(amount / 8)), Math.min(1, speed / 10));
+  }
+
+  /** A puff of fine blood (`n` wisps, `force` 0..1) hanging in the air a moment, drifting off along (dx, dy). */
+  mist(x: number, y: number, dx: number, dy: number, n: number, force = 0.5): void {
+    if (!this.bloodEnabled) return;
+    const l = Math.hypot(dx, dy) || 1;
+    for (let k = 0; k < n; k++) {
+      const s = (0.4 + Math.random() * 1.6) * (0.5 + force);
+      const size = PX * (1.5 + Math.random() * 1.5 + force);
+      this.emit(PK.Smoke, x + (Math.random() - 0.5) * PX * 3, y + (Math.random() - 0.5) * PX * 3, {
+        vx: (dx / l) * s + (Math.random() - 0.5) * 0.6,
+        vy: (dy / l) * s + (Math.random() - 0.5) * 0.6,
+        life: 0.25 + Math.random() * 0.3,
+        size,
+        size1: size * (1.4 + Math.random() * 0.6),
+        color: Math.random() < 0.5 ? 0xa01818 : 0x7a0e0e,
+        color1: 0x5a0a0a,
+        alpha: 0.55,
+        alpha1: 0,
+        gravity: 0.15,
+        drag: 3.5,
+      });
+    }
+  }
+
   /** Emits droplets of a liquid (water, acid, oil) in a fan around (dx, dy). */
   liquid(kind: Liquid, x: number, y: number, dx: number, dy: number, amount: number, speed = 2.5, spread = 0.55, ignore: RAPIER.RigidBody | null = null): void {
     const n = Math.min(300, Math.round(amount));
@@ -327,6 +384,8 @@ export class Particles {
   }
 
   sparks(x: number, y: number, dx: number, dy: number, n: number, speed = 6): void {
+    // they can light oil where they land (in a multiplayer game, in the host's)
+    if (!this.game.net?.guest) this.game.fire.sparks(x, y, n, speed);
     for (let k = 0; k < n; k++) {
       const ang = Math.atan2(dy, dx) + (Math.random() * 2 - 1) * 0.9;
       const s = speed * (0.3 + Math.random());
@@ -390,9 +449,12 @@ export class Particles {
   }
 
   private stepLayer(L: Layer, dt: number): void {
-    const g = -9.81;
+    const g = this.game.gravity;
     const floor = WORLD.floor;
     const world = this.game.physics.world;
+    const env = this.game.env;
+    // (on a map with ground, bits land on whatever top of it is under them)
+    const terrain = env.ground.length > 0;
     for (let i = 0; i < L.count; i++) {
       L.life[i] -= dt;
       if (L.life[i] <= 0) {
@@ -425,8 +487,16 @@ export class Particles {
             const hx = ox + (dx / d) * hit.timeOfImpact;
             const hy = oy + (dy / d) * hit.timeOfImpact;
             const part = this.game.physics.partOf(hit.collider) ?? null;
-            landDroplet(this.game, liq, part, hx, hy, hit.normal.x, hit.normal.y, L.col[i * 4], L.col[i * 4 + 1], L.col[i * 4 + 2]);
-            if (part && Math.random() < (RUNOFF_CHANCE[liq] ?? 0)) {
+            // (a guest's drops are only for show: the stains and puddles they leave come from the host)
+            if (this.game.net?.guest) {
+              L.kill(i--);
+              continue;
+            }
+            // (a drop caught in a bucket is used up there)
+            const caught = landDroplet(this.game, liq, part, hx, hy, hit.normal.x, hit.normal.y, L.col[i * 4], L.col[i * 4 + 1], L.col[i * 4 + 2], L.vx[i], L.vy[i], L.size[i] > PX * 1.5);
+            // (blood sticks; a liquid wets what it hits, as landDroplet() has it, and
+            // all of it runs off: none of a flask's worth is lost on the way down)
+            if (part && !caught && liq !== Liquid.Blood) {
               // trickles off and drips down to the floor
               L.x[i] = hx + hit.normal.x * PX * 0.5;
               L.y[i] = hy;
@@ -444,13 +514,15 @@ export class Particles {
         L.y[i] = ny;
         continue;
       }
-      if ((kd === PK.Debris || kd === PK.Spark || kd === PK.Shell || kd === PK.Ember) && ny < floor + L.size[i] * 0.5) {
+      const lands = kd === PK.Debris || kd === PK.Spark || kd === PK.Shell || kd === PK.Ember;
+      const ground = terrain && lands ? env.groundAt(nx, oy + PX * 2) : floor;
+      if (lands && ny < ground + L.size[i] * 0.5) {
         L.x[i] = nx;
-        L.y[i] = floor + L.size[i] * 0.5;
+        L.y[i] = ground + L.size[i] * 0.5;
         L.vy[i] = -L.vy[i] * (kd === PK.Shell ? 0.45 : 0.3);
         L.vx[i] *= 0.6;
         if (Math.abs(L.vy[i]) < 0.3) L.vy[i] = 0;
-        if (kd === PK.Shell && Math.abs(L.vy[i]) > 0.5) this.game.sound.casing(nx, L.size[i] > PX * 1.5);
+        if (kd === PK.Shell && Math.abs(L.vy[i]) > 0.5 && !this.game.net?.guest) this.game.sound.casing(nx, L.size[i] > PX * 1.5);
         continue;
       }
       if (nx < WORLD.left || nx > WORLD.right) {
@@ -482,15 +554,16 @@ export class Particles {
   }
 }
 
-/** Permanent pixel stains on the static environment (blood on the floor, scorch marks). */
 /** Stains as captured for undo: pixel coordinates and colors, oldest slot first. */
 export interface StainState {
   n: number;
   head: number;
-  xy: Int16Array;
+  /** 16 bits each (±1024 m), but 32 on a map too wide for that (the endless plate). */
+  xy: Int16Array | Int32Array;
   rgba: Uint8Array;
 }
 
+/** Permanent pixel stains on the static environment (blood on the floor, scorch marks). */
 export class Stains {
   private cap = 60000;
   private n = 0;
@@ -587,7 +660,8 @@ export class Stains {
   capture(): StainState {
     if (this.saved?.version === this.version) return this.saved.state;
     const n = this.n;
-    const xy = new Int16Array(n * 2);
+    const wide = Math.max(-WORLD.left, WORLD.right, WORLD.ceiling) / PX > 32000;
+    const xy = wide ? new Int32Array(n * 2) : new Int16Array(n * 2);
     const rgba = new Uint8Array(n * 4);
     for (let i = 0; i < n; i++) {
       xy[i * 2] = Math.floor(this.pos[i * 3] / PX);
