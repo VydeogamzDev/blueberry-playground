@@ -72,7 +72,7 @@ const DOUSE_SPLASH = 8;
 const QUAD = 0.5 * 1000 * 2 * 0.085;
 /** Density (as relax() has it) a particle needs to count as in a body of water (one on its surface has about 1.3) rather than spray. */
 const BODY = 1;
-/** A chest's buoyancy, for the air in it (see Part.buoyancy): someone in deep water floats, just. */
+/** An animal's chest's buoyancy, for the air in it (see Part.buoyancy, Breath): in deep water it floats, its nose just under. */
 export const LUNGS = 4;
 /** The most points of a part's outline float() weighs the water's pressure at. */
 const RIM_MOST = 96;
@@ -116,11 +116,15 @@ const RING: [number, number][] = [];
 for (let j = -6; j <= 6; j++) for (let i = -6; i <= 6; i++) if ((i || j) && i * i + j * j <= 36) RING.push([i, j]);
 RING.sort((a, b) => a[0] * a[0] + a[1] * a[1] - (b[0] * b[0] + b[1] * b[1]));
 
+/** GLSL: water's `gl_FragColor` with a current through it (see LiveWater; needs a `uTime` uniform): bluer, and flickering white in specks. */
+export const LIVE_FLICKER = /* glsl */ `vec4(fract(sin(dot(floor(gl_FragCoord.xy / 3.0) + floor(uTime * 14.0) * 7.0, vec2(12.9898, 78.233))) * 43758.5453) > 0.94 ? vec3(0.9, 0.97, 1.0) : mix(gl_FragColor.rgb, vec3(0.5, 0.8, 1.0), 0.35), max(gl_FragColor.a, 0.6));`;
+
 const FRAG = /* glsl */ `
 uniform sampler2D uTex;
 uniform vec3 uDeep;
 uniform vec3 uMid;
 uniform vec3 uFoam;
+uniform float uTime;
 varying vec2 vUv;
 void main() {
   vec4 t = texture2D(uTex, vUv);
@@ -132,6 +136,8 @@ void main() {
     float k = floor(clamp(d / 40.0, 0.0, 1.0) * 4.0) / 4.0;
     gl_FragColor = vec4(mix(uMid, uDeep, k), 0.55 + 0.25 * k);
   }
+  // a current through it (see LiveWater): bluer, flickering white here and there
+  if (t.b > 0.5) gl_FragColor = ${LIVE_FLICKER}
 }`;
 
 const VERT = /* glsl */ `
@@ -189,6 +195,10 @@ export class Fluid {
    */
   private held = new Float32Array(MAX);
   private vy0 = new Float32Array(MAX);
+  /** Which have a current through them (see LiveWater, markLive()); and whether any do. */
+  readonly live = new Uint8Array(MAX);
+  private anyLive = false;
+  private queue = new Int32Array(MAX);
   /** Spatial hash: first particle in each cell, the next in the same cell. */
   private head = new Int32Array(TABLE);
   private next = new Int32Array(MAX);
@@ -212,6 +222,7 @@ export class Fluid {
   private mat: THREE.ShaderMaterial;
   private tex: THREE.DataTexture | null = null;
   private field = new Float32Array(0);
+  private liveMask = new Uint8Array(0);
 
   constructor(game: Game) {
     this.game = game;
@@ -223,6 +234,7 @@ export class Fluid {
         uDeep: { value: rgb(0x1d3f6b) },
         uMid: { value: rgb(LIQUID_COLORS[Liquid.Water][0]) },
         uFoam: { value: rgb(0xc4def0) },
+        uTime: { value: 0 },
       },
       transparent: true,
       depthTest: false,
@@ -287,6 +299,117 @@ export class Fluid {
     return false;
   }
 
+  /**
+   * The surface of the water round (x, y) (held up in a body of it, not spray): half a
+   * particle over the topmost between `skip` and `r` m either side (not what lies on
+   * something there), from `r` below the point to `up` above it (null: there's none there).
+   */
+  levelNear(x: number, y: number, r: number, up: number, skip = 0): number | null {
+    if (!this.n || x < this.bx0 - r || x > this.bx1 + r || y + up < this.by0 || y - r > this.by1) return null;
+    const { head, next, n } = this;
+    let top = -Infinity;
+    const cx0 = Math.floor((x - r) / H);
+    const cx1 = Math.floor((x + r) / H);
+    const cy0 = Math.floor((y - r) / H);
+    const cy1 = Math.floor((y + up) / H);
+    for (let cy = cy0; cy <= cy1; cy++) {
+      for (let cx = cx0; cx <= cx1; cx++) {
+        // (filed as of the last step: some since dried up, or moved on)
+        for (let i = head[cellKey(cx, cy)]; i >= 0; i = next[i]) {
+          if (i >= n) continue;
+          const py = this.y[i];
+          const dx = Math.abs(this.x[i] - x);
+          if (py <= top || py < y - r || py > y + up || dx > r || dx < skip || this.rho[i] < BODY || this.held[i] < HELD) continue;
+          top = py;
+        }
+      }
+    }
+    return top === -Infinity ? null : top + SPACING * 0.5;
+  }
+
+  /** No current through any of it (see markLive()). */
+  clearLive(): void {
+    if (!this.anyLive) return;
+    this.live.fill(0);
+    this.anyLive = false;
+  }
+
+  /**
+   * A current through the body of water at (x, y): every particle within `r` m
+   * of it, and every one joined to those through particles no further apart
+   * than they reach (a whole tankful, not a splash beside it), is marked live.
+   * Returns how many were newly marked.
+   */
+  markLive(x: number, y: number, r: number): number {
+    if (!this.n || x < this.bx0 - r || x > this.bx1 + r || y < this.by0 - r || y > this.by1 + r) return 0;
+    const { head, next, live, queue, n } = this;
+    let len = 0;
+    const r2 = r * r;
+    for (let cy = Math.floor((y - r) / H); cy <= Math.floor((y + r) / H); cy++) {
+      for (let cx = Math.floor((x - r) / H); cx <= Math.floor((x + r) / H); cx++) {
+        for (let i = head[cellKey(cx, cy)]; i >= 0; i = next[i]) {
+          if (i >= n || live[i]) continue;
+          const dx = this.x[i] - x;
+          const dy = this.y[i] - y;
+          if (dx * dx + dy * dy >= r2) continue;
+          live[i] = 1;
+          queue[len++] = i;
+        }
+      }
+    }
+    // (spread through the spatial hash, as filed by the last step)
+    const h2 = H * H;
+    for (let k = 0; k < len; k++) {
+      const i = queue[k];
+      const px = this.x[i];
+      const py = this.y[i];
+      const gx = Math.floor(px / H);
+      const gy = Math.floor(py / H);
+      for (let cy = gy - 1; cy <= gy + 1; cy++) {
+        for (let cx = gx - 1; cx <= gx + 1; cx++) {
+          for (let o = head[cellKey(cx, cy)]; o >= 0; o = next[o]) {
+            if (o >= n || live[o]) continue;
+            const dx = this.x[o] - px;
+            const dy = this.y[o] - py;
+            if (dx * dx + dy * dy >= h2) continue;
+            live[o] = 1;
+            queue[len++] = o;
+          }
+        }
+      }
+    }
+    if (len) this.anyLive = true;
+    return len;
+  }
+
+  /** Is there live water (see markLive()) within `r` m of (x, y)? */
+  liveNear(x: number, y: number, r: number): boolean {
+    if (!this.anyLive || x < this.bx0 - r || x > this.bx1 + r || y < this.by0 - r || y > this.by1 + r) return false;
+    const { head, next, live, n } = this;
+    const r2 = r * r;
+    for (let cy = Math.floor((y - r) / H); cy <= Math.floor((y + r) / H); cy++) {
+      for (let cx = Math.floor((x - r) / H); cx <= Math.floor((x + r) / H); cx++) {
+        for (let i = head[cellKey(cx, cy)]; i >= 0; i = next[i]) {
+          if (i >= n || !live[i]) continue;
+          const dx = this.x[i] - x;
+          const dy = this.y[i] - y;
+          if (dx * dx + dy * dy < r2) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /** A live particle picked at random (-1: none found), for its sparks. */
+  someLive(): number {
+    if (!this.anyLive) return -1;
+    for (let k = 0; k < 8; k++) {
+      const i = Math.floor(Math.random() * this.n);
+      if (this.live[i]) return i;
+    }
+    return -1;
+  }
+
   /** A drop of water landed at (x, y) going (vx, vy): every DROPS_PER of them make a particle there. */
   fromDrop(x: number, y: number, vx: number, vy: number): void {
     this.drops += 1;
@@ -309,6 +432,7 @@ export class Fluid {
     this.rest[i] = this.rest[j];
     this.seen[i] = this.seen[j];
     this.held[i] = this.held[j];
+    this.live[i] = this.live[j];
   }
 
   clear(): void {
@@ -763,7 +887,8 @@ export class Fluid {
         // round something isn't water it's in)
         const b = p.body;
         const com = b.worldCom();
-        const press = p.weightless ? 0 : DENSITY * up;
+        // (something heavier than its looks, less: a head, bone, see Breath)
+        const press = p.weightless ? 0 : DENSITY * up * Math.min(1, p.buoyancy);
         let fx = 0;
         let fy = 0;
         let tq = 0;
@@ -1085,11 +1210,19 @@ export class Fluid {
     if (this.field.length < tw * th) this.field = new Float32Array(tw * th);
     const field = this.field;
     field.fill(0, 0, tw * th);
+    // (and where it's live: see markLive())
+    const lit = this.anyLive;
+    if (lit) {
+      if (this.liveMask.length < tw * th) this.liveMask = new Uint8Array(tw * th);
+      this.liveMask.fill(0, 0, tw * th);
+      this.mat.uniforms.uTime.value = performance.now() / 1000;
+    }
+    const mask = this.liveMask;
     // each particle spread round it (2.2 px across, falling off)
     const rad = Math.max(1.2, (PX * 2.2) / cell);
     const R2 = rad * rad;
     const ri = Math.ceil(rad);
-    const splat = (fx: number, fy: number) => {
+    const splat = (fx: number, fy: number, on: boolean) => {
       if (fx < -ri || fy < -ri || fx > tw + ri || fy > th + ri) return;
       const ix = Math.floor(fx);
       const iy = Math.floor(fy);
@@ -1102,14 +1235,17 @@ export class Fluid {
           if (xx < 0 || xx >= tw) continue;
           const dx = xx + 0.5 - fx;
           const d2 = dx * dx + dy * dy;
-          if (d2 < R2) field[yy * tw + xx] += 1 - d2 / R2;
+          if (d2 >= R2) continue;
+          field[yy * tw + xx] += 1 - d2 / R2;
+          if (on) mask[yy * tw + xx] = 1;
         }
       }
     };
     for (let i = 0; i < this.n; i++) {
       const fx = this.x[i] / cell - gx0;
       const fy = this.y[i] / cell - gy0;
-      splat(fx, fy);
+      const on = lit && this.live[i] === 1;
+      splat(fx, fy, on);
       // (going fast, drawn out behind it: a stream poured, not a string of beads)
       const v = Math.hypot(this.vx[i], this.vy[i]);
       if (v < STREAK_SPEED) continue;
@@ -1117,7 +1253,7 @@ export class Fluid {
       const steps = Math.ceil(len / 1.5);
       for (let s = 1; s <= steps; s++) {
         const t = (len * s) / steps / v;
-        splat(fx - this.vx[i] * t, fy - this.vy[i] * t);
+        splat(fx - this.vx[i] * t, fy - this.vy[i] * t, on);
       }
     }
     // the texture: thick enough (r), and how deep under the surface, in world pixels (g)
@@ -1131,6 +1267,7 @@ export class Fluid {
         depth = wet ? depth + per : 0;
         data[o] = wet ? 255 : 0;
         data[o + 1] = Math.min(255, depth - per);
+        data[o + 2] = wet && lit && mask[yy * tw + xx] ? 255 : 0;
       }
     }
     tex.needsUpdate = true;

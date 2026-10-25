@@ -385,7 +385,7 @@ export function registerLiquids(): void {
 }
 
 export function registerMachinery(): void {
-  item('battery', 'Battery', 'Machinery', 'Powers everything wired to it. Activate to switch on/off.', I.batteryArt, (game, def, art, x, y, opts) => {
+  item('battery', 'Battery', 'Machinery', 'Powers everything wired to it. Switched on in water, it electrifies it: whoever’s in it is shocked. Activate to switch on/off.', I.batteryArt, (game, def, art, x, y, opts) => {
     const shapes = rects(10, 16, [[0, 2, 10, 14], [3, 0, 4, 2]]);
     return new Battery(game, def, { art, material: MAT.metal, shapes, density: densityFor(2.5, shapes) }, x, y, opts);
   }, ['power', 'electric', 'cell']);

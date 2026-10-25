@@ -5,7 +5,7 @@ import { Shape, readShapeConfig } from '../entities/Shape';
 import { Bacon } from '../entities/Bacon';
 import { Gore, readGoreConfig } from '../entities/Gore';
 import { baconArt } from '../art/bacon';
-import { Bucket, BUCKET_SHAPES } from '../entities/Bucket';
+import { Barrel, Bucket, BUCKET_SHAPES, DRUM_SHAPES } from '../entities/Bucket';
 import { MAT, GLASS } from '../world/Materials';
 import * as A from '../art/props';
 import { PX } from '../engine/constants';
@@ -79,9 +79,6 @@ export function registerProps(): void {
   // wooden things break: about three hard slams into the floor (10 m/s), or more long falls
   prop('crate', 'Wooden Crate', 'Objects', 'A sturdy wooden crate. Burns, and breaks if knocked about hard enough.', A.crateArt, { material: MAT.wood, hpPerKg: WOOD_HP }, ['box', 'wood'], { art: A.crateArt });
   prop('metal-box', 'Metal Box', 'Objects', 'A heavy steel box.', A.metalBoxArt, { material: MAT.metal, density: 190 }, ['crate', 'steel'], { art: A.metalBoxArt });
-  prop('barrel', 'Barrel', 'Objects', 'An empty steel drum.', () => A.barrelArt(false), {
-    material: MAT.sheetMetal, shapes: [{ kind: 'box', w: 18, h: 26, r: 1.5 }],
-  }, ['drum', 'oil']);
   prop('chair', 'Chair', 'Objects', 'A simple wooden chair.', A.chairArt, {
     material: MAT.wood,
     hpPerKg: WOOD_HP,
@@ -123,6 +120,15 @@ export function registerProps(): void {
     create: (game, x, y, opts) => new Bucket(game, bucket, { art: bucketArt, material: MAT.sheetMetal, density: 22, shapes: BUCKET_SHAPES }, x, y, opts),
   });
   Object.defineProperty(bucket, 'halfHeight', { get: () => (bucketArt().h * PX) / 2 });
+  // the same, bigger: a steel drum with its lid off
+  const drumArt = lazyArt(() => A.drumArt());
+  const barrel: ItemDef = register({
+    id: 'barrel', name: 'Barrel', category: 'Objects', tags: ['drum', 'oil', 'container', 'water'],
+    description: 'A steel drum with its lid off. Pour liquid in, or hold it under in the sea, to fill it; tip it over to pour it out. Empty, it floats.',
+    preview: previewOf(drumArt), halfHeight: 0,
+    create: (game, x, y, opts) => new Barrel(game, barrel, { art: drumArt, material: MAT.sheetMetal, shapes: DRUM_SHAPES }, x, y, opts),
+  });
+  Object.defineProperty(barrel, 'halfHeight', { get: () => (drumArt().h * PX) / 2 });
   prop('glass', 'Glass Pane', 'Objects', 'A fragile pane of glass. Shatters.', A.glassPaneArt, { material: GLASS, hp: 6 }, ['window'], {
     art: A.glassPaneArt,
     // as strong as panes of the same glass would be

@@ -17,6 +17,12 @@ import { FLESH, breakUp, blastEnergy, gibNow, sliceLimb, takeChunk } from '../sy
 import { isFighter, isLiving, land, onFeet, stillUp, type Fighter } from '../systems/Fighting';
 import { allies, dress, dye, enemies, isTeamId, nearestEnemy, undead, type TeamId } from '../systems/Teams';
 import { LUNGS } from '../systems/Fluid';
+import { Breath, HEAD_SINKS, shoreward, tread, type Lungful } from '../systems/Breath';
+
+/** Under water (see Breath): a breath held lasts 15 s, out cold 8, and 6 s after it's out it drowns; it can paddle a minute. */
+const LUNGFUL: Lungful = { hold: 15, holdOut: 8, last: 6, tread: 60, full: LUNGS, empty: 1.5 };
+/** Swimming for the shore (m/s). */
+const SWIM = 0.7;
 
 interface CLimbSpec {
   key: string;
@@ -392,6 +398,8 @@ export class Creature extends Entity {
   private lifeDose = 0;
   /** Seconds left out cold from a jolt (see stun()). */
   stunned = 0;
+  /** Its breath, in water (see breathe()). */
+  readonly breath = new Breath(LUNGFUL);
   /** Infected (0: not; at 1 it turns: see rise()), and turned: an undead animal, on the zombies' side (see Teams). */
   infection = 0;
   zombie = false;
@@ -521,7 +529,8 @@ export class Creature extends Entity {
         forceThreshold: 20,
         textureKey: `${species.kind}:${s.key}`,
       });
-      if (s.key === 'chest') part.buoyancy = LUNGS;
+      if (s.key === 'chest') part.buoyancy = LUNGFUL.full;
+      if (s.key === 'head') part.buoyancy = HEAD_SINKS;
       // light links get extra inertia so they don't buzz when squeezed in a pile
       if (s.key.startsWith('lower') || s.key === 'tail' || species.kind === 'cat') {
         part.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, part.body.principalInertia() * 2, true);
@@ -632,8 +641,10 @@ export class Creature extends Entity {
     const ramp = this.state === 'getup' ? clamp(this.stateT / 1.0, 0.15, 1) : 1;
     const wagging = (this.wag > 0 || this.gaitAmt > 0 || this.jumpT > 0) && standing;
     const folding = this.foldT > 0 && !conscious;
+    // paddling in deep water (see breathe())
+    const paddle = !standing && this.treading;
     // lying still it relaxes (see Human.updateMotors); posed lying flat, at once
-    const relaxed = !standing && conscious && (this.pose === 'flat' || (this.pain < 0.35 && this.stateT > 4));
+    const relaxed = !standing && conscious && !paddle && (this.pose === 'flat' || (this.pain < 0.35 && this.stateT > 4));
     // limp or relaxed joints only have friction: how strong it is doesn't matter
     // (and re-sending motors wakes the body)
     const tone = standing || (conscious && !relaxed) ? Math.round(str * 50) : -1;
@@ -657,8 +668,8 @@ export class Creature extends Entity {
     const ease = this.easeFrom ? smoothstep(0, 1, this.easeT / this.easeDur) : 1;
     const might = this.might;
     const sig = `${standing}:${conscious}:${tone}:${Math.round(ramp * 20)}:${folding}:${relaxed}:${legPose}:${Math.round(ease * 20)}:${grazing}:${kicking}:${might}`;
-    if (!force && !wagging && sig === this.motorSig) return;
-    this.motorSig = wagging ? '' : sig;
+    if (!force && !wagging && !paddle && sig === this.motorSig) return;
+    this.motorSig = wagging || paddle ? '' : sig;
     for (const l of this.order) {
       const j = l.joint;
       if (!j || !j.isValid() || l.severed) continue;
@@ -670,6 +681,11 @@ export class Creature extends Entity {
       // legs tucked up on the way up, reaching for the ground on the way down
       if (legPose === 'tuck' && /^(upper|lower)/.test(key)) target = TUCK[key.replace(/[FB]$/, '')] ?? target;
       if (kicking) target = KICK.pose[key] ?? target;
+      // (a dog paddle: the legs trotting)
+      if (paddle && /^(upper|lower)/.test(key)) {
+        const ph = this.t * 6 + (key.endsWith('FrontF') || key.endsWith('BackB') ? 0 : Math.PI);
+        target = key.startsWith('upper') ? Math.sin(ph) * 0.6 : (key.startsWith('lowerFront') ? 0.8 : -0.8) * Math.max(0, Math.cos(ph));
+      }
       target *= f;
       const from = this.blendFrom?.get(l);
       if (from !== undefined) target = from + (target - from) * smoothstep(0, 1, this.stateT / 0.9);
@@ -694,9 +710,9 @@ export class Creature extends Entity {
         j.setMotorMaxForce(1e6);
         j.configureMotorPosition(target, K * str * ramp, K * str * ramp * 0.003 + 0.3 * K / 1500);
       } else {
-        // lying down: the head stays up a little, the legs folded loosely
+        // lying down: the head stays up a little, the legs folded loosely (paddling, they work)
         j.setMotorMaxForce(1e6);
-        const tone = key === 'head' || key === 'tail' ? 0.25 : 0.08;
+        const tone = key === 'head' || key === 'tail' ? (paddle ? 0.4 : 0.25) : paddle ? 0.3 : 0.08;
         j.configureMotorPosition(target, K * tone * str, K * tone * 0.004 + 0.02);
       }
     }
@@ -843,7 +859,8 @@ export class Creature extends Entity {
       if (this.gaveUp && this.retries < 2 && Math.hypot(c.x - this.gaveUp.x, c.y - this.gaveUp.y) > 0.4) this.retry();
       const inAir = this.species.airRight && !paws && this.stateT > 0.3 && !this.touching();
       airborne = inAir;
-      if ((inAir || (!this.gaveUp && this.stateT > wait && rest)) && this.legsWork() && str > 0.7 && this.pain < 0.6 && !this.held && !this.pinned()) {
+      // (not paddling, out of its depth)
+      if ((inAir || (!this.gaveUp && this.stateT > wait && rest && (paws > 0 || !this.breath.deep))) && this.legsWork() && str > 0.7 && this.pain < 0.6 && !this.held && !this.pinned()) {
         this.getupBest = tilt;
         this.getupProgressT = 0;
         this.setState(inAir ? 'stand' : 'getup');
@@ -1952,9 +1969,12 @@ export class Creature extends Entity {
     if (d.painkiller > 0) this.pain = 0;
     // poison drains the blood (and shows, greener the worse it gets: see tone())
     if (d.poison > 0) this.blood -= dt * 3;
+    // (and under water, its breath runs out)
+    if (!this.zombie) this.breathe(dt);
     const head = this.L('head');
     const headF = head.gone ? 0 : head.part.hp / head.part.maxHp;
     let target = 1;
+    if (!this.zombie) target = Math.min(target, this.breath.faint);
     if (headF < 0.5) target = Math.min(target, headF * 1.2);
     if (this.blood < 65 && !this.zombie) target = Math.min(target, (this.blood - 40) / 25);
     if (this.pain > 0.9) target = Math.min(target, 0.4);
@@ -1967,11 +1987,34 @@ export class Creature extends Entity {
     this.checkDeath();
   }
 
+  /** Paddling: awake and off its feet in water up to its chest, and not held or lying still. */
+  get treading(): boolean {
+    return this.alive && this.breath.deep && this.state === 'down' && this.strength() > 0.15 && !this.held && this.pose !== 'flat' && !this.limp;
+  }
+
+  /** Its breath (see Human.breathe()): held under it drowns; awake in deep water it paddles for the shore. */
+  private breathe(dt: number): void {
+    const head = this.L('head');
+    if (head.gone || !head.attached) return;
+    const chest = this.L('chest').part;
+    // (its nose, at the front of its head)
+    const mouth = head.part.localToWorld(this.f * (head.part.w / 2 - 2) * PX, -head.part.h * 0.15 * PX);
+    const treading = this.treading;
+    const awake = this.consciousness > 0.15;
+    if (this.breath.step(this.game, dt, mouth, chest, awake, treading) && awake) {
+      this.game.sound.play(this.species.sounds.pain, { gain: 0.4, x: mouth.x, vary: 0.1 });
+    }
+    chest.buoyancy = this.breath.buoyancy;
+    if (treading && this.breath.level !== null) {
+      tread(this.game, head.part, chest, this.order.filter((l) => !l.gone && l.attached).map((l) => l.part), mouth.y, this.breath.level, this.breath.effort * clamp(this.strength(), 0, 1), shoreward(this.game, chest.x) * SWIM, dt);
+    }
+  }
+
   private checkDeath(): void {
     const head = this.L('head');
     const chest = this.L('chest');
     // (a zombie doesn't need its blood, and takes a far worse mauling)
-    if (head.gone || head.part.hp <= 0 || !head.attached || chest.part.hp <= 0 || (this.blood < 35 && !this.zombie)) this.die();
+    if (head.gone || head.part.hp <= 0 || !head.attached || chest.part.hp <= 0 || (this.blood < 35 && !this.zombie) || this.breath.drowned) this.die();
     else {
       let trauma = 0;
       // (a mangled limb counts as badly as a lost one, however far below nothing its health went)
@@ -2673,6 +2716,7 @@ export class Creature extends Entity {
     this.pain = 0;
     this.shock = 0;
     this.limp = false;
+    this.breath.reset();
     for (const l of this.order) {
       if (l.gone) continue;
       l.part.hp = l.part.maxHp;
@@ -2741,6 +2785,7 @@ export class Creature extends Entity {
       standing: this.state === 'stand',
       drugs: { ...this.drugs },
       ...(this.stunned > 0 ? { stunned: this.stunned } : {}),
+      ...(this.breath.air < 1 || this.breath.spent > 0 ? { breath: [this.breath.air, this.breath.starved, this.breath.spent] } : {}),
       ...(this.infection > 0 ? { infection: this.infection } : {}),
       ...(this.zombie ? { zombie: true } : {}),
       ...(this.pose ? { pose: this.pose } : {}),
@@ -2754,6 +2799,12 @@ export class Creature extends Entity {
     this.limp = !!x.limp;
     Object.assign(this.drugs, (x.drugs as Partial<typeof this.drugs>) ?? {});
     this.stunned = typeof x.stunned === 'number' ? x.stunned : 0;
+    const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+    const br: unknown[] = Array.isArray(x.breath) ? x.breath : [];
+    this.breath.air = clamp(num(br[0], 1), 0, 1);
+    this.breath.starved = Math.max(0, num(br[1], 0));
+    this.breath.spent = clamp(num(br[2], 0), 0, 1);
+    this.L('chest').part.buoyancy = this.breath.buoyancy;
     this.zombie = x.zombie === true && !this.species.immune;
     this.infection = typeof x.infection === 'number' && Number.isFinite(x.infection) ? clamp(x.infection, 0, 1) : this.zombie ? 1 : 0;
     this.pose = x.pose === 'flat' ? 'flat' : null;

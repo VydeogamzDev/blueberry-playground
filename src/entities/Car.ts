@@ -48,8 +48,11 @@ export interface CarConfig {
   cabin: [number, number, number, number];
   /** No seat belts to put on (a tank's hatch). */
   noBelts?: boolean;
-  /** The body drawn again over whoever sits inside, windows cut out (see seeThrough()). */
+  /** The body drawn again over whoever sits inside, windows cut out (see seeThrough()), and that of another look of the body. */
   front: () => PixelArt;
+  frontOf: (body: PixelArt) => PixelArt;
+  /** The stripe of the hull painted in its team's colour (a tank's: art px x0, y0, x1, y1, the ends left out). */
+  band?: [number, number, number, number];
   /** The burnt-out body after it blows up (see wreckOf()), and its front layer. */
   wreck: () => PixelArt;
   wreckFront: () => PixelArt;
@@ -213,6 +216,8 @@ export class Car extends Entity implements HandSwitched {
   private loose = new Set<number>();
   private smokeT = 0;
   private front: FrontLayer | null = null;
+  /** The body's look, other than its own art (a tank's team stripe: see dressBody()). */
+  protected look: PixelArt | null = null;
 
   constructor(game: Game, def: ItemDef, cfg: CarConfig, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -512,6 +517,39 @@ export class Car extends Entity implements HandSwitched {
     this.game.fire.ignite(b, 1);
   }
 
+  /**
+   * Mended: a wreck made whole again (in its own look, or its side's: see
+   * dressBody()), and the wheels torn off put back on their axles.
+   */
+  repair(): void {
+    const b = this.body;
+    if (b.destroyed) return;
+    if (this.wrecked) {
+      this.wrecked = false;
+      b.setArt(this.look ?? this.cfg.body());
+      this.front?.setArt(this.look ? this.cfg.frontOf(this.look) : this.cfg.front());
+    }
+    super.repair();
+    for (const i of this.loose) this.remount(i);
+    this.loose.clear();
+    this.apply();
+  }
+
+  /** A wheel torn off put back on its axle (unless it's gone altogether). */
+  private remount(i: number): void {
+    const w = this.wheels[i];
+    if (!w || w.destroyed) return;
+    const [ax, ay] = this.cfg.axles[i];
+    const l = this.body.pixelToLocal(ax, ay);
+    const at = this.body.localToWorld(l.x, l.y);
+    w.teleport(at.x, at.y, w.body.rotation());
+    w.body.setLinvel(this.body.body.linvel(), true);
+    w.group = this.body.group;
+    const j = this.addJoint(RAPIER.JointData.revolute(l, { x: 0, y: 0 }), this.body, w) as RAPIER.RevoluteImpulseJoint;
+    j.configureMotorModel(RAPIER.MotorModel.ForceBased);
+    this.axles[i] = j;
+  }
+
   /** A wheel torn off its axle: it rolls away on its own, and knocks into the body like anything else. */
   private shed(i: number): void {
     const j = this.axles[i];
@@ -727,7 +765,7 @@ export class Car extends Entity implements HandSwitched {
   private showFront(): void {
     const any = this.riders.some((r) => r);
     if (any && !this.front && !this.body.destroyed) {
-      this.front = new FrontLayer(this.body, this.wrecked ? this.cfg.wreckFront() : this.cfg.front(), this.frontZ);
+      this.front = new FrontLayer(this.body, this.wrecked ? this.cfg.wreckFront() : this.look ? this.cfg.frontOf(this.look) : this.cfg.front(), this.frontZ);
     } else if (!any && this.front) {
       this.front.dispose();
       this.front = null;
@@ -833,6 +871,30 @@ export class Car extends Entity implements HandSwitched {
     this.handAim = Math.sign(aim);
     this.handT = this.handX || this.handAim ? HAND_HOLD : 0;
     this.apply();
+  }
+
+  /** Driven by its own crew (a tank on a side: see Tank): as steer() with the drive keys, the aim left be. */
+  protected autoDrive(x: number): void {
+    this.handX = Math.sign(x);
+    this.handT = this.handX || this.handAim ? HAND_HOLD : 0;
+    this.apply();
+  }
+
+  /**
+   * The body in another look of the same art (a tank's team stripe; null: its
+   * own), its paint kept, the front layer over the riders with it. A wreck stays
+   * burnt out (it takes the look if it's ever repaired).
+   */
+  protected dressBody(art: PixelArt | null): void {
+    this.look = art;
+    if (this.wrecked || this.body.destroyed) return;
+    const a = art ?? this.cfg.body();
+    if (this.body.art !== a) {
+      const paint = this.body.paintData();
+      this.body.setArt(a);
+      if (paint) this.body.restorePaint(paint);
+    }
+    this.front?.setArt(art ? this.cfg.frontOf(art) : this.cfg.front());
   }
 
   contextActions(): ContextAction[] {

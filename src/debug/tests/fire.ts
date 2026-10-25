@@ -1,13 +1,14 @@
 import type { Test, TestCtx } from './types';
 import type { Creature } from '../../entities/Creature';
 import type { Flask } from '../../entities/Flask';
-import type { Bucket } from '../../entities/Bucket';
+import type { Barrel, Bucket } from '../../entities/Bucket';
 import type { Entity } from '../../world/Entity';
 import type { Part } from '../../world/Part';
 import { PX } from '../../engine/constants';
 import { fromBase64 } from '../../engine/base64';
 import { saveToString, loadFromString } from '../../world/SaveLoad';
 import { Liquid } from '../../systems/Liquids';
+import { builtinMap } from '../../world/Maps';
 
 export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
   const hp = (e: Entity) => e.parts.reduce((s, p) => s + (p.destroyed ? 0 : p.hp), 0);
@@ -229,6 +230,51 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       kit.advance(0.1);
       const mass = find()!.main.mass;
       if (mass < 4) return `a bucket of liquid weighs only ${mass.toFixed(1)} kg`;
+      return true;
+    }],
+    ['extra: barrel: fills from a flask poured in and from water that flows in, and pours out tipped over', () => {
+      kit.reset();
+      const b = kit.spawn('barrel', 0, 0.41) as Barrel;
+      kit.advance(0.5);
+      pour('flask-water', 0, 1.6);
+      kit.advance(4);
+      if (b.total < 200) return `the barrel caught ${b.total.toFixed(0)} drops of a flask's ~270 (${game.puddles.total.toFixed(1)} px² on the floor)`;
+      if (game.puddles.total > 20) return `most of the flask missed: ${game.puddles.total.toFixed(1)} px² on the floor, ${b.total.toFixed(0)} drops in the barrel`;
+      kit.reset();
+      const c = kit.spawn('barrel', 0, 0.41) as Barrel;
+      kit.advance(0.3);
+      kit.spawn('water', 0, 1.6, { config: { w: 14, h: 20 } });
+      kit.advance(2.5);
+      if (c.level < 0.5) return `water dropped into the barrel filled it only ${(c.level * 100).toFixed(0)}% (${game.fluid.n} particles still flowing)`;
+      if (c.contents[Liquid.Water] < c.total * 0.99) return `water dropped in filled it with ${c.contents.map((v) => v.toFixed(0)).join('/')}`;
+      // knocked over onto its side
+      const n = c.total;
+      c.translate(0, 0.3);
+      c.rotateAbout(c.main.x, c.main.y, 1.9);
+      kit.advance(3);
+      if (c.total > n * 0.1) return `tipped over, the barrel still holds ${c.total.toFixed(0)} of ${n.toFixed(0)} drops`;
+      if (game.puddles.total + game.fluid.n < 50) return `what poured out left only ${game.puddles.total.toFixed(1)} px² on the floor`;
+      return true;
+    }],
+    ['extra: barrel: empty, it floats in the sea; held under, it fills and sinks; what it holds survives saving and loading', () => {
+      kit.reset();
+      game.setMap(builtinMap('sea')!);
+      const level = game.map.water!.level;
+      const b = kit.spawn('barrel', -50, level + 1) as Barrel;
+      kit.advance(4);
+      if (Math.abs(b.main.y - level) > 0.3 || b.total > 0) return `empty, it isn't afloat: at ${(b.main.y - level).toFixed(2)} m from the surface, holding ${b.total.toFixed(0)} drops`;
+      b.translate(0, -0.6);
+      b.setFrozen(true);
+      kit.advance(1);
+      b.setFrozen(false);
+      if (b.level < 0.99) return `held under, it filled only ${(b.level * 100).toFixed(0)}%`;
+      kit.advance(3);
+      if (b.main.y > level - 1.5) return `full of the sea, it's still ${(b.main.y - level).toFixed(2)} m from the surface`;
+      const saved = saveToString(game);
+      game.resetEnvironment();
+      loadFromString(game, saved);
+      const back = game.entities.find((e) => e.def.id === 'barrel') as Barrel | undefined;
+      if (!back || back.level < 0.99) return `loaded, the barrel holds ${back ? (back.level * 100).toFixed(0) + '%' : 'nothing (it’s gone)'}`;
       return true;
     }],
   ];

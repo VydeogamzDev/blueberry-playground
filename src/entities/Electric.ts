@@ -162,6 +162,10 @@ export class TeslaCoil extends Appliance {
     if (!this.destroyed) this.main.setArt(this.art(on));
   }
 
+  get chargesWater(): boolean {
+    return this.live;
+  }
+
   preStep(dt: number): void {
     super.preStep(dt);
     if (this.jolted.size) this.twitch(dt);

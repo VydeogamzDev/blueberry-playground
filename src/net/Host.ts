@@ -731,6 +731,8 @@ export class NetHost {
         const p = e && typeof m.part === 'number' ? e.parts[m.part] : undefined;
         const act = e?.contextActions(p && !p.destroyed ? p : undefined).find((a) => a.label === m.path?.[0]);
         if (act && !act.disabled) act.action();
+        // (or Repair, which every thing has: see Controls)
+        else if (e && m.path?.[0] === 'Repair' && !isLiving(e) && e.damaged) e.repair();
         break;
       }
       case 'time':

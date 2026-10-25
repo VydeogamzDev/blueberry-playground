@@ -282,6 +282,27 @@ export function bucketInside(): [number, number][] {
 }
 
 /**
+ * What's in a vessel cut away to show its `inside` (bucket, drum): `level` (0..1)
+ * of a liquid of `color`, filling the lowest of it first (as for a flask), settled
+ * to whichever side is down (`tilt`: its rotation, radians, counter-clockwise).
+ */
+function fillInside(a: PixelArt, inside: [number, number][], level: number, color: Color, tilt: number): void {
+  const n = Math.round(Math.max(0, Math.min(1, level)) * inside.length);
+  if (n <= 0) return;
+  const gx = -Math.sin(tilt);
+  const gy = Math.cos(tilt);
+  const cells = inside.map(([x, y]) => [x, y, x * gx + y * gy] as [number, number, number]);
+  cells.sort((p, q) => q[2] - p[2] || Math.abs(p[0] - (a.w - 1) / 2) - Math.abs(q[0] - (a.w - 1) / 2));
+  const surface = cells[n - 1][2];
+  const top = mix(color, 0xffffff, 0.22);
+  const deep = mix(color, 0x000000, 0.18);
+  for (let k = 0; k < n; k++) {
+    const [x, y, h] = cells[k];
+    a.set(x, y, h < surface + 0.9 ? top : h > surface + 6 ? deep : color);
+  }
+}
+
+/**
  * A metal bucket, cut away to show its inside. `level` (0..1) of a liquid of
  * `color` lies in it, settled to whichever side is down (`tilt`: its rotation,
  * radians, counter-clockwise).
@@ -305,21 +326,7 @@ export function bucketArt(level = 0, color = 0, tilt = 0): PixelArt {
   }
   a.hline(3, W - 4, 27, M[1]);
   finish(a, { light: false, shadow: false });
-  // what's in it, filling the lowest of the inside first (as for a flask)
-  const n = Math.round(Math.max(0, Math.min(1, level)) * inside.length);
-  if (n > 0) {
-    const gx = -Math.sin(tilt);
-    const gy = Math.cos(tilt);
-    const cells = inside.map(([x, y]) => [x, y, x * gx + y * gy] as [number, number, number]);
-    cells.sort((p, q) => q[2] - p[2] || Math.abs(p[0] - (W - 1) / 2) - Math.abs(q[0] - (W - 1) / 2));
-    const surface = cells[n - 1][2];
-    const top = mix(color, 0xffffff, 0.22);
-    const deep = mix(color, 0x000000, 0.18);
-    for (let k = 0; k < n; k++) {
-      const [x, y, h] = cells[k];
-      a.set(x, y, h < surface + 0.9 ? top : h > surface + 6 ? deep : color);
-    }
-  }
+  fillInside(a, inside, level, color, tilt);
   // the bail, hinged on lugs at the rim (drawn after the outline pass: it's a wire)
   let px = 1;
   let py = 7;
@@ -332,6 +339,49 @@ export function bucketArt(level = 0, color = 0, tilt = 0): PixelArt {
   }
   a.line(px, py, W - 2, 7, STEEL_LT[1]);
   a.set(1, 7, M[4]).set(W - 2, 7, M[4]);
+  return a;
+}
+
+/** The open drum's sprite size: its rolled rim at row 0, ribs at rows 7 and 17, the base at rows 24-25, walls 2 px. */
+export const DRUM_W = 18;
+export const DRUM_H = 26;
+
+/** The pixels inside the open drum, from the rim down to its floor: where what it holds shows. */
+export function drumInside(): [number, number][] {
+  const out: [number, number][] = [];
+  for (let y = 0; y <= DRUM_H - 3; y++) for (let x = 2; x <= DRUM_W - 3; x++) out.push([x, y]);
+  return out;
+}
+
+/**
+ * A steel drum with its lid off (the barrel), cut away to show its inside, with
+ * `level` (0..1) of a liquid of `color` in it, settled to whichever side is down
+ * (`tilt`, as bucketArt()).
+ */
+export function drumArt(level = 0, color = 0, tilt = 0): PixelArt {
+  const W = DRUM_W;
+  const H = DRUM_H;
+  const a = new PixelArt(W, H);
+  const B = BLUE_PAINT;
+  a.rect(0, 0, W, H, B[2]);
+  // the inside: the far wall, hollow (in the near wall's shadow on the left, lit on the
+  // right) and in the rim's shadow at the top, its ribs pressed in
+  const inside = drumInside();
+  for (const [x, y] of inside) a.set(x, y, y < 3 || x < 5 ? B[0] : x > W - 5 ? B[2] : B[1]);
+  for (const y of [7, 17]) {
+    for (let x = 5; x <= W - 3; x++) a.set(x, y, B[0]).set(x, y + 1, x > W - 5 ? B[3] : B[2]);
+  }
+  // the walls lit from the left, the rolled rim, ribs round the sides, and the base
+  a.vline(0, 0, H - 1, B[3]);
+  a.vline(W - 1, 0, H - 1, B[1]);
+  for (const x of [0, 1, W - 2, W - 1]) a.set(x, 0, B[4]);
+  for (const y of [7, 17]) {
+    for (const x of [0, 1, W - 2, W - 1]) a.set(x, y, B[1]).set(x, y + 1, B[3]);
+  }
+  a.hline(1, W - 2, H - 2, B[3]);
+  a.hline(1, W - 2, H - 1, B[1]);
+  finish(a, { light: false, shadow: false });
+  fillInside(a, inside, level, color, tilt);
   return a;
 }
 

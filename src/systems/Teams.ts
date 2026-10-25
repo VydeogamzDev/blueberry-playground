@@ -11,7 +11,8 @@ import { isFighter, onFeet, stillUp, type Fighter } from './Fighting';
  * Teams (armies): people and animals put on a side go on their own for the
  * nearest of anyone on another side, and leave their own side be. Each wears
  * its team's colour: a person's shirt, an android's armbands and chest panel,
- * an animal's coat over its back.
+ * an animal's coat over its back. A tank put on a side fights for it too (see
+ * Tank), a stripe of the colour round its turret.
  */
 
 export type TeamId = 'red' | 'blue' | 'green' | 'yellow';
@@ -37,6 +38,19 @@ export interface TeamMember extends Fighter {
 
 export function isTeamMember(e: Entity | null | undefined): e is TeamMember {
   return isFighter(e) && typeof (e as Partial<TeamMember>).setTeam === 'function';
+}
+
+/** A machine that fights for the side it's put on (a tank: see Tank). */
+export interface TeamMachine extends Entity {
+  team: TeamId | null;
+  setTeam(team: TeamId | null): void;
+  /** Out of the fight for good (burnt out). */
+  readonly wrecked: boolean;
+  readonly fightsForTeam: true;
+}
+
+export function isTeamMachine(e: Entity | null | undefined): e is TeamMachine {
+  return (e as Partial<TeamMachine> | null | undefined)?.fightsForTeam === true;
 }
 
 export function teamOf(e: Entity | null | undefined): TeamId | null {
@@ -88,9 +102,9 @@ const lum = (c: Color): number => {
  * `base` with its pixels in rows y0..y1 (and columns x0..x1) dyed the team's
  * colour: each as much lighter or darker than the team's base shade as it was
  * than the band's average, so its lighting and outline stay. Kept by `key` (one
- * per sprite) and team.
+ * per sprite) and team. `contrast` below 1 evens it out (paint over camouflage).
  */
-export function dye(key: string, base: PixelArt, team: TeamId, y0: number, y1: number, x0 = 0, x1 = base.w): PixelArt {
+export function dye(key: string, base: PixelArt, team: TeamId, y0: number, y1: number, x0 = 0, x1 = base.w, contrast = 1): PixelArt {
   const k = `${key}:${team}`;
   const hit = dyed.get(k);
   if (hit) return hit;
@@ -110,7 +124,7 @@ export function dye(key: string, base: PixelArt, team: TeamId, y0: number, y1: n
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
       const c = a.get(x, y);
-      if (c !== CLEAR) a.set(x, y, shade(c0, lum(c) / mean));
+      if (c !== CLEAR) a.set(x, y, shade(c0, (lum(c) / mean) ** contrast));
     }
   }
   dyed.set(k, a);
@@ -140,6 +154,9 @@ interface Roster {
   members: TeamMember[];
   /** Their middles then (x, y pairs). */
   at: number[];
+  /** Machines on a side, still in the fight, and their middles. */
+  machines: TeamMachine[];
+  machinesAt: number[];
   /** How many on teams are going for each: spreads a side over the other's. */
   hunted: Map<Entity, number>;
   /** Lit bombs: where, and how far their blast reaches. */
@@ -154,12 +171,14 @@ const REFRESH = 0.25;
 
 function roster(game: Game): Roster {
   let r = rosters.get(game);
-  if (!r) rosters.set(game, (r = { t: -Infinity, n: -1, members: [], at: [], hunted: new Map(), bombs: [], loose: [] }));
+  if (!r) rosters.set(game, (r = { t: -Infinity, n: -1, members: [], at: [], machines: [], machinesAt: [], hunted: new Map(), bombs: [], loose: [] }));
   if (game.time >= r.t && game.time - r.t < REFRESH && game.entities.length === r.n) return r;
   r.t = game.time;
   r.n = game.entities.length;
   r.members.length = 0;
   r.at.length = 0;
+  r.machines.length = 0;
+  r.machinesAt.length = 0;
   r.bombs.length = 0;
   r.loose.length = 0;
   r.hunted.clear();
@@ -172,6 +191,13 @@ function roster(game: Game): Roster {
       r.members.push(e);
       r.at.push(c.x, c.y);
       if (e.foe) r.hunted.set(e.foe, (r.hunted.get(e.foe) ?? 0) + 1);
+      continue;
+    }
+    if (isTeamMachine(e)) {
+      if (!e.team || e.wrecked) continue;
+      const c = e.center();
+      r.machines.push(e);
+      r.machinesAt.push(c.x, c.y);
       continue;
     }
     const x = e as Entity & { armed?: unknown; blast?: { radius: number }; hold?: unknown; holder?: unknown };
@@ -229,6 +255,48 @@ export function nearestEnemy(me: TeamMember, x: number, y: number, sight: number
   return null;
 }
 
+/**
+ * The enemy a machine at (x, y) facing `dir` (1: right) should go for: someone
+ * of another side up and about, or another side's machine, within `sight` m
+ * (and 15 m up or down) and in sight; the nearest, one behind it counting for
+ * as far again (it has to turn round for them). Null: there's none.
+ */
+export function nearestFoe(me: TeamMachine, x: number, y: number, sight: number, dir: number): Entity | null {
+  const r = roster(me.game);
+  const near: { e: Entity; d: number; x: number; y: number }[] = [];
+  const consider = (e: Entity, ex: number, ey: number) => {
+    const dx = ex - x;
+    const dy = ey - y;
+    if (Math.abs(dx) > sight || Math.abs(dy) > 15) return;
+    near.push({ e, x: ex, y: ey, d: Math.abs(dx) * (dx * dir < 0 ? 2 : 1) + Math.abs(dy) });
+  };
+  for (let i = 0; i < r.members.length; i++) {
+    const e = r.members[i];
+    if (!e.destroyed && stillUp(e) && enemies(me, e)) consider(e, r.at[2 * i], r.at[2 * i + 1]);
+  }
+  for (let i = 0; i < r.machines.length; i++) {
+    const e = r.machines[i];
+    if (e !== me && !e.destroyed && !e.wrecked && enemies(me, e)) consider(e, r.machinesAt[2 * i], r.machinesAt[2 * i + 1]);
+  }
+  near.sort((a, b) => a.d - b.d);
+  // (the first few in sight: past that, there's no telling it's worth the rays)
+  for (let i = 0; i < Math.min(4, near.length); i++) if (inSight(me.game, x, y + 1, near[i].x, near[i].y + 0.3)) return near[i].e;
+  return null;
+}
+
+/** Everyone on `side` (people and animals alive, machines still in the fight) as of the roster, with where they were. */
+export function onSide(game: Game, side: TeamId): { e: Entity; x: number; y: number }[] {
+  const r = roster(game);
+  const out: { e: Entity; x: number; y: number }[] = [];
+  r.members.forEach((e, i) => {
+    if (!e.destroyed && sideOf(e) === side) out.push({ e, x: r.at[2 * i], y: r.at[2 * i + 1] });
+  });
+  r.machines.forEach((e, i) => {
+    if (!e.destroyed && e.team === side) out.push({ e, x: r.machinesAt[2 * i], y: r.machinesAt[2 * i + 1] });
+  });
+  return out;
+}
+
 /** A lit bomb (not one `skip` is holding) whose blast would reach (x, y), a metre to spare: its x, or null. */
 export function bombNear(game: Game, x: number, y: number, skip?: Entity): number | null {
   for (const b of roster(game).bombs) {
@@ -255,12 +323,12 @@ export function lyingNear<T extends Entity>(game: Game, x: number, y: number, r:
 }
 
 /**
- * The Team: entries of the context menu of people and animals, for all of them
- * in the selection: none, or one of the teams (the one they're all on ticked).
- * `record` is called before a change (it goes on the undo history).
+ * The Team: entries of the context menu of people, animals and tanks, for all
+ * of them in the selection: none, or one of the teams (the one they're all on
+ * ticked). `record` is called before a change (it goes on the undo history).
  */
 export function teamActions(list: Entity[], record: () => void): ContextAction[] {
-  const members = list.filter(isTeamMember);
+  const members = list.filter((e): e is TeamMember | TeamMachine => isTeamMember(e) || isTeamMachine(e));
   if (!members.length) return [];
   const t = members[0].team;
   const same = members.every((m) => m.team === t);

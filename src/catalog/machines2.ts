@@ -129,7 +129,7 @@ function registerElectric(): void {
     ['magnet', 'electromagnet', 'metal', 'pull', 'crane', 'electric']);
   const teslaShapes = rects(16, 40, [[0, 36, 16, 4], [2, 31, 12, 6], [5, 10, 6, 22], [0, 3, 16, 8], [7, 0, 2, 4]]);
   item('tesla-coil', 'Tesla Coil',
-    'Needs power. Every so often it throws an arc of lightning to something within 6 m (or to the floor): people are hurt, burnt and jolted, and an arc to the chest can stop the heart; what burns may catch, and detonators go off. Activate switches it off and on.',
+    'Needs power. Every so often it throws an arc of lightning to something within 6 m (or to the floor): people are hurt, burnt and jolted, and an arc to the chest can stop the heart; what burns may catch, and detonators go off. Running in water, it electrifies it. Activate switches it off and on.',
     () => M.teslaArt(false), (game, def, x, y, opts) =>
       new TeslaCoil(game, def, cfg(() => M.teslaArt(false), MAT.metal, teslaShapes, 35), M.teslaArt, x, y, opts),
     ['tesla', 'coil', 'lightning', 'arc', 'shock', 'electric', 'zap']);

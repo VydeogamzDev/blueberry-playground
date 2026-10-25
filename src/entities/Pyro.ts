@@ -8,6 +8,7 @@ import {
 } from '../art/gear';
 import type { PropConfig } from './Prop';
 import type { Part } from '../world/Part';
+import type { Entity } from '../world/Entity';
 import type { Game } from '../world/Game';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
 
@@ -187,9 +188,48 @@ const CRASH = 7;
 /** Stars in the burst, their speed (m/s), and how far (m) its heat and push reach. */
 const STARS = 90;
 const STAR_SPEED = 7;
-const BURST_REACH = 1.4;
+export const BURST_REACH = 1.4;
 
 let burstBall: RAPIER.Ball | null = null;
+
+/**
+ * A firework's burst at `c`: a shower of stars in its colour, a flash that
+ * lights the room, and a singeing for what's right by it (but `self`, what's
+ * bursting: a rocket, a crossbow's firework bolt).
+ */
+export function fireworkBurst(game: Game, c: V2, color: FireworkColor, self: Entity | null): void {
+  const colors = FIREWORK_COLORS[color];
+  for (let i = 0; i < STARS; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = STAR_SPEED * (i % 3 === 0 ? 0.55 : 0.85 + Math.random() * 0.3);
+    const col = colors[i % colors.length];
+    game.particles.emit(PK.Spark, c.x, c.y, {
+      vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1.1 + Math.random() * 0.8, size: PX * 1.5,
+      color: 0xffffff, color1: col, alpha: 1, alpha1: 0, gravity: 0.25, drag: 1.4,
+    });
+  }
+  game.particles.flash(c.x, c.y, 0.9, colors[0], 0.12);
+  game.particles.smoke(c.x, c.y, 4, 0.5);
+  game.renderer.addLight(c.x, c.y, 14, 1.1, colors[0], 0.6);
+  game.sound.play('explosion/firework_burst', { gain: 1, x: c.x, vary: 0.05 });
+  game.alarm(c.x, c.y, 25);
+  // what's right by it is singed, set alight if it burns easily, and pushed
+  const near: Part[] = [];
+  game.physics.world.intersectionsWithShape(c, 0, (burstBall ??= new RAPIER.Ball(BURST_REACH)), (col) => {
+    const q = game.physics.partOf(col);
+    if (q && !q.destroyed && q.entity !== self) near.push(q);
+    return true;
+  }, undefined, SOLID);
+  for (const q of near) {
+    const dx = q.x - c.x;
+    const dy = q.y - c.y;
+    const d = Math.max(0.15, Math.hypot(dx, dy));
+    const k = Math.max(0, 1 - d / BURST_REACH);
+    q.entity.damage(q, 8 * k, 'fire', c, { x: dx / d, y: dy / d });
+    if (k > 0.4 && q.mat.flammability > 0.3) game.fire.ignite(q, 0.4);
+    if (!q.frozen) q.body.applyImpulse({ x: (dx / d) * 3 * k, y: (dy / d) * 3 * k }, true);
+  }
+}
 
 /**
  * A firework rocket on its stick. Light the fuse (Use) and stand back: a
@@ -327,44 +367,12 @@ export class Firework extends Item {
     else super.damage(part, amount, kind);
   }
 
-  /** The burst: a shower of stars in its colour, a flash that lights the room, and a singeing for what's right by it. */
+  /** The burst (see fireworkBurst()). */
   explode(): void {
     if (this.burst || this.destroyed) return;
     this.burst = true;
-    const game = this.game;
-    const c = this.main.pixelToWorld(3, 2);
-    const colors = FIREWORK_COLORS[this.color];
-    for (let i = 0; i < STARS; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const s = STAR_SPEED * (i % 3 === 0 ? 0.55 : 0.85 + Math.random() * 0.3);
-      const col = colors[i % colors.length];
-      game.particles.emit(PK.Spark, c.x, c.y, {
-        vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 1.1 + Math.random() * 0.8, size: PX * 1.5,
-        color: 0xffffff, color1: col, alpha: 1, alpha1: 0, gravity: 0.25, drag: 1.4,
-      });
-    }
-    game.particles.flash(c.x, c.y, 0.9, colors[0], 0.12);
-    game.particles.smoke(c.x, c.y, 4, 0.5);
-    game.renderer.addLight(c.x, c.y, 14, 1.1, colors[0], 0.6);
-    game.sound.play('explosion/firework_burst', { gain: 1, x: c.x, vary: 0.05 });
-    game.alarm(c.x, c.y, 25);
-    // what's right by it is singed, set alight if it burns easily, and pushed
-    const near: Part[] = [];
-    game.physics.world.intersectionsWithShape(c, 0, (burstBall ??= new RAPIER.Ball(BURST_REACH)), (col) => {
-      const q = game.physics.partOf(col);
-      if (q && !q.destroyed && q.entity !== this) near.push(q);
-      return true;
-    }, undefined, SOLID);
-    for (const q of near) {
-      const dx = q.x - c.x;
-      const dy = q.y - c.y;
-      const d = Math.max(0.15, Math.hypot(dx, dy));
-      const k = Math.max(0, 1 - d / BURST_REACH);
-      q.entity.damage(q, 8 * k, 'fire', c, { x: dx / d, y: dy / d });
-      if (k > 0.4 && q.mat.flammability > 0.3) game.fire.ignite(q, 0.4);
-      if (!q.frozen) q.body.applyImpulse({ x: (dx / d) * 3 * k, y: (dy / d) * 3 * k }, true);
-    }
-    game.remove(this);
+    fireworkBurst(this.game, this.main.pixelToWorld(3, 2), this.color, this);
+    this.game.remove(this);
   }
 
   /** Its motor's glow in flight (on every screen). */

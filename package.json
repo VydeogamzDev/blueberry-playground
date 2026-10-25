@@ -1,7 +1,7 @@
 {
   "name": "blueberry-playground",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,6 +11,7 @@
     "standalone": "tsc --noEmit && node tools/standalone.mjs",
     "desktop": "tsc --noEmit && node tools/desktop.mjs",
     "desktop:build": "tsc --noEmit && node tools/desktop.mjs --package",
+    "desktop:mac": "tsc --noEmit && node tools/desktop.mjs --mac",
     "test": "node tools/selftest.mjs",
     "test:touch": "node tools/touchtest.mjs",
     "bench": "node tools/selftest.mjs --bench",

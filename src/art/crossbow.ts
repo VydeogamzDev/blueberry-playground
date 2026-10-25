@@ -1,5 +1,5 @@
 import { PixelArt, CLEAR } from './PixelArt';
-import { finish, GUNMETAL, ORANGE, POLYMER, RED, STEEL, STEEL_LT, WHITE, WOOD, WOOD_DARK, WOOD_PALE, YELLOW, KHAKI, type Ramp } from './palette';
+import { finish, ramp, GUNMETAL, ORANGE, POLYMER, RED, STEEL, STEEL_LT, WHITE, WOOD, WOOD_DARK, WOOD_PALE, YELLOW, KHAKI, type Ramp } from './palette';
 import { DRUG_RAMPS } from './items';
 
 // The crossbow and its bolts. The crossbow follows the guns' rules (palette
@@ -8,7 +8,7 @@ import { DRUG_RAMPS } from './items';
 // outline pass would turn them all to outline).
 
 /** What a bolt does when it hits (see entities/Crossbow). */
-export type BoltKind = 'normal' | 'poison' | 'explosive' | 'incendiary' | 'tranquilizer';
+export type BoltKind = 'normal' | 'poison' | 'explosive' | 'incendiary' | 'tranquilizer' | 'firework';
 
 /** A bolt's head and fletching: each kind its own colour, so a glance tells them apart (in the groove, in flight, stuck in someone). */
 const LOOKS: Record<BoltKind, { head: Ramp; fletch: Ramp }> = {
@@ -17,6 +17,7 @@ const LOOKS: Record<BoltKind, { head: Ramp; fletch: Ramp }> = {
   explosive: { head: RED, fletch: RED },
   incendiary: { head: ORANGE, fletch: YELLOW },
   tranquilizer: { head: DRUG_RAMPS.knockout, fletch: DRUG_RAMPS.knockout },
+  firework: { head: ramp('#8a4aa8'), fletch: ramp('#3f8a4a') },
 };
 
 /** A bolt's size (art px): its nock at x = 0, its point at x = BOLT_W - 1, the shaft along the middle row. */
@@ -71,6 +72,12 @@ function drawBolt(kind: BoltKind, cut: number): PixelArt {
       // a dart: a little vial of sedative behind a hollow needle
       a.hline(11, 13, 1, head[2]).set(12, 0, head[3]).set(12, 2, head[1]);
       a.set(14, 1, STEEL_LT[2]).set(15, 1, STEEL_LT[4]);
+      break;
+    case 'firework':
+      // a little rocket: a paper tube with gold stars on it, its fuse at the back, under a gold cone
+      a.hline(9, 13, 0, head[3]).hline(9, 13, 1, head[2]).hline(9, 13, 2, head[1]);
+      a.set(10, 0, YELLOW[4]).set(12, 2, YELLOW[3]).set(8, 1, KHAKI[1]);
+      a.set(14, 0, YELLOW[2]).set(14, 1, YELLOW[3]).set(14, 2, YELLOW[1]).set(15, 1, YELLOW[4]);
       break;
   }
   for (let x = BOLT_W - cut; x < BOLT_W; x++) for (let y = 0; y < BOLT_H; y++) a.set(x, y, CLEAR);

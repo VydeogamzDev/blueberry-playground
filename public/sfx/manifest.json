@@ -398,6 +398,12 @@
     "sfx/liquid/pour_loop_1.ogg",
     "sfx/liquid/pour_loop_2.ogg"
   ],
+  "liquid/bubbles": [
+    "sfx/liquid/bubbles_1.ogg",
+    "sfx/liquid/bubbles_2.ogg",
+    "sfx/liquid/bubbles_3.ogg",
+    "sfx/liquid/bubbles_4.ogg"
+  ],
   "creature/dog_bark": [
     "sfx/creature/dog_bark_1.ogg",
     "sfx/creature/dog_bark_2.ogg",
@@ -509,6 +515,11 @@
   "creature/gorse_screech": [
     "sfx/creature/gorse_screech_1.ogg",
     "sfx/creature/gorse_screech_2.ogg"
+  ],
+  "creature/gasp": [
+    "sfx/creature/gasp_1.ogg",
+    "sfx/creature/gasp_2.ogg",
+    "sfx/creature/gasp_3.ogg"
   ],
   "ui/click": [
     "sfx/ui/click_1.ogg",

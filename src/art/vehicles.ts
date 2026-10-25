@@ -555,6 +555,8 @@ export interface TankDesign {
   lamp: Pt;
   /** Over the turret's top, where someone let go of gets in (x, y, width, height). */
   cabin: [number, number, number, number];
+  /** The stripe along the turret's side painted its team's colour (x0, y0, x1, y1, the ends left out). */
+  band: [number, number, number, number];
   /** Sights, hatches and stowage that stand out of the outline (drawn before the finish), and the details over it. */
   fit: (a: PixelArt, P: Ramp) => void;
   details: (a: PixelArt, P: Ramp) => void;
@@ -655,71 +657,67 @@ function bolts(a: PixelArt, x0: number, x1: number, y: number, step: number, c: 
 }
 
 /**
- * The American M1A2 Abrams: a long, low hull with seven road wheels behind deep
- * skirts, and the flat, slab-sided turret reaching far back over the engine
- * deck to its bustle rack. On the roof the commander's cupola with its remote
- * weapon station, the independent thermal viewer on its post, the gunner's
- * sight and the loader's machine gun. Desert tan.
+ * The American M1A2 Abrams: seven road wheels behind skirts (heavy armoured
+ * ones at the front), extra armour on the lower glacis, and the turret's face
+ * sloped back in angled slabs of armour over the gun. On the roof the gunner's
+ * sight box, the commander's thermal viewer on its post beside his hatch and
+ * the remote weapon station; smoke launchers and the bustle rack at the back,
+ * the turbine's exhaust grille at the back of the hull. Desert tan.
  */
 export const ABRAMS: TankDesign = {
-  w: 224, h: 76, r: 11, wheel: 18,
-  axles: [[17, 54], [46, 64], [67, 64], [88, 64], [109, 64], [130, 64], [151, 64], [172, 64], [200, 57]],
-  hull: [[1, 35], [4, 33], [172, 33], [222, 45], [222, 48], [210, 52], [1, 44]],
-  skirt: [[28, 37], [188, 37], [207, 42], [207, 45], [199, 53], [30, 53], [28, 51]],
-  turret: [[44, 10], [149, 9], [155, 10], [165, 22], [163, 26], [156, 33], [97, 33], [93, 28], [44, 28]],
+  w: 218, h: 80, r: 12, wheel: 20,
+  axles: [[17, 58], [44, 67], [66, 67], [88, 67], [110, 67], [132, 67], [154, 67], [176, 67], [199, 60]],
+  hull: [[1, 37], [4, 35], [166, 35], [216, 47], [216, 52], [204, 56], [1, 48]],
+  skirt: [[30, 39], [183, 39], [204, 44], [204, 46], [190, 57], [32, 57], [30, 55]],
+  turret: [[52, 11], [146, 11], [180, 30], [176, 34], [152, 35], [100, 35], [96, 31], [52, 31]],
   body: [
-    [[1, 35], [4, 33], [172, 33], [222, 45], [222, 48], [210, 53], [30, 53], [1, 45]],
-    [[30, 10], [149, 9], [155, 10], [165, 22], [163, 26], [156, 33], [30, 33]],
+    [[1, 37], [4, 35], [166, 35], [216, 47], [217, 56], [207, 58], [32, 57], [1, 48]],
+    [[40, 11], [146, 11], [180, 30], [176, 34], [152, 35], [40, 35]],
   ],
   paint: TAN,
-  trunnion: [153, 19], hatch: [91, 19], engine: [14, 38], fuel: [60, 42], lamp: [218, 45], cabin: [44, 0, 112, 20],
+  trunnion: [150, 22], hatch: [90, 21], engine: [14, 40], fuel: [62, 44], lamp: [212, 48], cabin: [52, 0, 100, 22], band: [53, 25, 147, 28],
   fit: (a, P) => {
-    a.rect(30, 12, 14, 16, GUNMETAL[1]);
-    // the commander's cupola and its weapon station (a heavy machine gun), the loader's hatch and gun
-    a.rect(84, 6, 16, 3, P[2]);
-    a.roundRect(99, 1, 9, 6, 1, P[2]);
-    a.hline(108, 122, 3, GUNMETAL[2]);
-    a.rect(62, 7, 12, 2, P[2]);
-    a.rect(70, 5, 3, 2, GUNMETAL[2]);
-    a.hline(73, 84, 5, GUNMETAL[2]);
-    // the commander's thermal viewer on its post, the gunner's sight, the wind sensor
-    a.rect(121, 4, 3, 5, P[1]);
-    a.roundRect(117, 0, 11, 5, 1, P[2]);
-    a.roundRect(133, 5, 14, 5, 1, P[2]);
-    a.vline(52, 3, 9, GUNMETAL[2]);
-    // the smoke grenade launchers on the turret's cheek, the gun shield
-    a.roundRect(140, 12, 9, 6, 1, P[1]);
-    a.rect(156, 14, 7, 10, P[1]);
+    a.rect(40, 13, 12, 18, GUNMETAL[1]);
+    // the commander's hatch and his thermal viewer on its post, the weapon station, the gunner's sight
+    a.rect(84, 8, 12, 3, P[2]);
+    a.rect(101, 4, 4, 7, P[1]);
+    a.roundRect(98, 0, 10, 5, 1, P[2]);
+    a.roundRect(64, 4, 10, 7, 1, P[2]);
+    a.hline(74, 86, 6, GUNMETAL[2]);
+    a.roundRect(126, 6, 15, 6, 1, P[2]);
+    // the smoke launchers, and the armour bolted onto the lower glacis
+    a.roundRect(58, 14, 16, 6, 1, P[1]);
+    a.poly([[203, 55], [216, 50], [217, 51], [217, 56], [207, 59]], P[2]);
   },
   details: (a, P) => {
-    basket(a, 30, 12, 14, 16);
-    // the roof's edge in the light, the turret's foot in shadow, stowage boxes along its side
-    a.hline(45, 148, 10, P[3]);
-    a.hline(97, 155, 32, P[1]);
-    a.hline(98, 132, 17, P[3]);
-    a.hline(98, 132, 24, P[1]);
-    for (const x of [98, 115, 132]) a.vline(x, 17, 24, P[1]);
-    a.hline(45, 92, 21, P[1]);
-    // sights' glass, the cupola's vision blocks
-    a.rect(127, 1, 1, 3, GUNMETAL[0]);
-    a.rect(146, 6, 1, 3, GUNMETAL[0]);
-    bolts(a, 86, 98, 7, 3, GUNMETAL[1]);
-    // the launchers' tubes, the gun shield's edge
-    for (let x = 141; x < 148; x += 2) a.set(x, 13, GUNMETAL[0]).set(x, 16, GUNMETAL[0]);
-    a.vline(156, 14, 23, P[3]);
-    // the deck's edge, the skirt's top, its panels, bolts and foot; the heavy front panel
-    a.hline(4, 171, 34, P[3]);
-    a.hline(29, 188, 37, P[3]);
-    a.hline(31, 198, 52, P[1]);
-    for (const x of [58, 88, 118, 148]) a.vline(x, 38, 51, P[1]);
-    a.vline(149, 38, 51, P[0]);
-    for (const x of [33, 63, 93, 123, 153]) bolts(a, x, x + 24, 39, 6, P[3]);
-    // the driver's periscopes on the glacis, the lamps, the turbine's exhaust grille at the back
-    for (const x of [177, 181, 185]) a.set(x, 35, GUNMETAL[0]).set(x, 36, GUNMETAL[1]);
-    a.rect(215, 43, 3, 2, LAMP);
-    a.set(216, 43, 0xfffbe0);
-    a.rect(1, 36, 2, 3, LED_RED);
-    for (let y = 38; y < 44; y += 2) a.hline(2, 5, y, GUNMETAL[0]);
+    basket(a, 40, 13, 12, 18);
+    // the wedge's face in the light, and where it stands off the turret's own face
+    a.line(147, 12, 178, 30, P[3]);
+    a.line(147, 13, 151, 34, P[1]);
+    // the roof's edge, the turret's foot, the side armour's edge and bolts
+    a.hline(53, 145, 12, P[3]);
+    a.hline(100, 151, 34, P[1]);
+    a.vline(122, 13, 33, P[1]);
+    for (let y = 16; y < 33; y += 5) a.set(126, y, P[3]).set(142, y, P[3]);
+    a.hline(53, 95, 24, P[1]);
+    // the sights' glass, the viewer's head, the launchers' tubes
+    a.rect(140, 7, 1, 3, GUNMETAL[0]);
+    a.rect(107, 1, 1, 2, GUNMETAL[0]);
+    for (let x = 59; x < 73; x += 3) a.set(x, 15, GUNMETAL[0]).set(x, 18, GUNMETAL[0]);
+    // the deck's edge, the skirt: its panels and foot, the heavy front panels bolted on
+    a.hline(4, 165, 36, P[3]);
+    a.hline(31, 183, 39, P[3]);
+    a.hline(33, 192, 56, P[1]);
+    for (const x of [62, 92, 122]) a.vline(x, 40, 55, P[1]);
+    a.vline(152, 40, 55, P[0]);
+    bolts(a, 155, 185, 42, 6, P[3]);
+    bolts(a, 155, 185, 53, 6, P[3]);
+    a.line(204, 56, 216, 51, P[3]);
+    a.rect(209, 47, 3, 2, LAMP);
+    a.set(210, 47, 0xfffbe0);
+    a.rect(1, 38, 2, 3, LED_RED);
+    // the turbine's exhaust grille
+    for (let y = 42; y < 48; y += 2) a.hline(2, 5, y, GUNMETAL[0]);
   },
   barrel: { len: 130, evacuator: [54, 70], joints: [24, 38, 84, 98, 112], sensor: true },
 };
@@ -743,7 +741,7 @@ export const ZTZ99A: TankDesign = {
     [[40, 9], [138, 8], [176, 19], [175, 22], [154, 32], [40, 32]],
   ],
   paint: PLA[0], camo: plaCamo,
-  trunnion: [148, 18], hatch: [108, 18], engine: [14, 37], fuel: [60, 41], lamp: [208, 44], cabin: [50, 0, 90, 18],
+  trunnion: [148, 18], hatch: [108, 18], engine: [14, 37], fuel: [60, 41], lamp: [208, 44], cabin: [50, 0, 90, 18], band: [51, 22, 139, 25],
   fit: (a, P) => {
     a.roundRect(40, 10, 11, 18, 1, P[2]);
     // the commander's panoramic sight, his cupola with the heavy machine gun, the laser dazzler, the gunner's sight
@@ -797,64 +795,70 @@ export const ZTZ99A: TankDesign = {
 };
 
 /**
- * Germany's Leopard 2A7: seven road wheels behind skirts (heavy armoured ones
- * at the front), extra armour on the lower glacis, and the turret's pointed
- * wedges of spaced armour on its face. On the roof the gunner's sight box, the
- * commander's tall periscope beside his hatch and the remote weapon station;
- * smoke launchers and stowage baskets at the back. NATO three-tone camouflage.
+ * Germany's Leopard 2A7: a long, low hull with seven road wheels behind deep
+ * skirts, and the tall, slab-sided turret with its flat face, reaching far back
+ * over the engine deck to its stowage basket. On the roof the commander's
+ * cupola with its remote weapon station, his periscope on its post, the
+ * gunner's sight and the loader's machine gun. NATO three-tone camouflage.
  */
 export const LEOPARD2A7: TankDesign = {
-  w: 218, h: 80, r: 12, wheel: 20,
-  axles: [[17, 58], [44, 67], [66, 67], [88, 67], [110, 67], [132, 67], [154, 67], [176, 67], [199, 60]],
-  hull: [[1, 37], [4, 35], [166, 35], [216, 47], [216, 52], [204, 56], [1, 48]],
-  skirt: [[30, 39], [183, 39], [204, 44], [204, 46], [190, 57], [32, 57], [30, 55]],
-  turret: [[52, 11], [146, 11], [180, 30], [176, 34], [152, 35], [100, 35], [96, 31], [52, 31]],
+  w: 224, h: 76, r: 11, wheel: 18,
+  axles: [[17, 54], [46, 64], [67, 64], [88, 64], [109, 64], [130, 64], [151, 64], [172, 64], [200, 57]],
+  hull: [[1, 35], [4, 33], [172, 33], [222, 45], [222, 48], [210, 52], [1, 44]],
+  skirt: [[28, 37], [188, 37], [207, 42], [207, 45], [199, 53], [30, 53], [28, 51]],
+  turret: [[44, 10], [149, 9], [155, 10], [165, 22], [163, 26], [156, 33], [97, 33], [93, 28], [44, 28]],
   body: [
-    [[1, 37], [4, 35], [166, 35], [216, 47], [217, 56], [207, 58], [32, 57], [1, 48]],
-    [[40, 11], [146, 11], [180, 30], [176, 34], [152, 35], [40, 35]],
+    [[1, 35], [4, 33], [172, 33], [222, 45], [222, 48], [210, 53], [30, 53], [1, 45]],
+    [[30, 10], [149, 9], [155, 10], [165, 22], [163, 26], [156, 33], [30, 33]],
   ],
   paint: NATO[0], camo: natoCamo,
-  trunnion: [150, 22], hatch: [90, 21], engine: [14, 40], fuel: [62, 44], lamp: [212, 48], cabin: [52, 0, 100, 22],
+  trunnion: [153, 19], hatch: [91, 19], engine: [14, 38], fuel: [60, 42], lamp: [218, 45], cabin: [44, 0, 112, 20], band: [45, 23, 156, 26],
   fit: (a, P) => {
-    a.rect(40, 13, 12, 18, GUNMETAL[1]);
-    // the commander's hatch and his periscope on its post, the weapon station, the gunner's sight
-    a.rect(84, 8, 12, 3, P[2]);
-    a.rect(101, 4, 4, 7, P[1]);
-    a.roundRect(98, 0, 10, 5, 1, P[2]);
-    a.roundRect(64, 4, 10, 7, 1, P[2]);
-    a.hline(74, 86, 6, GUNMETAL[2]);
-    a.roundRect(126, 6, 15, 6, 1, P[2]);
-    // the smoke launchers, and the armour bolted onto the lower glacis
-    a.roundRect(58, 14, 16, 6, 1, P[1]);
-    a.poly([[203, 55], [216, 50], [217, 51], [217, 56], [207, 59]], P[2]);
+    a.rect(30, 12, 14, 16, GUNMETAL[1]);
+    // the commander's cupola and its weapon station (a heavy machine gun), the loader's hatch and gun
+    a.rect(84, 6, 16, 3, P[2]);
+    a.roundRect(99, 1, 9, 6, 1, P[2]);
+    a.hline(108, 122, 3, GUNMETAL[2]);
+    a.rect(62, 7, 12, 2, P[2]);
+    a.rect(70, 5, 3, 2, GUNMETAL[2]);
+    a.hline(73, 84, 5, GUNMETAL[2]);
+    // the commander's periscope on its post, the gunner's sight, the wind sensor
+    a.rect(121, 4, 3, 5, P[1]);
+    a.roundRect(117, 0, 11, 5, 1, P[2]);
+    a.roundRect(133, 5, 14, 5, 1, P[2]);
+    a.vline(52, 3, 9, GUNMETAL[2]);
+    // the smoke grenade launchers on the turret's cheek, the gun shield
+    a.roundRect(140, 12, 9, 6, 1, P[1]);
+    a.rect(156, 14, 7, 10, P[1]);
   },
   details: (a, P) => {
-    basket(a, 40, 13, 12, 18);
-    // the wedge's face in the light, and where it stands off the turret's own face
-    a.line(147, 12, 178, 30, P[3]);
-    a.line(147, 13, 151, 34, P[1]);
-    // the roof's edge, the turret's foot, the side armour's edge and bolts
-    a.hline(53, 145, 12, P[3]);
-    a.hline(100, 151, 34, P[1]);
-    a.vline(122, 13, 33, P[1]);
-    for (let y = 16; y < 33; y += 5) a.set(126, y, P[3]).set(142, y, P[3]);
-    a.hline(53, 95, 24, P[1]);
-    // the sights' glass, the periscope's head, the launchers' tubes
-    a.rect(140, 7, 1, 3, GUNMETAL[0]);
-    a.rect(107, 1, 1, 2, GUNMETAL[0]);
-    for (let x = 59; x < 73; x += 3) a.set(x, 15, GUNMETAL[0]).set(x, 18, GUNMETAL[0]);
-    // the deck's edge, the skirt: its panels and foot, the heavy front panels bolted on
-    a.hline(4, 165, 36, P[3]);
-    a.hline(31, 183, 39, P[3]);
-    a.hline(33, 192, 56, P[1]);
-    for (const x of [62, 92, 122]) a.vline(x, 40, 55, P[1]);
-    a.vline(152, 40, 55, P[0]);
-    bolts(a, 155, 185, 42, 6, P[3]);
-    bolts(a, 155, 185, 53, 6, P[3]);
-    a.line(204, 56, 216, 51, P[3]);
-    a.rect(209, 47, 3, 2, LAMP);
-    a.set(210, 47, 0xfffbe0);
-    a.rect(1, 38, 2, 3, LED_RED);
+    basket(a, 30, 12, 14, 16);
+    // the roof's edge in the light, the turret's foot in shadow, stowage boxes along its side
+    a.hline(45, 148, 10, P[3]);
+    a.hline(97, 155, 32, P[1]);
+    a.hline(98, 132, 17, P[3]);
+    a.hline(98, 132, 24, P[1]);
+    for (const x of [98, 115, 132]) a.vline(x, 17, 24, P[1]);
+    a.hline(45, 92, 21, P[1]);
+    // sights' glass, the cupola's vision blocks
+    a.rect(127, 1, 1, 3, GUNMETAL[0]);
+    a.rect(146, 6, 1, 3, GUNMETAL[0]);
+    bolts(a, 86, 98, 7, 3, GUNMETAL[1]);
+    // the launchers' tubes, the gun shield's edge
+    for (let x = 141; x < 148; x += 2) a.set(x, 13, GUNMETAL[0]).set(x, 16, GUNMETAL[0]);
+    a.vline(156, 14, 23, P[3]);
+    // the deck's edge, the skirt's top, its panels, bolts and foot; the heavy front panel
+    a.hline(4, 171, 34, P[3]);
+    a.hline(29, 188, 37, P[3]);
+    a.hline(31, 198, 52, P[1]);
+    for (const x of [58, 88, 118, 148]) a.vline(x, 38, 51, P[1]);
+    a.vline(149, 38, 51, P[0]);
+    for (const x of [33, 63, 93, 123, 153]) bolts(a, x, x + 24, 39, 6, P[3]);
+    // the driver's periscopes on the glacis, the lamps, the turbine's exhaust grille at the back
+    for (const x of [177, 181, 185]) a.set(x, 35, GUNMETAL[0]).set(x, 36, GUNMETAL[1]);
+    a.rect(215, 43, 3, 2, LAMP);
+    a.set(216, 43, 0xfffbe0);
+    a.rect(1, 36, 2, 3, LED_RED);
   },
   barrel: { len: 166, evacuator: [66, 84], joints: [28, 46, 102, 122, 142], sensor: true },
 };

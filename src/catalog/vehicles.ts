@@ -59,6 +59,7 @@ function burnt(body: () => PixelArt, rows?: number) {
   const wreck = lazyArt(() => V.wreckOf(body()));
   return {
     front: lazyArt(() => V.seeThrough(body(), rows)),
+    frontOf: (a: PixelArt) => V.seeThrough(a, rows),
     wreck,
     wreckFront: lazyArt(() => V.seeThrough(wreck(), rows)),
   };
@@ -129,6 +130,8 @@ const TANK: CarConfig = {
   seats: [{ at: [51, 13], pose: HATCH_POSE, recline: 0, band: 0 }], cabin: [36, 0, 48, 14], noBelts: true, ...burnt(tankArt, 23),
   // armour: crashes and blasts that wreck a car barely mark it
   engine: [16, 14], fuel: [28, 16], armour: 0.08, blast: { power: 180, radius: 6.5, damage: 300 },
+  // (its team's stripe along the hull: the star's on the turret)
+  band: [26, 15, 92, 18],
 };
 
 const CANNON: Omit<CannonSpec, 'shell'> = {
@@ -177,7 +180,7 @@ function tankModel(d: V.TankDesign, s: TankStats): { cfg: CarConfig; cannon: Omi
     wheelDensity: 300, axles: d.axles, wheelR: d.r, speed: s.speed, torque: s.torque, headlight: d.lamp, pitch: s.pitch, blunt: 1.3,
     bodyName: 'Hull', wheelName: 'Road wheel',
     seats: [{ at: d.hatch, pose: HATCH_POSE, recline: 0, band: 0 }], cabin: d.cabin, noBelts: true, ...burnt(body, foot + 1),
-    engine: d.engine, fuel: d.fuel, armour: 0.06, blast: { power: 200, radius: 7, damage: 320 },
+    engine: d.engine, fuel: d.fuel, armour: 0.06, blast: { power: 200, radius: 7, damage: 320 }, band: d.band,
   };
   const g = d.barrel;
   const shapes = [artRect(g.len, V.GUN_H, 0, 1, g.len, 5, 0.5)];
@@ -188,11 +191,11 @@ function tankModel(d: V.TankDesign, s: TankStats): { cfg: CarConfig; cannon: Omi
   return { cfg, cannon };
 }
 
-// the wheels: 9 of 111 kg (the Abrams), 8 or 9 of 132 kg; hull, wheels and barrel together 3,300 to 3,800 kg
+// the wheels: 9 of 111 kg (the Leopard), 8 or 9 of 132 kg; hull, wheels and barrel together 3,300 to 3,800 kg
 // (torque enough to be off the mark in a second or so: a tank that takes its real
 // six seconds to get going feels stuck to the floor here)
 const ABRAMS = tankModel(V.ABRAMS, {
-  kg: 2600, speed: 7.5, torque: 900, pitch: 0.85,
+  kg: 2600, speed: 7.5, torque: 980, pitch: 0.85,
   gun: { speed: 48, reload: 2, recoil: 1100, limits: [-10, 20] },
 });
 const ZTZ99A = tankModel(V.ZTZ99A, {
@@ -200,7 +203,7 @@ const ZTZ99A = tankModel(V.ZTZ99A, {
   gun: { speed: 46, reload: 1.1, recoil: 1150, limits: [-6, 18] },
 });
 const LEOPARD = tankModel(V.LEOPARD2A7, {
-  kg: 2550, speed: 6, torque: 700, pitch: 0.5,
+  kg: 2550, speed: 6, torque: 640, pitch: 0.5,
   gun: { speed: 58, reload: 2, recoil: 1250, limits: [-9, 20] },
 });
 
@@ -268,10 +271,10 @@ export function registerVehicles(): void {
       standing(cfg, { art: cannon.barrel, x: cannon.trunnion[0] - cannon.pivot[0], y: cannon.trunnion[1] - cannon.pivot[1] }),
       (game, def, x, y, opts) => new Tank(game, def, cfg, spec, x, y, opts), ['vehicle', 'tank', 'army', 'military', 'cannon', 'tracks', ...tags]);
   };
-  tank('tank-abrams', 'M1 Abrams', 'The American M1A2 Abrams, in desert tan: its gas turbine makes it the quickest tank off the mark and the fastest, and its 120 mm gun is loaded by hand. Flat, slab-sided turret with a stowage rack on its back.',
+  tank('tank-abrams', 'M1 Abrams', 'The American M1A2 Abrams, in desert tan: its gas turbine makes it the quickest tank off the mark and the fastest, and its 120 mm gun is loaded by hand. Its turret\'s face slopes back in angled slabs of armour over the gun.',
     ABRAMS, ['m1', 'm1a2', 'abrams', 'usa', 'american', 'turbine', '120mm']);
   tank('tank-ztz99a', 'ZTZ-99A', 'China\'s Type 99A, in digital camouflage: a little lighter than the others, with an arrowhead of reactive armour on its turret, and its 125 mm gun\'s autoloader reloads the fastest.',
     ZTZ99A, ['type 99', 'type 99a', 'ztz', 'china', 'chinese', 'autoloader', '125mm']);
-  tank('tank-leopard', 'Leopard 2A7', 'Germany\'s Leopard 2A7, in NATO three-tone camouflage: wedges of armour on the turret\'s face, and the long L/55 120 mm gun fires the fastest, flattest shell.',
+  tank('tank-leopard', 'Leopard 2A7', 'Germany\'s Leopard 2A7, in NATO three-tone camouflage: a tall, slab-sided turret with a flat face, and the long L/55 120 mm gun fires the fastest, flattest shell.',
     LEOPARD, ['leopard', 'leo', '2a7', 'germany', 'german', 'l55', '120mm']);
 }

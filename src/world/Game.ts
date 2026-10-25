@@ -16,6 +16,7 @@ import { Fire } from '../systems/Fire';
 import { Weather } from '../systems/Weather';
 import { Water } from '../systems/Water';
 import { Fluid } from '../systems/Fluid';
+import { LiveWater } from '../systems/LiveWater';
 import { stats } from './Stats';
 import { Puddles } from '../systems/Puddles';
 import { ContactGroups } from '../systems/ContactGroups';
@@ -64,6 +65,8 @@ export class Game {
   /** A map's sea, and the void's drop (see systems/Water). */
   readonly water: Water;
   readonly fluid: Fluid;
+  /** A current through water (see LiveWater). */
+  readonly liveWater: LiveWater;
   /** Rain, snow, fog and lightning, and the world's light (Settings > World). */
   readonly weather: Weather;
   /** What players do, counted (the pause menu's statistics). */
@@ -126,6 +129,8 @@ export class Game {
   preStepHandlers: ((dt: number) => void)[] = [];
   /** Called once per physics step after it, when things may be added and removed again. */
   postStepHandlers: (() => void)[] = [];
+  /** Done once, after the step under way (see afterStep()). */
+  private afterStepQueue: (() => void)[] = [];
   /** Called once per rendered frame. */
   frameHandlers: ((dt: number, alpha: number) => void)[] = [];
 
@@ -185,6 +190,7 @@ export class Game {
     // (the sea first: the weather's drops stop at its surface)
     this.water = new Water(this);
     this.fluid = new Fluid(this);
+    this.liveWater = new LiveWater(this);
     this.weather = new Weather(this);
     this.frameHandlers.push((dt) => this.stats.frame(dt));
     this.sound.panFor = (x) => {
@@ -208,6 +214,23 @@ export class Game {
   // ---- entities -------------------------------------------------------------
 
   /** Re-creates an entity (and anything it holds) mirrored around its center. */
+  /**
+   * Does `fn` once the step under way is over (at once, between steps): what
+   * mustn't happen in the middle of one, as an entity made again (mirrored) while
+   * the one it replaces is still in the world.
+   */
+  afterStep(fn: () => void): void {
+    if (this.stepping) this.afterStepQueue.push(fn);
+    else fn();
+  }
+
+  private runAfterStep(): void {
+    if (!this.afterStepQueue.length) return;
+    const list = this.afterStepQueue;
+    this.afterStepQueue = [];
+    for (const fn of list) fn();
+  }
+
   flipEntity(e: Entity): Entity | null {
     return this.flipEntities([e])[0] ?? null;
   }
@@ -403,6 +426,7 @@ export class Game {
     this.stains.clear();
     this.puddles.clear();
     this.fluid.clear();
+    this.liveWater.clear();
     this.fire.clear();
     this.explosions.clear();
   }
@@ -882,6 +906,7 @@ export class Game {
     this.water.step(dt);
     lap?.('step: effects');
     this.fluid.step(dt);
+    this.liveWater.step(dt);
     lap?.('step: fluid');
     this.explosions.step(dt);
     this.particles.step(dt);
@@ -896,6 +921,7 @@ export class Game {
       this.pendingRemoval = [];
       for (const e of list) this.removeNow(e);
     }
+    this.runAfterStep();
     for (const h of this.postStepHandlers) h();
   }
 
@@ -916,6 +942,7 @@ export class Game {
     this.fire.showStep(dt);
     this.puddles.showStep(dt);
     this.fluid.step(dt, true);
+    this.liveWater.step(dt, true);
     this.particles.step(dt);
     this.casings.step(dt);
     this.projectiles.step(dt);
@@ -926,6 +953,7 @@ export class Game {
       this.pendingRemoval = [];
       for (const e of list) this.removeNow(e);
     }
+    this.runAfterStep();
     for (const h of this.postStepHandlers) h();
   }
 }

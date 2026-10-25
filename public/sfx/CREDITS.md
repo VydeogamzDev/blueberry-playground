@@ -8,7 +8,7 @@ Where a row says so, a second pass removed rumble (two-pole high-pass at the giv
 
 Freesound files were taken from the publicly accessible high-quality preview (`-hq`) of each sound, since original downloads need a login.
 
-Total: 369 files from 165 sources.
+Total: 395 files from 192 sources.
 
 ## Kenney
 
@@ -2045,6 +2045,49 @@ Total: 369 files from 165 sources.
 | File | Original file | Notes |
 |---|---|---|
 | `machine/jet_roar_loop_1.ogg` | freesound #534856 (HQ preview) | @ 1 s; 4 s seamless loop (0.4 s crossfade); high-pass 40 Hz, levelled |
+
+### Male Gasp 1.wav
+
+- Source: https://freesound.org/people/jawbutch/sounds/344407/
+- Author: jawbutch
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/gasp_1.ogg` | freesound #344407 (HQ preview) | 0.66 s; high-passed at 100 Hz |
+
+### gasping
+
+- Source: https://freesound.org/people/Alivvie/sounds/436781/
+- Author: Alivvie
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `creature/gasp_2.ogg` | freesound #436781 (HQ preview) | @ 3.58 s; 0.45 s; high-passed at 100 Hz |
+| `creature/gasp_3.ogg` | freesound #436781 (HQ preview) | @ 1.42 s; 0.33 s; high-passed at 100 Hz |
+
+### Bubbles_Single2.wav
+
+- Source: https://freesound.org/people/BMacZero/sounds/96125/
+- Author: BMacZero
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/bubbles_1.ogg` | freesound #96125 (HQ preview) | 0.41 s; high-passed at 120 Hz |
+
+### Bubbles 001.wav
+
+- Source: https://freesound.org/people/ristooooo1/sounds/539823/
+- Author: ristooooo1
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `liquid/bubbles_2.ogg` | freesound #539823 (HQ preview) | @ 0.60 s; 0.45 s; high-passed at 120 Hz |
+| `liquid/bubbles_3.ogg` | freesound #539823 (HQ preview) | @ 3.03 s; 0.66 s; high-passed at 120 Hz |
+| `liquid/bubbles_4.ogg` | freesound #539823 (HQ preview) | @ 3.84 s; 0.50 s; high-passed at 120 Hz |
 
 ## Music
 

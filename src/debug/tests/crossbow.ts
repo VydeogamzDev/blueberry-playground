@@ -201,6 +201,40 @@ export default function tests({ game, controls, kit, human, arm }: TestCtx): Tes
       if (hp(b) > hp0 - 20) return `a bolt stuck in the foe, but took only ${(hp0 - hp(b)).toFixed(1)} hp off`;
       return true;
     }],
+    ['extra: crossbow: firework bolts (from its menu) burst on whoever they hit, singeing them; shot at nothing, one bursts high up a moment into its flight', () => {
+      kit.reset();
+      const h = human(2);
+      kit.advance(1);
+      const hp0 = hp(h);
+      const c = aimAt(torso(h), 3.5, 'normal');
+      const pick = c.contextActions().find((x) => x.label === 'Bolts: Firework');
+      if (!pick) return `the crossbow's menu has no firework bolts (${c.contextActions().map((x) => x.label).join(', ')})`;
+      pick.action();
+      if (c.bolt !== 'firework') return `picked from the menu, it's loaded with ${c.bolt} bolts`;
+      c.fire();
+      const bolt = bolts()[0];
+      if (!bolt || bolt.kind !== 'firework') return `shot, there's no firework bolt (${bolt?.kind ?? 'none'})`;
+      const hit = until(() => bolt.destroyed, 0.5);
+      if (!Number.isFinite(hit)) return `0.5 s after it was shot 3.5 m at someone, the firework bolt is still there (${bolt.state})`;
+      kit.advance(0.2);
+      if (hp(h) >= hp0 - 1) return `the burst took only ${(hp0 - hp(h)).toFixed(1)} hp off whoever it hit`;
+      // up into the air, at nothing
+      kit.reset();
+      const up = kit.spawn('crossbow', 0, 2, { angle: 1.1 }) as Crossbow;
+      up.setFrozen(true);
+      up.load('firework');
+      up.fire();
+      const b2 = bolts()[0];
+      let top = -Infinity;
+      const t = until(() => {
+        if (!b2.destroyed) top = Math.max(top, b2.main.y);
+        return b2.destroyed;
+      }, 2);
+      if (!Number.isFinite(t)) return 'shot at nothing, the firework bolt never burst';
+      if (t < 0.4 || t > 0.8) return `shot at nothing, it burst ${t.toFixed(2)} s into its flight`;
+      if (top < 10) return `shot upward, it got only ${(top - 2).toFixed(1)} m up before bursting`;
+      return true;
+    }],
     ['extra: crossbow: past a couple of dozen spent bolts, the oldest are taken away', () => {
       kit.reset();
       const crate = kit.spawn('crate', 2, 0.45);

@@ -50,7 +50,7 @@ export function savesSettings(row: Row, o: { toast(msg: string): void; download(
   if (desktop) folderBox.appendChild(button('Open', () => desktop!.sync.reveal()));
   const folderHint = desktop
     ? `The desktop version and the browser one (Chrome or Edge) keep each other’s saves up to date through ${SYNC_FILE} in this folder. Put it in OneDrive or Dropbox and it syncs between computers too.`
-    : `Link the folder the desktop version syncs to (Documents\\Blueberry Playground) and the two keep each other’s saves up to date. Put it in OneDrive or Dropbox and it syncs between computers too.`;
+    : `Link the folder the desktop version syncs to (Blueberry Playground, in Documents) and the two keep each other’s saves up to date. Put it in OneDrive or Dropbox and it syncs between computers too.`;
   if (s.canLink) row('Sync folder', folderBox, folderHint);
   else row('Sync folder', el('span', 'set-note', 'This browser can’t link a folder (Chrome and Edge can): carry saves over with Export and Import'));
 

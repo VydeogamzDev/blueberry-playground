@@ -45,6 +45,7 @@ const BOLT_ITEMS: { kind: BoltKind; name: string; desc: string; mass: number; ta
   { kind: 'explosive', name: 'Explosive Bolt', desc: 'A bolt with a small charge on its nose: it goes off on whatever it hits. Drop it on a crossbow to load it with these.', mass: 0.12, tags: ['arrow', 'bomb', 'blast'] },
   { kind: 'incendiary', name: 'Incendiary Bolt', desc: 'A bolt with fuel-soaked wrapping, lit as it is shot: it sets alight whatever it sticks in. Drop it on a crossbow to load it with these.', mass: 0.09, tags: ['arrow', 'fire', 'flaming'] },
   { kind: 'tranquilizer', name: 'Tranquilizer Bolt', desc: 'A dart of sedative: it puts whoever it hits to sleep, hardly hurting them. Drop it on a crossbow to load it with these.', mass: 0.07, tags: ['arrow', 'dart', 'sedative', 'sleep'] },
+  { kind: 'firework', name: 'Firework Bolt', desc: 'A bolt with a little rocket on its nose, lit as it is shot: it trails sparks and bursts in a shower of coloured stars on whatever it hits, or a moment into its flight. Drop it on a crossbow to load it with these.', mass: 0.1, tags: ['arrow', 'rocket', 'firework', 'fireworks'] },
 ];
 
 export function registerCrossbow(): void {
@@ -53,10 +54,10 @@ export function registerCrossbow(): void {
   const art = lazyArt(() => C.crossbowArt(2, 'normal'));
   const shapes = [artRect(34, 15, 0, 6, 13, 6, 0.5), artRect(34, 15, 12, 7, 19, 3, 0.4), artRect(34, 15, 11, 10, 4, 4, 0.5), artRect(34, 15, 25, 0, 4, 15, 0.5)];
   item('crossbow', 'Crossbow',
-    'Activate to shoot a bolt; then the string is drawn back and the next bolt laid in (a second or so). Pick the bolts in its menu: normal ones stick in and bleed, poisoned ones poison, explosive ones blow up, incendiary ones set things alight, and tranquilizer darts put people to sleep.',
+    'Activate to shoot a bolt; then the string is drawn back and the next bolt laid in (a second or so). Pick the bolts in its menu: normal ones stick in and bleed, poisoned ones poison, explosive ones blow up, incendiary ones set things alight, tranquilizer darts put people to sleep, and firework bolts burst in a shower of stars.',
     art, (game, def, x, y, opts) =>
       new Crossbow(game, def, { art, material: MAT.wood, shapes, density: densityFor(3.2, shapes), angularDamping: 0.3 }, CROSSBOW_HOLD, CROSSBOW_GUN, bolts, x, y, opts),
-    ['bow', 'bolt', 'arrow', 'archery', 'quiet', 'poison', 'explosive', 'incendiary', 'tranquilizer']);
+    ['bow', 'bolt', 'arrow', 'archery', 'quiet', 'poison', 'explosive', 'incendiary', 'tranquilizer', 'firework', 'fireworks']);
   const boltShapes: ShapeSpec[] = [artRect(C.BOLT_W, C.BOLT_H, 0, 0.5, C.BOLT_W, 2, 0.5)];
   for (const b of BOLT_ITEMS) {
     const boltArt = lazyArt(() => C.boltArt(b.kind));

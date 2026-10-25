@@ -1,9 +1,11 @@
 import { RAPIER } from '../engine/Physics';
 import { PX } from '../engine/constants';
-import { clamp, rotate } from '../engine/math';
+import { clamp, rotate, type V2 } from '../engine/math';
 import { Entity } from '../world/Entity';
 import { MAT } from '../world/Materials';
 import { PK } from '../systems/Particles';
+import { isLiving, stillUp } from '../systems/Fighting';
+import { dye, enemies, isTeamId, isTeamMachine, nearestFoe, onSide, type TeamId } from '../systems/Teams';
 import { Car, type CarConfig } from './Car';
 import type { PixelArt } from '../art/PixelArt';
 import type { Part, ShapeSpec } from '../world/Part';
@@ -41,6 +43,30 @@ const AIM_RATE = 15;
 /** How far the barrel runs back on firing (sprite px) and how long it takes to run out again (s). */
 const KICK_PX = 4;
 const KICK_T = 0.35;
+/**
+ * On a side (see command()): how far it looks for an enemy (m), the range it
+ * fights from (nearer, it backs off; further, it drives in), and how often it
+ * looks about again (s).
+ */
+const SIGHT = 70;
+const NEAR = 12;
+const FAR = 40;
+const LOOK = 0.4;
+/** An enemy behind it this long (s), it turns round. */
+const TURN_AFTER = 1.2;
+/** How near (degrees) the barrel must be laid to where it should be before it fires. */
+const LAID = 0.6;
+/** Driven or laid by hand, its crew leave it to whoever does for this long (s). */
+const HANDS_OFF = 4;
+/**
+ * It holds its fire with anyone of its side under the shell's path with less
+ * than this (m) over their heads, or within this of where it would land (its
+ * blast's reach and a little).
+ */
+const CLEAR_OVER = 0.4;
+const CLEAR_BLAST = 5;
+/** Nor does it drive on with one of its own side this near (m) in front of it (or behind, backing up). */
+const GIVE_WAY = 3;
 
 /**
  * A tank: a heavy hull on driven road wheels inside its track, with a cannon on
@@ -50,6 +76,10 @@ const KICK_T = 0.35;
  * power, or selected, with the drive keys (see Car.steer()); the aim keys
  * raise and lower the barrel smoothly within the gun's limits, and the menu
  * sets it to a few elevations.
+ *
+ * Put on a side (Team: in its menu), its crew fight for it: they drive at the
+ * nearest enemy they can see to within range, lay the gun on them and fire,
+ * holding fire while their own side is in the way (see command()).
  */
 export class Tank extends Car {
   readonly barrel: Part;
@@ -61,6 +91,15 @@ export class Tank extends Car {
   private cooldown = 0;
   private kick = 0;
   shots = 0;
+  /** The side it fights for (see Teams; null: none). */
+  team: TeamId | null = null;
+  readonly fightsForTeam = true;
+  /** The enemy it's after, on a side. */
+  foe: Entity | null = null;
+  private lookT = 0;
+  /** How long its foe has been behind it, and how much longer the crew leave it to whoever drove it by hand (s). */
+  private behindT = 0;
+  private handsOff = 0;
 
   constructor(game: Game, def: ItemDef, cfg: CarConfig, gun: CannonSpec, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
@@ -98,6 +137,7 @@ export class Tank extends Car {
   }
 
   preStep(dt: number): void {
+    this.command(dt);
     super.preStep(dt);
     this.cooldown -= dt;
     // Use held down: the next shell as soon as it has reloaded
@@ -164,6 +204,180 @@ export class Tank extends Car {
     game.alarm(m.x, m.y, 30);
   }
 
+  /**
+   * On a side, the crew's part each step: the nearest enemy in sight (looked
+   * for a few times a second), driven at to within FAR m or backed off from to
+   * NEAR, turned round for if they're behind it; the gun laid to land a shell on
+   * them where they'll be by then, and fired once it's laid, reloaded, and none
+   * of its side is in the way.
+   */
+  private command(dt: number): void {
+    if (this.handsOff > 0) this.handsOff -= dt;
+    const b = this.body;
+    if (!this.team || this.wrecked || b.destroyed || b.frozen || this.handsOff > 0) {
+      if (this.foe) {
+        this.foe = null;
+        if (this.handsOff <= 0) this.autoDrive(0);
+      }
+      return;
+    }
+    const dir = b.flip;
+    if ((this.lookT -= dt) <= 0) {
+      this.lookT = LOOK * (0.8 + Math.random() * 0.4);
+      const t = b.pixelToWorld(this.gun.trunnion[0], this.gun.trunnion[1]);
+      this.foe = nearestFoe(this, t.x, t.y, SIGHT, dir);
+    }
+    const foe = this.foe;
+    if (!foe || !this.stillFoe(foe)) {
+      if (foe) this.foe = null;
+      this.behindT = 0;
+      this.autoDrive(0);
+      return;
+    }
+    const c = foe.center();
+    const at = { x: c.x, y: c.y + (isLiving(foe) ? 0.1 : 0) };
+    // behind it: it stops, and turns round
+    if ((at.x - b.x) * dir < -1) {
+      this.autoDrive(0);
+      this.behindT += dt;
+      if (this.behindT > TURN_AFTER && Math.abs(b.vx) < 0.5) this.turnRound();
+      return;
+    }
+    this.behindT = 0;
+    const d = Math.abs(at.x - b.x);
+    const go = d > FAR ? dir : d < NEAR ? -dir : 0;
+    this.autoDrive(go && !this.inTheWay(go) ? go : 0);
+    const el = this.solve(at, foe);
+    if (el === null) return;
+    const [lo, hi] = this.gun.limits;
+    this.elevation = clamp(el, lo, hi);
+    if (el < lo - LAID || el > hi + LAID || this.cooldown > 0 || Math.abs(this.aim - this.elevation) > 0.3) return;
+    // (the barrel itself there: not still swinging from the hull rocking)
+    const laid = ((this.barrel.a - b.a) * 180) / Math.PI * dir;
+    if (Math.abs(laid - el) > LAID || !this.clear(at)) return;
+    this.fire();
+  }
+
+  /** Still worth a shell: on another side, up and about (a machine: not a wreck). */
+  private stillFoe(e: Entity): boolean {
+    if (e.destroyed || !enemies(this, e)) return false;
+    return isLiving(e) ? stillUp(e) : !isTeamMachine(e) || !e.wrecked;
+  }
+
+  /**
+   * The elevation (degrees from the hull) that lands a shell on `at`, led by as
+   * far as `foe` goes in the shell's flight; null if a shell can't get there. (Its
+   * flight has no drag: the low arc, worked out from the muzzle, which moves as
+   * the barrel does.)
+   */
+  private solve(at: V2, foe: Entity): number | null {
+    const b = this.body;
+    const g = this.gun;
+    const dir = b.flip;
+    const grav = Math.max(0, -this.game.gravity);
+    const v = g.speed;
+    const t = b.pixelToWorld(g.trunnion[0], g.trunnion[1]);
+    const len = (g.muzzle[0] - g.pivot[0]) * PX;
+    // how fast it's going (its parts, by their weight)
+    let fvx = 0;
+    let m = 0;
+    for (const p of foe.parts) {
+      if (p.destroyed || p.frozen) continue;
+      fvx += p.vx * p.mass;
+      m += p.mass;
+    }
+    fvx = m > 0 ? fvx / m : 0;
+    let up = 0;
+    let tx = at.x;
+    for (let k = 0; k < 3; k++) {
+      const x = (tx - (t.x + Math.cos(up) * len * dir)) * dir;
+      const y = at.y - (t.y + Math.sin(up) * len);
+      if (x < 0.5) return null;
+      if (grav < 0.1) up = Math.atan2(y, x);
+      else {
+        const v2 = v * v;
+        const disc = v2 * v2 - grav * (grav * x * x + 2 * y * v2);
+        if (disc < 0) return null;
+        up = Math.atan((v2 - Math.sqrt(disc)) / (grav * x));
+      }
+      tx = at.x + fvx * (x / (v * Math.cos(up)));
+    }
+    // the world's elevation, less the hull's tilt the way it faces
+    return ((up - b.body.rotation() * dir) * 180) / Math.PI;
+  }
+
+  /** One of its side just ahead of it the way it would drive (`go`: 1 right, -1 left): it waits for them. */
+  private inTheWay(go: number): boolean {
+    const b = this.body;
+    const half = (b.w * PX) / 2;
+    // (and as far again as it takes to stop: heavy, it rolls a long way on its brakes)
+    const room = GIVE_WAY + Math.abs(b.vx) * 1.2;
+    const own = this.attachedEntities();
+    for (const a of onSide(this.game, this.team!)) {
+      if (a.e === this || own.includes(a.e)) continue;
+      const ahead = (a.x - b.x) * go - half;
+      if (ahead > -half && ahead < room && Math.abs(a.y - b.y) < 3) return true;
+    }
+    return false;
+  }
+
+  /**
+   * None of its side (but its own riders) in the way of a shell fired as the
+   * barrel's laid at `at`: under its path without CLEAR_OVER m over their heads
+   * (it goes over its own infantry a few metres on), nor within a blast's reach
+   * of where it lands.
+   */
+  private clear(at: V2): boolean {
+    const b = this.barrel;
+    const m = b.pixelToWorld(this.gun.muzzle[0], this.gun.muzzle[1]);
+    const dir = this.body.flip;
+    const f = b.localDir(b.flip, 0);
+    const v = this.gun.speed;
+    const grav = Math.max(0, -this.game.gravity);
+    const reach = (at.x - m.x) * dir;
+    const own = this.attachedEntities();
+    for (const a of onSide(this.game, this.team!)) {
+      if (a.e === this || own.includes(a.e)) continue;
+      if (Math.hypot(a.x - at.x, a.y - at.y) < CLEAR_BLAST) return false;
+      // the shell's height where they are, and how tall they stand round their middle
+      const s = (a.x - m.x) * dir;
+      if (s < -1 || s > reach + 1) continue;
+      const t = Math.max(0, s) / Math.max(0.1, Math.abs(f.x) * v);
+      const y = m.y + f.y * v * t - 0.5 * grav * t * t;
+      const tall = isTeamMachine(a.e) ? 2 : 1;
+      if (y > a.y - tall - 0.3 && y < a.y + tall + CLEAR_OVER) return false;
+    }
+    return true;
+  }
+
+  /** Turns round where it stands (made again mirrored, once the step is over), riders, side and all. */
+  private turnRound(): void {
+    this.behindT = 0;
+    const game = this.game;
+    game.afterStep(() => {
+      if (this.destroyed || this.wrecked || this.body.frozen) return;
+      const b = this.body;
+      // (dust kicked up off the tracks, and their brakes let off)
+      game.particles.smoke(b.x, b.y - 0.6, 6, 0.6);
+      game.sound.play('machine/air_release', { gain: 0.3, x: b.x, rate: 0.8 });
+      game.flipEntity(this);
+    });
+  }
+
+  /** Puts it on a side (or none): its crew fight for it (see command()), and a stripe of its colour goes round the turret. */
+  setTeam(team: TeamId | null): void {
+    this.team = team;
+    this.foe = null;
+    const band = this.cfg.band;
+    this.dressBody(team && band ? dye(this.def.id + ':hull', this.cfg.body(), team, band[1], band[3], band[0], band[2], 0.4) : null);
+  }
+
+  /** Driven or laid by hand: the crew leave it be a while. */
+  steer(x: number, aim = 0): void {
+    super.steer(x, aim);
+    if (x || aim) this.handsOff = HANDS_OFF;
+  }
+
   /** Use fires it (driving is in its menu). */
   activate(): void {
     this.fire();
@@ -188,13 +402,18 @@ export class Tank extends Car {
     const [lo, hi] = this.gun.limits;
     for (const d of ELEVATIONS) {
       if (d < lo || d > hi) continue;
-      acts.push({ label: `Barrel ${d < 0 ? `−${-d}` : d}°`, checked: Math.abs(this.elevation - d) < 0.05, action: () => (this.elevation = d) });
+      acts.push({ label: `Barrel ${d < 0 ? `−${-d}` : d}°`, checked: Math.abs(this.elevation - d) < 0.05, action: () => {
+        this.elevation = d;
+        this.handsOff = HANDS_OFF;
+      } });
     }
     return acts;
   }
 
   protected serializeExtra(): Record<string, unknown> {
-    return { ...super.serializeExtra(), elevation: this.elevation, aim: this.aim };
+    const x: Record<string, unknown> = { ...super.serializeExtra(), elevation: this.elevation, aim: this.aim };
+    if (this.team) x.team = this.team;
+    return x;
   }
 
   protected restoreExtra(x: Record<string, unknown>): void {
@@ -203,6 +422,8 @@ export class Tank extends Car {
     if (typeof x.elevation === 'number') this.elevation = clamp(x.elevation, lo, hi);
     this.aim = typeof x.aim === 'number' ? clamp(x.aim, lo, hi) : this.elevation;
     this.lockBarrel();
+    const team = isTeamId(x.team) ? x.team : null;
+    if (team !== this.team) this.setTeam(team);
   }
 }
 

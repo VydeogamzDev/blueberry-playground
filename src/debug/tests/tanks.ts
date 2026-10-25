@@ -6,10 +6,24 @@ import type { ActionId } from '../../tools/Bindings';
 import { saveToString, loadFromString } from '../../world/SaveLoad';
 import { PX } from '../../engine/constants';
 import { wrapAngle } from '../../engine/math';
+import { stillUp } from '../../systems/Fighting';
 
 /** Driving selected vehicles with the arrow keys, laying a tank's gun with them, and the three real tanks. */
-export default function tests({ game, controls, kit }: TestCtx): Test[] {
+export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
   const r = game.renderer;
+  /** Opens `e`'s context menu and picks the item `label` (ticked or not); false if there's none. */
+  const menu = (e: Entity, label: string): boolean => {
+    const p = e.parts.find((q) => !q.destroyed)!;
+    kit.down(p.x, p.y, 2);
+    kit.up(p.x, p.y, 2);
+    const item = [...document.querySelectorAll<HTMLElement>('.ctx-item')].find((d) => (d.textContent ?? '').replace(/^[☑☐] /, '').startsWith(label));
+    if (!item) {
+      controls.ui.closeContextMenu();
+      return false;
+    }
+    item.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true }));
+    return true;
+  };
   const key = (id: ActionId) => controls.bindings.keys(id)[0];
   const deg = (rad: number) => (rad * 180) / Math.PI;
   /** Frames as the game runs them: a step or two and a frame each (the camera moves in the frames). */
@@ -248,6 +262,111 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       if (Math.abs(laidAt(t2) - laid) > 1.5) return `after loading, the barrel stands at ${laidAt(t2).toFixed(1)}° to the hull (laid at ${laid.toFixed(1)}°)`;
       const labels = t2.contextActions().map((a) => a.label).filter((s) => s.startsWith('Barrel'));
       if (labels.includes('Barrel 35°') || !labels.includes('Barrel 20°') || !labels.includes('Barrel −5°')) return `the Leopard's menu offers ${labels.join(', ')} (its gun: −9° to 20°)`;
+      return true;
+    })],
+    ['extra: tanks: on a side, a tank drives in on an enemy it sees far off, lays its gun on them and shells them', () => tidy(() => {
+      kit.reset();
+      const t = kit.spawn('tank-abrams', -40, 0.8) as Tank;
+      const foe = human(25, { flip: true });
+      kit.advance(1);
+      foe.setTeam('blue');
+      t.setTeam('red');
+      const x0 = t.body.x;
+      let down = -1;
+      for (let s = 0; s < 14 && down < 0; s++) {
+        kit.advance(1);
+        if (foe.destroyed || !stillUp(foe)) down = s + 1;
+      }
+      if (t.body.x - x0 < 5) return `65 m from its enemy, it drove ${(t.body.x - x0).toFixed(1)} m in`;
+      if (!t.shots) return `it never fired (its foe: ${t.foe ? 'the enemy' : 'nobody'}, laid at ${t.elevation.toFixed(1)}°)`;
+      if (down < 0) return `${t.shots} shells, and the enemy is still up`;
+      // (and it stopped short, at its range)
+      const gap = Math.abs((foe.destroyed ? 25 : foe.center().x) - t.body.x);
+      if (gap < 10) return `it drove right up to the enemy (${gap.toFixed(1)} m off)`;
+      return true;
+    })],
+    ['extra: tanks: a tank on a side holds its fire while one of its own side is in the line of fire, and fires once they\'re out of it', () => tidy(() => {
+      kit.reset();
+      const t = kit.spawn('tank-leopard', -20, 0.8) as Tank;
+      const foe = human(12, { flip: true });
+      const friend = human(-4);
+      kit.advance(1);
+      // (held where they stand: they'd only go for each other)
+      foe.setFrozen(true);
+      friend.setFrozen(true);
+      foe.setTeam('blue');
+      friend.setTeam('red');
+      t.setTeam('red');
+      kit.advance(4);
+      if (t.foe !== foe) return `it went for ${t.foe ? 'someone else' : 'nobody'}`;
+      if (t.shots) return `it fired ${t.shots} shells through its own side`;
+      game.remove(friend);
+      kit.advance(4);
+      if (!t.shots) return 'the line of fire clear, it never fired';
+      return true;
+    })],
+    ['extra: tanks: a tank on a side driving in on an enemy stops short of one of its own side in its way, rather than run them over', () => tidy(() => {
+      kit.reset();
+      const t = kit.spawn('tank-abrams', -34, 0.8) as Tank;
+      const foe = human(30, { flip: true });
+      const friend = human(-22);
+      kit.advance(1);
+      foe.setFrozen(true);
+      friend.setFrozen(true);
+      foe.setTeam('blue');
+      friend.setTeam('red');
+      t.setTeam('red');
+      let hurt = 0;
+      const d = friend.damage.bind(friend);
+      friend.damage = (...x) => {
+        hurt += x[1];
+        return d(...x);
+      };
+      kit.advance(5);
+      const front = t.body.x + (t.body.w * PX) / 2;
+      if (t.body.x < -33) return 'it never drove in on the enemy';
+      if (hurt > 1 || front > friend.center().x - 0.5) return `it drove up to x ${front.toFixed(1)} (its friend at ${friend.center().x.toFixed(1)}), hurting them ${hurt.toFixed(0)}`;
+      return true;
+    })],
+    ['extra: tanks: a tank on a side turns round for an enemy behind it, and fires on them', () => tidy(() => {
+      kit.reset();
+      const t = kit.spawn('tank-ztz99a', 0, 0.8) as Tank;
+      const foe = human(-28);
+      kit.advance(1);
+      foe.setFrozen(true);
+      foe.setTeam('yellow');
+      t.setTeam('green');
+      const tank = () => game.entities.find((e): e is Tank => e.def.id === 'tank-ztz99a' && !e.destroyed);
+      let turned = -1;
+      for (let s = 0; s < 6 && turned < 0; s++) {
+        kit.advance(0.5);
+        if (tank()?.flipped) turned = (s + 1) * 0.5;
+      }
+      const u = tank();
+      if (!u || turned < 0) return 'it never turned round';
+      if (u.team !== 'green') return `turned round, it's on ${u.team ?? 'no side'}`;
+      if (Math.abs(u.body.x - t.body.x) > 1.5) return `turning round moved it ${(u.body.x - t.body.x).toFixed(2)} m`;
+      kit.advance(5);
+      if (!u.shots) return `turned round after ${turned} s, it never fired`;
+      return true;
+    })],
+    ['extra: tanks: Team in a tank\'s menu puts it on a side with a stripe of their colour; it stays on it through save and load', () => tidy(() => {
+      kit.reset();
+      const t = kit.spawn('tank-abrams', 0, 0.8) as Tank;
+      kit.advance(1);
+      controls.selection.clear();
+      controls.selection.add(t);
+      const plain = t.body.art;
+      if (!menu(t, 'Team: Green')) return 'no Team: Green in a tank\'s menu';
+      controls.selection.clear();
+      if (t.team !== 'green') return `Team: Green put it on ${t.team ?? 'no side'}`;
+      if (t.body.art === plain) return 'on a side, it wears no stripe';
+      loadFromString(game, saveToString(game));
+      const t2 = game.entities.find((e): e is Tank => e.def.id === 'tank-abrams');
+      if (!t2 || t2.team !== 'green') return `after loading it's on ${t2?.team ?? 'no side'}`;
+      if (t2.body.art === t2.cfg.body()) return 'after loading, its stripe is gone';
+      t2.setTeam(null);
+      if (t2.body.art !== t2.cfg.body()) return 'on no side, it still wears a stripe';
       return true;
     })],
   ];

@@ -87,6 +87,8 @@ export class Part {
   private paintStr: string | null | undefined = undefined;
   /** Art pixels carved away (see carve()), one byte each, w x h; null: none. */
   private holes: Uint8Array | null = null;
+  /** Its box colliders as they were made, before refit() shrank them (for repair()). */
+  private fitFrom: Map<RAPIER.Collider, { hx: number; hy: number; x: number; y: number; r: number; density: number }> | null = null;
   /** How many art pixels have been carved away. */
   holeCount = 0;
   private readonly sprites: Sprites;
@@ -737,6 +739,8 @@ export class Part {
       const W = bx1 - bx0;
       const H = by1 - by0;
       const r = Math.max(0, Math.min(r0, Math.min(W, H) / 2 - 0.05 * PX));
+      const from = (this.fitFrom ??= new Map());
+      if (!from.has(c)) from.set(c, { hx: he.x, hy: he.y, x: at.x, y: at.y, r: r0, density: c.density() });
       // (density was scaled up for the rounding: see addShape())
       const base = c.density() * (4 * Math.max(1e-9, he.x * he.y)) / (4 * hx * hy);
       c.setHalfExtents({ x: W / 2 - r, y: H / 2 - r });
@@ -744,6 +748,44 @@ export class Part {
       c.setTranslationWrtParent({ x: (bx0 + bx1) / 2, y: (by0 + by1) / 2 });
       c.setDensity((base * (W * H)) / Math.max(1e-9, (W - 2 * r) * (H - 2 * r)));
     }
+  }
+
+  /** Hurt, burnt, soaked in oil, painted on (blood, scorch marks, dents) or shot through: something to repair(). */
+  get damaged(): boolean {
+    return this.hp < this.maxHp || this.burning > 0 || this.charred > 0 || this.oil > 0 || this.holeCount > 0 || this.paintData() !== null;
+  }
+
+  /**
+   * Mended: whole again (its health, the pixels carved away and its colliders as
+   * they were), not burnt or charred, and clean, as its art has it (blood, scorch
+   * marks and oil gone).
+   */
+  repair(): void {
+    if (this.destroyed) return;
+    this.hp = this.maxHp;
+    this.entity.game.fire.extinguish(this);
+    this.charred = 0;
+    this.oil = 0;
+    if (this.holes) {
+      this.holes = null;
+      this.holeCount = 0;
+      for (const [c, f] of this.fitFrom ?? []) {
+        if (!c.isValid()) continue;
+        c.setHalfExtents({ x: f.hx, y: f.hy });
+        if (c.shape.type === RAPIER.ShapeType.RoundCuboid) c.setRoundRadius(f.r);
+        c.setTranslationWrtParent({ x: f.x, y: f.y });
+        c.setDensity(f.density);
+      }
+      this.fitFrom = null;
+      this.massStep = -1;
+      this.entity.massChanged();
+    }
+    if (this.ownsImage) {
+      this.image.set(this.art.toRGBA(1));
+      this.texDirty = true;
+      this.paintStr = undefined;
+    }
+    this.refreshTint();
   }
 
   // ---- state ---------------------------------------------------------------

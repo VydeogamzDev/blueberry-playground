@@ -2007,6 +2007,17 @@ export class Controls {
     }
   }
 
+  /** Things mended (see Entity.repair()). */
+  repair(list: Entity[]): void {
+    if (!list.length) return;
+    if (this.net) {
+      for (const e of list) this.net.send({ op: 'act', id: e.netId, path: ['Repair'] });
+      return;
+    }
+    this.history.record('Repair');
+    for (const e of list) if (!e.destroyed) e.repair();
+  }
+
   setWeightless(list: Entity[], on: boolean): void {
     if (!list.length) return;
     if (this.net) return this.net.send({ op: 'weightless', ids: this.net.ids(list), on });
@@ -2274,6 +2285,9 @@ export class Controls {
     if (list.some((x) => x.activatable)) acts.push({ label: 'Activate', hint: k('activate'), action: () => this.activateOnce(list) });
     const burning = list.some((x) => x.parts.some((p) => !p.destroyed && p.burning > 0.05));
     acts.push({ label: burning ? 'Extinguish' : 'Ignite', hint: k('ignite'), action: () => this.toggleFire(list) });
+    // things hurt, burnt or shot through (a wreck) made good (people and animals are healed: see their own menus)
+    const broken = list.filter((x) => !isLiving(x) && x.damaged);
+    if (broken.length) acts.push({ label: 'Repair', action: () => this.repair(broken) });
     const allFrozen = list.every((x) => x.frozen);
     acts.push({ label: allFrozen ? 'Unfreeze' : 'Freeze', hint: k('freeze'), action: () => this.toggleFreeze(list) });
     if (!multi && e.parts.length > 1) {

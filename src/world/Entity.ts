@@ -132,6 +132,28 @@ export abstract class Entity {
     return true;
   }
 
+  /** Something of it to mend (Repair in its menu): a part hurt, burnt, painted on or shot through (see Part.damaged). */
+  get damaged(): boolean {
+    return this.parts.some((p) => !p.destroyed && p.damaged);
+  }
+
+  /** Mended (Repair in its menu): every part of it whole, unburnt and clean again (see Part.repair()), with a knock and a flash. */
+  repair(): void {
+    let at: number | undefined;
+    for (const p of this.parts) {
+      if (p.destroyed) continue;
+      p.repair();
+      p.flash = 1;
+      at ??= p.x;
+    }
+    if (at !== undefined) this.game.sound.play('machine/power_hammer', { gain: 0.35, x: at, vary: 0.1 });
+  }
+
+  /** Puts a current through water it's in (a battery switched on, a tesla coil running: see LiveWater). */
+  get chargesWater(): boolean {
+    return false;
+  }
+
   /** Called when one of its parts starts or stops being dragged (`at` is the cursor on release). */
   onGrab(_part: Part, _held: boolean, _at?: V2): void {}
 

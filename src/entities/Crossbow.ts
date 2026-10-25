@@ -4,6 +4,9 @@ import { clamp, type V2 } from '../engine/math';
 import { Firearm, type GunSpec } from './Firearm';
 import { Prop, type PropConfig } from './Prop';
 import { sparkle, DRUG_GLOW } from './Medical';
+import { fireworkBurst, BURST_REACH, FIREWORK_COLOR_LIST } from './Pyro';
+import { PK } from '../systems/Particles';
+import type { FireworkColor } from '../art/gear';
 import { boltArt, crossbowArt, BOLT_ON_BOW, BOLT_W, type BoltKind } from '../art/crossbow';
 import type { HoldSpec } from './Item';
 import type { Drug, Injectable } from './Syringe';
@@ -22,6 +25,7 @@ export const BOLTS: { kind: BoltKind; label: string }[] = [
   { kind: 'explosive', label: 'Explosive' },
   { kind: 'incendiary', label: 'Incendiary' },
   { kind: 'tranquilizer', label: 'Tranquilizer' },
+  { kind: 'firework', label: 'Firework' },
 ];
 
 /** A bolt's speed off the string (m/s): a heavy hunting crossbow's. */
@@ -47,6 +51,12 @@ const CLEAR = 1.2;
 const DOSE: Partial<Record<BoltKind, [Drug, number]>> = { poison: ['poison', 0.8], tranquilizer: ['knockout', 1] };
 /** An explosive bolt's charge: a grenade's, much smaller. */
 const BLAST = { power: 50, radius: 2.6, damage: 130, shrapnel: 4 };
+/**
+ * A firework bolt, heavier, leaves the string at this share of a bolt's speed,
+ * its rocket lit; it bursts after this long (s) in flight if it's hit nothing.
+ */
+const FIREWORK_PACE = 0.5;
+const FIREWORK_FUSE = 0.6;
 /**
  * Spent bolts (stuck in things, or lying about) kept in a scene: past this the
  * oldest are taken away as more are fired, so a long fight doesn't fill it.
@@ -125,12 +135,12 @@ export class Crossbow extends Firearm {
 
   /** How fast (m/s) its bolt leaves it: a slow shot, that drops on its way to anything far off. */
   projectileSpeed(): number {
-    return this.gun.speed;
+    return this.gun.speed * (this.bolt === 'firework' ? FIREWORK_PACE : 1);
   }
 
-  /** How far off (m) whoever shoots it should keep from what they shoot at: clear of an explosive bolt's blast. */
+  /** How far off (m) whoever shoots it should keep from what they shoot at: clear of an explosive bolt's blast, or a firework's. */
   standOff(): number {
-    return this.bolt === 'explosive' ? BLAST.radius + 1.5 : 0;
+    return this.bolt === 'explosive' ? BLAST.radius + 1.5 : this.bolt === 'firework' ? BURST_REACH + 1.5 : 0;
   }
 
   /** Seconds from a shot to the next bolt in (Edit gun…'s cocking time). */
@@ -169,6 +179,7 @@ export class Crossbow extends Firearm {
     const g = this.gun;
     const p = this.main;
     const game = this.game;
+    const speed = this.projectileSpeed();
     const at = p.pixelToWorld(BOLT_ON_BOW[0] + (BOLT_W - 1) / 2, BOLT_ON_BOW[1] + 1);
     const bolt = game.spawn(this.bolts[this.bolt], at.x, at.y, { flip: this.flipped, angle: p.body.rotation() });
     if (!(bolt instanceof Bolt)) return;
@@ -182,7 +193,7 @@ export class Crossbow extends Firearm {
     const v = p.body.linvel();
     // it leaves past the prod and whoever holds it
     const own = this.holder ? [...this.parts, ...this.holder.parts] : this.parts;
-    bolt.launch(own, v.x + dx * g.speed, v.y + dy * g.speed, g.damage);
+    bolt.launch(own, v.x + dx * speed, v.y + dy * speed, g.damage);
     if (!p.frozen) p.body.applyImpulseAtPoint({ x: -fwd.x * g.recoil, y: -fwd.y * g.recoil }, this.gripWorld() ?? at, true);
     cull(game);
     this.show();
@@ -239,8 +250,10 @@ type BoltState = 'loose' | 'flying' | 'stuck';
  * wood point first and fast, it sinks in (welded to the part it hit, so it
  * moves with it) and hurts it as a bullet would, with what its kind adds:
  * poison, a sedative, fire, or (an explosive bolt, which never sticks) a small
- * blast. Off metal and stone it glances, or breaks against them head on. Spent,
- * it's a stick lying about: dropped on a crossbow, it loads it with its kind.
+ * blast. A firework bolt never sticks either: it trails sparks, and bursts in a
+ * shower of coloured stars on whatever it meets, or a moment into its flight.
+ * Off metal and stone it glances, or breaks against them head on. Spent, it's a
+ * stick lying about: dropped on a crossbow, it loads it with its kind.
  */
 export class Bolt extends Prop {
   readonly kind: BoltKind;
@@ -259,9 +272,11 @@ export class Bolt extends Prop {
   /** The part it was just pulled out of: kept from touching it until it's clear of it. */
   private freed: Part | null = null;
   private freeT = 0;
-  /** Heat an explosive bolt has taken from a fire: enough, and the charge cooks off. */
+  /** Heat an explosive or firework bolt has taken from a fire: enough, and the charge cooks off. */
   private heat = 0;
   private spent = false;
+  /** The colour a firework bolt bursts in. */
+  readonly color: FireworkColor = FIREWORK_COLOR_LIST[Math.floor(Math.random() * FIREWORK_COLOR_LIST.length)].color;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, kind: BoltKind, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
@@ -302,6 +317,13 @@ export class Bolt extends Prop {
     if (p.noCollide && (!this.start || this.age > 0.5 || Math.hypot(p.x - this.start.x, p.y - this.start.y) > CLEAR)) p.setNoCollide(null);
     const v = p.body.linvel();
     const speed = Math.hypot(v.x, v.y);
+    if (this.kind === 'firework') {
+      if (speed < SPENT_SPEED || this.age > FIREWORK_FUSE) {
+        this.detonate();
+        return;
+      }
+      this.trail();
+    }
     if (speed < SPENT_SPEED || this.age > MAX_FLIGHT) {
       this.state = 'loose';
       return;
@@ -311,6 +333,29 @@ export class Bolt extends Prop {
     p.moved();
     p.body.setAngvel(0, false);
     this.look(speed * dt);
+  }
+
+  /** A firework bolt's rocket: a stream of sparks out of its tail, and its hiss. */
+  private trail(): void {
+    const game = this.game;
+    const p = this.main;
+    const f = p.localDir(p.flip, 0);
+    const t = p.pixelToWorld(0, 1);
+    for (let i = 0; i < 2; i++) {
+      game.particles.emit(PK.Spark, t.x, t.y, {
+        vx: -f.x * (2 + Math.random() * 3) + (Math.random() - 0.5), vy: -f.y * (2 + Math.random() * 3) + (Math.random() - 0.5),
+        life: 0.2 + Math.random() * 0.3, color: 0xfff1b0, color1: 0xff8a2a, alpha1: 0.2, gravity: 0.5, drag: 1.5,
+      });
+    }
+    if (Math.random() < 0.25) game.particles.smoke(t.x, t.y, 1, 0.1);
+    game.sound.hold(this, 'explosion/fuse_loop', 0.35, t.x);
+  }
+
+  /** A firework bolt's rocket glows in flight (on every screen). */
+  frame(): void {
+    if (this.kind !== 'firework' || this.state !== 'flying' || this.destroyed) return;
+    const t = this.main.pixelToWorld(0, 1);
+    this.game.renderer.addLight(t.x, t.y, 2, 0.5, 0xffb060);
   }
 
   /**
@@ -350,6 +395,10 @@ export class Bolt extends Prop {
 
   /** What happens as it meets `q` (null: the floor or a wall) at `at`, going `along` m/s into it point first. */
   private strike(q: Part | null, at: V2, f: V2, n: V2, along: number, square: number): void {
+    if (this.kind === 'firework') {
+      this.detonate({ x: at.x - f.x * 0.1, y: at.y - f.y * 0.1 });
+      return;
+    }
     if (this.kind === 'explosive') {
       if (along > ARM_SPEED) this.detonate({ x: at.x - f.x * 0.06, y: at.y - f.y * 0.06 });
       else this.state = 'loose';
@@ -498,33 +547,43 @@ export class Bolt extends Prop {
     } else this.freeT = 0.1;
   }
 
-  /** A knock the look ahead missed (along its side): it's knocked off its flight. An explosive one goes off. */
+  /** A knock the look ahead missed (along its side): it's knocked off its flight. An explosive one goes off, and a firework one in flight bursts. */
   onImpact(info: ImpactInfo): void {
     if (this.kind === 'explosive' && (this.state === 'flying' ? info.speed > ARM_SPEED : info.speed > 20)) {
+      this.detonate();
+      return;
+    }
+    if (this.kind === 'firework' && this.state === 'flying') {
       this.detonate();
       return;
     }
     if (this.state === 'flying') this.state = 'loose';
   }
 
+  /** Does it carry a charge (that a shot, a blast or a fire sets off)? */
+  private get charged(): boolean {
+    return this.kind === 'explosive' || this.kind === 'firework';
+  }
+
   onBullet(hit: BulletHit): void {
-    if (this.kind === 'explosive') this.detonate();
+    if (this.charged) this.detonate();
     else super.onBullet(hit);
   }
 
   damage(part: Part, amount: number, kind: DamageKind, point?: V2, dir?: V2): void {
-    if (this.kind !== 'explosive') return super.damage(part, amount, kind, point, dir);
+    if (!this.charged) return super.damage(part, amount, kind, point, dir);
     // a blast sets the charge off, and so does a fire, given time
     if (kind === 'explosion' && amount > 5) this.detonate();
     else if (kind === 'fire' && (this.heat += amount) > 4) this.detonate();
   }
 
-  /** An explosive bolt's charge goes off (at `at`, or where it is). */
+  /** Its charge goes off (at `at`, or where it is): an explosive bolt's blast, or a firework bolt's burst. */
   detonate(at?: V2): void {
     if (this.spent || this.destroyed) return;
     this.spent = true;
     const t = at ?? this.main.body.translation();
-    this.game.explosions.explode(t.x, t.y, { ...BLAST, source: this });
+    if (this.kind === 'firework') fireworkBurst(this.game, t, this.color, this);
+    else this.game.explosions.explode(t.x, t.y, { ...BLAST, source: this });
     this.game.remove(this);
   }
 

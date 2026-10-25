@@ -3,7 +3,7 @@ import { PX, WORLD } from '../engine/constants';
 import { UNIT_QUAD } from '../engine/Renderer';
 import { PK } from './Particles';
 import { liquidSound, LIQUID_COLORS, Liquid } from './Liquids';
-import { carriedMass, quadDrag } from './Fluid';
+import { carriedMass, quadDrag, LIVE_FLICKER } from './Fluid';
 import type { Game } from '../world/Game';
 import type { MapSpec } from '../world/Maps';
 import type { Part } from '../world/Part';
@@ -31,6 +31,8 @@ uniform float uPx;
 uniform vec3 uDeep;
 uniform vec3 uMid;
 uniform vec3 uFoam;
+uniform vec2 uLive;
+uniform float uTime;
 varying vec2 vW;
 void main() {
   // the surface in little stepped waves, a pixel or two either way
@@ -43,6 +45,8 @@ void main() {
   float k = floor(clamp(d / 8.0, 0.0, 1.0) * 4.0) / 4.0;
   if (d <= uPx * 1.5) gl_FragColor = vec4(uFoam, 0.85);
   else gl_FragColor = vec4(mix(uMid, uDeep, k), 0.4 + 0.25 * k);
+  // a current through it (see LiveWater)
+  if (vW.x > uLive.x && vW.x < uLive.y) gl_FragColor = ${LIVE_FLICKER}
 }`;
 
 const WORLD_VERT = /* glsl */ `
@@ -87,6 +91,8 @@ export class Water {
         uDeep: { value: rgb(0x1d3f6b) },
         uMid: { value: rgb(LIQUID_COLORS[Liquid.Water][0]) },
         uFoam: { value: rgb(0xc4def0) },
+        uLive: { value: new THREE.Vector2(1, -1) },
+        uTime: { value: 0 },
       },
       transparent: true,
       depthTest: false,
@@ -200,5 +206,9 @@ export class Water {
     if (!g.paused) this.t += dt * g.timeScale;
     const tau = Math.PI * 2;
     this.mat.uniforms.uPhase.value.set((this.t * 1.7) % tau, (this.t * 1.1) % tau);
+    // (a current through it: see LiveWater)
+    const live = g.liveWater.sea;
+    this.mat.uniforms.uLive.value.set(live ? live.x0 : 1, live ? live.x1 : -1);
+    if (live) this.mat.uniforms.uTime.value = performance.now() / 1000;
   }
 }

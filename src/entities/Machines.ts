@@ -47,6 +47,10 @@ export class Battery extends Prop {
     return this.on;
   }
 
+  get chargesWater(): boolean {
+    return this.on;
+  }
+
   activate(): void {
     this.on = !this.on;
     this.game.sound.click(this.main.x, this.on ? 1.2 : 0.8);

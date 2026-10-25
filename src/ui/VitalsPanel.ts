@@ -153,6 +153,15 @@ export function readVitals(e: Living, game: Game): Vitals {
     const k = 1 + loss * 1.3 + Math.min(e.pain, 1.5) * 0.2 + e.shock * 0.3 + (e.moving ? 0.3 : 0) + (dose(d, 'adrenaline') > 0 ? 0.35 : 0) - (ko ? 0.3 : 0);
     breaths = clamp(base.breaths * k, 4, 60);
     breathing = loss > 0.6 ? 'gasping' : ko || !conscious ? 'shallow' : k > 1.7 ? 'rapid' : k > 1.25 ? 'fast' : 'normal';
+    // (under water: none, holding their breath while it lasts; up again, panting for it)
+    const br = e.breath;
+    if (br.under) {
+      breaths = 0;
+      breathing = br.air <= 0 ? 'drowning' : conscious ? 'holding breath' : 'breathing water';
+    } else if (br.air < 0.9) {
+      breaths = Math.max(breaths, 40);
+      breathing = 'gasping';
+    }
   }
 
   // warm while alive (a little cold from losing blood, hot on fire); a body cools

@@ -17,7 +17,7 @@ import { isFighter, isLiving, land, onFeet, stillUp, strikePoint, type Fighter }
 import { allies, bombNear, dress, dye, enemies, isTeamId, lyingNear, nearestEnemy, TEAMS, undead, type TeamId } from '../systems/Teams';
 import type { PixelArt } from '../art/PixelArt';
 import { ACID_SCAR, Liquid, liquidSound, paintWound, seep, woundSpot } from '../systems/Liquids';
-import { LUNGS } from '../systems/Fluid';
+import { Breath, HEAD_SINKS, shoreward, tread, type Lungful } from '../systems/Breath';
 
 interface LimbSpec {
   key: LimbKey;
@@ -144,6 +144,17 @@ const KNEE_CATCH = 1.4;
 const BROKEN_GIVE = 1.1;
 /** Going from one pose to the next, climbing or jumping (s): snapped, the feet whip round at 30-40 m/s. */
 const POSE_EASE = 0.15;
+/**
+ * Under water (see Breath): a held breath lasts 18 s, gone limp 8, and 8 s after it's
+ * out they drown; they can tread water half a minute. Limp, they float upright with
+ * their face at the surface (and with no air left in them, sink).
+ */
+const LUNGFUL: Lungful = { hold: 18, holdOut: 8, last: 8, tread: 30, full: 2, empty: 1 };
+/** Swimming for the shore (m/s), and how far (m) under the middle of the head the mouth is. */
+const SWIM = 0.7;
+/** In water this shallow (m), under their knees, they can get up in it (deeper, it lifts them off their feet). */
+const STAND_DEPTH = 0.45;
+const MOUTH_DOWN = 2.5 * PX;
 
 interface Jump {
   /** Seconds since springing up (negative: still crouching for it). */
@@ -637,7 +648,8 @@ export class Human extends Entity implements Holder {
         forceThreshold: 30,
         textureKey: `${variant.kind}:${variant.skinKey}:${s.key}`,
       });
-      if (s.key === 'upperTorso' && variant.material === MAT.flesh) part.buoyancy = LUNGS;
+      if (s.key === 'upperTorso' && variant.material === MAT.flesh) part.buoyancy = LUNGFUL.full;
+      if (s.key === 'head' && variant.material === MAT.flesh) part.buoyancy = HEAD_SINKS;
       const limb: Limb = {
         spec: s, part, joint: null, parent: null, children: [], a1: { x: 0, y: 0 }, a2: { x: 0, y: 0 },
         severed: false, gone: false, broken: false, loose: false, attached: true, wounds: [], stress: 0, phase: Math.random() * 10, extraI: 0,
@@ -767,6 +779,8 @@ export class Human extends Entity implements Holder {
   private lifeDose = 0;
   /** Seconds left out cold from a jolt (see stun()). */
   stunned = 0;
+  /** Their breath, in water (see breathe()). */
+  readonly breath = new Breath(LUNGFUL);
 
   /**
    * Knocked out for `secs` (a stun gun's jolt): down at once and coming round after,
@@ -1273,9 +1287,11 @@ export class Human extends Entity implements Holder {
     const upPose = this.pose === 'cower' ? POSE_COWER : this.zombie ? POSE_ZOMBIE : POSE_STAND;
     const pose = movePose ? MOVE_POSES[movePose] : standing ? upPose : seated ? this.seat?.pose ?? POSE_SIT : this.pose === 'flat' ? POSE_FLAT : POSE_DOWN;
     const writhe = !standing && !seated && conscious && this.pose !== 'flat' ? Math.min(0.9, this.pain * 0.9) : 0;
+    // treading water: arms sculling, legs kicking (see breathe())
+    const paddle = !standing && this.treading;
     // someone lying still stops tensing up: weak muscles pushing against a pile of
     // bodies never find a balance and keep the limbs creeping forever
-    const relaxed = !standing && !seated && conscious && !this.held && this.pain < CALM_PAIN && !this.grips.length && this.stateT > 4;
+    const relaxed = !standing && !seated && conscious && !this.held && this.pain < CALM_PAIN && !this.grips.length && this.stateT > 4 && !paddle;
     // re-sending identical motor targets would keep the bodies awake (and drifting)
     const getupRamp = this.state === 'getup' ? clamp(this.stateT / 1.2, 0.12, 1) : 1;
     const ik = standing ? this.holdIK() : null;
@@ -1293,7 +1309,7 @@ export class Human extends Entity implements Holder {
     const dangling = this.held && conscious && !standing && !seated;
     const might = this.might;
     const sig = `${standing}:${conscious}:${tone}:${Math.round(getupRamp * 20)}:${this.gripSig()}:${ikSig}:${relaxed}:${stepping}:${movePose}:${Math.round(settle * 20)}:${dangling}:${seated}:${this.pose}:${might}:${this.zombie}`;
-    if (!force && !stepping && (writhe === 0 || relaxed) && sig === this.motorSig) return;
+    if (!force && !stepping && !paddle && (writhe === 0 || relaxed) && sig === this.motorSig) return;
     this.motorSig = sig;
     // (passing out in the seat, they slump in it)
     if (this.seat) this.applyDamping();
@@ -1343,6 +1359,14 @@ export class Human extends Entity implements Holder {
       if (writhe > 0 && arm) {
         target += Math.sin(this.t * (1.5 + l.phase * 0.2) + l.phase) * writhe * 0.55 * f;
       }
+      if (paddle) {
+        const k = l.spec.key;
+        const back = k.endsWith('B') ? Math.PI : 0;
+        if (k.startsWith('upperArm')) target = (0.9 + Math.sin(this.t * 4 + back) * 0.9) * f;
+        else if (k.startsWith('lowerArm')) target = (0.5 + Math.sin(this.t * 4 + back + 1) * 0.5) * f;
+        else if (k.startsWith('upperLeg')) target = Math.sin(this.t * 5 + back) * 0.4 * f;
+        else if (k.startsWith('lowerLeg')) target = (-0.3 + Math.sin(this.t * 5 + back - 1) * 0.3) * f;
+      }
       const K = l.spec.muscle * boost * might * (l.broken ? 0.05 : 1) * (l.attached ? 1 : 0);
       if (this.seat && !conscious && K > 0 && /^(upperLeg|lowerLeg|foot|midTorso|lowerTorso)/.test(l.spec.key)) {
         // slumped in a vehicle's seat, the back stays up and the legs in the footwell (gone
@@ -1366,8 +1390,8 @@ export class Human extends Entity implements Holder {
         j.configureMotorPosition((POSE_STAND[l.spec.key] ?? 0) * f, K * tone * str, K * tone * 0.004 + 0.3);
       } else {
         j.setMotorMaxForce(1e6);
-        // lying down: weak muscle tone (and writhing when in pain)
-        const tone = arm ? 0.18 + writhe * 0.5 : 0.035;
+        // lying down: weak muscle tone (and writhing when in pain, or treading water)
+        const tone = paddle ? (arm ? 0.5 : 0.15) : arm ? 0.18 + writhe * 0.5 : 0.035;
         j.configureMotorPosition(target, K * tone * str, K * tone * 0.004 + 0.3);
       }
     }
@@ -1610,7 +1634,11 @@ export class Human extends Entity implements Holder {
       this.crawlCheck -= dt;
       const look = this.crawlCheck <= 0;
       if (look) this.crawlCheck = 0.25;
-      if (this.crawlT > 0) {
+      // (in water too deep to stand in, they swim, and that's all; with a shore to make
+      // for, they swim and crawl right out of it: lying in the shallows, the water drags
+      // at them too much to get up. See breathe())
+      if (this.treading && (this.breath.depth > STAND_DEPTH || shoreward(this.game, up.x) !== 0)) this.crawlT = 0;
+      else if (this.crawlT > 0) {
         this.crawlT -= dt;
         // off them, or getting nowhere (wedged in among them): stop
         if (look) {
@@ -3606,9 +3634,13 @@ export class Human extends Entity implements Holder {
       if (d.painkiller > 0) this.pain = 0;
       // poison drains the blood from the inside (and shows, greener the worse it gets: see tone())
       if (d.poison > 0) this.blood -= dt * 2.4;
+      // (and under water, their breath runs out)
+      const breathes = this.breathes;
+      if (breathes) this.breathe(dt);
       const head = this.L('head');
       const headF = head.gone ? 0 : head.part.hp / head.part.maxHp;
       let target = 1;
+      if (breathes) target = Math.min(target, this.breath.faint);
       if (headF < 0.5) target = Math.min(target, headF * 1.2);
       // (a zombie goes on with no blood left in it)
       if (this.blood < 65 && !this.zombie) target = Math.min(target, (this.blood - 40) / 25);
@@ -3631,6 +3663,38 @@ export class Human extends Entity implements Holder {
     }
   }
 
+  /** Someone who needs air: flesh and blood, and not undead. */
+  get breathes(): boolean {
+    return this.variant.material === MAT.flesh && !this.zombie;
+  }
+
+  /** Treading water: awake and off their feet in water up to their middle, and not held or posed lying still. */
+  get treading(): boolean {
+    return this.alive && this.breath.deep && this.state === 'down' && this.strength() > 0.15 && !this.held && !this.seat && this.pose !== 'flat' && !this.limp;
+  }
+
+  /**
+   * Their breath (see Breath): held under, it runs out, and they faint and drown;
+   * up again they gasp for air. Awake in deep water, they tread it, swimming for
+   * the shore, as long as their strength holds out (as heavy, the less air in them).
+   */
+  private breathe(dt: number): void {
+    const head = this.L('head');
+    if (head.gone || !head.attached) return;
+    const chest = this.L('upperTorso').part;
+    const mouth = head.part.localToWorld(0, -MOUTH_DOWN);
+    const treading = this.treading;
+    const awake = this.consciousness > 0.15;
+    if (this.breath.step(this.game, dt, mouth, this.L('lowerTorso').part, awake, treading) && awake) {
+      this.game.sound.play('creature/gasp', { gain: 0.5, x: mouth.x, vary: 0.1 });
+    }
+    chest.buoyancy = this.breath.buoyancy;
+    if (treading && this.breath.level !== null) {
+      const swim = shoreward(this.game, chest.x) * SWIM;
+      tread(this.game, head.part, chest, this.order.filter((l) => !l.gone && l.attached).map((l) => l.part), mouth.y, this.breath.level, this.breath.effort * clamp(this.strength(), 0, 1), swim, dt);
+    }
+  }
+
   private checkDeath(): void {
     const head = this.L('head');
     const up = this.L('upperTorso');
@@ -3640,6 +3704,7 @@ export class Human extends Entity implements Holder {
     else if (up.part.hp <= 0) cause = 'torso';
     // (a zombie doesn't need its blood)
     else if (this.blood < 35 && !this.zombie) cause = 'blood';
+    else if (this.breath.drowned) cause = 'drowned';
     else {
       let trauma = 0;
       // (a mangled limb counts as badly as a lost one, however far below nothing its health went)
@@ -4158,6 +4223,7 @@ export class Human extends Entity implements Holder {
     this.shock = 0;
     this.limp = false;
     this.deathT = 0;
+    this.breath.reset();
     for (const l of this.order) {
       if (l.gone) continue;
       l.part.hp = l.part.maxHp;
@@ -4193,7 +4259,8 @@ export class Human extends Entity implements Holder {
       for (const [p, label] of POSE_NAMES) acts.push({ label, checked: this.pose === p, action: () => this.setPose(this.pose === p ? null : p) });
     }
     const headless = this.L('head').gone || !this.L('head').attached;
-    acts.push({ label: this.alive ? 'Heal' : 'Revive', disabled: !this.alive && headless, action: () => this.heal() });
+    // (an android is repaired)
+    acts.push({ label: this.variant.kind === 'android' ? 'Repair' : this.alive ? 'Heal' : 'Revive', disabled: !this.alive && headless, action: () => this.heal() });
     // the limb right-clicked: its bone broken, or mended (not the skull)
     const l = part ? this.limbOf(part) : undefined;
     if (l && !l.gone && l.joint && l.spec.key !== 'head') {
@@ -4591,6 +4658,7 @@ export class Human extends Entity implements Holder {
       pain: this.pain,
       shock: this.shock,
       ...(this.stunned > 0 ? { stunned: this.stunned } : {}),
+      ...(this.breath.air < 1 || this.breath.spent > 0 ? { breath: [this.breath.air, this.breath.starved, this.breath.spent] } : {}),
       ...(this.infection > 0 ? { infection: this.infection } : {}),
       ...(this.zombie ? { zombie: true } : {}),
       ...(this.pose ? { pose: this.pose } : {}),
@@ -4656,6 +4724,11 @@ export class Human extends Entity implements Holder {
     this.pain = num(x.pain, this.pain);
     this.shock = num(x.shock, this.shock);
     this.stunned = num(x.stunned, 0);
+    const br: unknown[] = Array.isArray(x.breath) ? x.breath : [];
+    this.breath.air = clamp(num(br[0], 1), 0, 1);
+    this.breath.starved = Math.max(0, num(br[1], 0));
+    this.breath.spent = clamp(num(br[2], 0), 0, 1);
+    if (this.variant.material === MAT.flesh) this.L('upperTorso').part.buoyancy = this.breath.buoyancy;
     const wounds = x.wounds as Record<string, unknown[][]> | undefined;
     if (wounds && typeof wounds === 'object') {
       for (const l of this.order) {

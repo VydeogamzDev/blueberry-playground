@@ -4,7 +4,42 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
-## Unreleased
+## 0.2.1 — 2026-10-25
+
+### Water
+- People and animals drown. Under water they hold their breath (about 18 s for a person, less out cold),
+  then breathe water and die a few seconds later; pulled out in time, they gasp and come round. Bubbles
+  rise from them, and the vitals panel says "holding breath", "breathing water", "gasping".
+- Awake in deep water, they tread water with their head up and swim for the nearest shore, dog-paddling for
+  an animal, and tire: far out at sea, a person lasts about three quarters of a minute. Near the shore
+  they wade out. Heads sink and chests float, so someone out cold can't keep their face out of the water.
+- Electrified water: a battery switched on, or a tesla coil running, in water puts a current through all of
+  it (a tankful, or the sea for 8 m either way). Whoever's in it is shocked, knocked out (and so likely
+  drowned) and maybe has their heart stopped; the water flickers blue and throws sparks.
+- Barrels hold liquid. The barrel is a steel drum with its lid off: pour a flask in, let water run in, or
+  hold it under in the sea to fill it; tip it over to pour it out. Empty, it floats; swamped, it sinks.
+  Buckets fill in the sea too, and what they hold weighs as much as the sea's water.
+
+### Weapons and machines
+- Firework bolts for the crossbow (in its menu, or drop one on it): it trails sparks and bursts in a
+  shower of coloured stars on whatever it hits, or a moment into its flight.
+- Repair in the right-click menu: what's damaged, burnt, oily, shot through, cut down or bloodied is made as new,
+  its full size and weight again; a blown-up car gets its body back and its wheels put on again, and
+  drives. An android's Heal is called Repair.
+- Tanks fight for a side: Team in a tank's menu puts a stripe of the colour round it, and its crew drive at
+  the nearest enemy they can see, lay the gun on them and fire, turning round for one behind them. They
+  hold fire while one of their own is in the line of fire, and stop short of running them over.
+- The M1 Abrams and the Leopard 2A7 have each other's turrets now, as they should: the Abrams' face
+  slopes back in angled slabs, the Leopard's is tall and flat.
+
+### Sounds
+- Gasps on surfacing, and bubbles from someone under water (CC0, credited in public/sfx/CREDITS.md).
+
+### Desktop
+- A Mac app (Apple silicon): `npm run desktop:mac` makes `Blueberry Playground <version> mac.tar.xz`
+  (90 MB). It isn't signed, so on the Mac it must be signed there before it opens: unpack it, then
+  `xattr -cr "Blueberry Playground.app"` and `codesign --force --deep --sign - "Blueberry Playground.app"`
+  in Terminal. On a Mac it has the usual app menu (Quit, Hide, copy and paste).
 
 ### Speed in crowded scenes
 - The physics runs on several of the computer's cores at once (up to 6 besides the game's own), in the

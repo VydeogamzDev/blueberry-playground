@@ -427,7 +427,8 @@ else {
   });
   app.setAppUserModelId('com.blueberryplayground.app');
   app.whenReady().then(() => {
-    Menu.setApplicationMenu(null);
+    // (none on Windows; a Mac's app menu, with Quit, Hide and copy and paste)
+    Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]) : null);
     protocol.handle('app', serve);
     createWindow();
   });
