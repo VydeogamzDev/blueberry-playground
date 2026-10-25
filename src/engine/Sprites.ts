@@ -238,10 +238,15 @@ export class Sprites {
     const gl = this.gl.getContext() as WebGL2RenderingContext;
     const state = this.gl.state;
     let bound: Page | null = null;
+    let tex: WebGLTexture | undefined;
     for (const [r, rgba] of this.uploads) {
       if (r.page !== bound) {
         bound = r.page;
+        // (made on the GPU if it isn't yet: that leaves it unbound, so it's bound here)
         this.gl.initTexture(bound.tex);
+        tex = (this.gl.properties.get(bound.tex) as { __webglTexture?: WebGLTexture }).__webglTexture;
+        if (!tex) continue;
+        state.bindTexture(gl.TEXTURE_2D, tex);
         state.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, bound.tex.flipY);
         state.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, bound.tex.premultiplyAlpha);
         state.pixelStorei(gl.UNPACK_ALIGNMENT, bound.tex.unpackAlignment);
@@ -249,8 +254,9 @@ export class Sprites {
         state.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
         state.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
       }
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x, r.y, r.w, r.h, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
+      if (tex) gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x, r.y, r.w, r.h, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
     }
+    if (bound) state.unbindTexture();
     this.uploads.clear();
     for (const p of this.pages) p.batch.flush();
   }
