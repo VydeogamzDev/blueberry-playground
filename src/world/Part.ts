@@ -108,9 +108,46 @@ export class Part {
   /** How much more than its size water holds it up (see Fluid, Water): an air-filled tube's more. */
   buoyancy = 1;
   /** Self-collision group: parts with the same non-zero group never collide. */
-  group = 0;
-  /** Parts that should never generate contacts with this part. */
-  noCollide: Set<Part> | null = null;
+  get group(): number {
+    return this._group;
+  }
+  set group(g: number) {
+    if (g === this._group) return;
+    this._group = g;
+    this.setContactFilter();
+  }
+  private _group = 0;
+  /** Parts that should never generate contacts with this part (see noCollideWith()). */
+  get noCollide(): ReadonlySet<Part> | null {
+    return this._noCollide;
+  }
+  private _noCollide: Set<Part> | null = null;
+
+  /** Never touches q from now on (nor q it): Rapier keeps their bodies apart (see Physics.excludePair()). */
+  noCollideWith(q: Part): void {
+    if (this._noCollide?.has(q)) return;
+    if (!this._noCollide) {
+      this._noCollide = new Set();
+      this.setContactFilter();
+    }
+    this._noCollide.add(q);
+    this.entity.game.physics.excludePair(this, q, true);
+  }
+
+  /** May touch q again (unless q has it the other way round). */
+  collideWith(q: Part): void {
+    if (this._noCollide?.delete(q)) this.entity.game.physics.excludePair(this, q, false);
+  }
+
+  /** Never touches these parts, in place of any before (null: none). */
+  setNoCollide(parts: Iterable<Part> | null): void {
+    const phys = this.entity.game.physics;
+    const had = this._noCollide !== null;
+    if (this._noCollide) for (const q of this._noCollide) phys.excludePair(this, q, false);
+    this._noCollide = parts ? new Set(parts) : null;
+    if (this._noCollide) for (const q of this._noCollide) phys.excludePair(this, q, true);
+    if ((this._noCollide !== null) !== had) this.setContactFilter();
+  }
   /** Detached from its parent (e.g. severed limb). */
   detached = false;
   destroyed = false;
@@ -250,10 +287,24 @@ export class Part {
       .setActiveHooks(RAPIER.ActiveHooks.FILTER_CONTACT_PAIRS)
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       .setContactForceEventThreshold((spec.forceThreshold ?? 40) * this.entity.game.physics.forceScale);
-    const col = this.entity.game.physics.world.createCollider(desc, this.body);
+    const phys = this.entity.game.physics;
+    const col = phys.world.createCollider(desc, this.body);
+    this.massStep = -1;
+    this.entity.massChanged();
+    col.setContactFilter(this._group, this._noCollide !== null);
     this.colliders.push(col);
-    this.entity.game.physics.partByCollider.set(col.handle, this);
-    this.entity.game.physics.fresh.push(col);
+    phys.addCollider(col, this);
+    phys.fresh.push(col);
+  }
+
+  /**
+   * Hands its group to Rapier, which keeps parts of one group apart itself (its broad phase
+   * never pairs them: no pair to filter, nor a call into JS for each, see Physics), and whether
+   * it has parts of its own to keep apart from (noCollide).
+   */
+  private setContactFilter(): void {
+    if (this.destroyed) return;
+    for (const c of this.colliders) c.setContactFilter(this._group, this._noCollide !== null);
   }
 
   updateZ(): void {
@@ -265,8 +316,38 @@ export class Part {
     return this.sprite.z;
   }
 
+  /**
+   * The body's mass. Rapier only changes it as a shape is added (addShape()) or in a
+   * step, so it's asked once a step: a crowd's impacts and gaits ask for it
+   * thousands of times, each a call into WebAssembly.
+   */
   get mass(): number {
-    return this.body.mass();
+    const step = this.entity.game.physics.stepCount;
+    if (this.massStep !== step) {
+      this.massNow = this.body.mass();
+      this.massStep = step;
+    }
+    return this.massNow;
+  }
+  private massStep = -1;
+  private massNow = 0;
+
+  /**
+   * sync() from `s` (six numbers from `k`: x, y, angle, linear and angular velocity),
+   * as Physics.syncAll() read them for every part at once.
+   */
+  syncFrom(s: Float32Array, k: number): void {
+    // (its body gone: what was last read stands)
+    if (s[k] !== s[k]) return;
+    this.px = this.x;
+    this.py = this.y;
+    this.pa = this.a;
+    this.x = s[k];
+    this.y = s[k + 1];
+    this.a = s[k + 2];
+    this.vx = s[k + 3];
+    this.vy = s[k + 4];
+    this.av = s[k + 5];
   }
 
   /** Records the post-step transform for interpolation. */
@@ -305,6 +386,7 @@ export class Part {
     const v = b.linvel();
     b.setTranslation({ x: 2 * cx - t.x, y: t.y }, false);
     b.setRotation(-b.rotation(), false);
+    this.moved();
     b.setLinvel({ x: -v.x, y: v.y }, false);
     b.setAngvel(-b.angvel(), false);
     for (const c of this.colliders) {
@@ -348,21 +430,79 @@ export class Part {
 
   // ---- coordinate helpers -------------------------------------------------
 
+  /**
+   * Where its body is and how it's turned, as Rapier has it now: read once a step (a
+   * crush's blood, gore and gaits ask thousands of times, each three calls into
+   * WebAssembly), with everyone's after the step (see Physics.readPoses()), and again
+   * after a move other than a step's (see moved()).
+   */
+  get bodyX(): number {
+    if (this.poseStep !== this.entity.game.physics.stepCount) this.readPose();
+    return this.poseX;
+  }
+
+  get bodyY(): number {
+    if (this.poseStep !== this.entity.game.physics.stepCount) this.readPose();
+    return this.poseY;
+  }
+
+  get bodyAngle(): number {
+    if (this.poseStep !== this.entity.game.physics.stepCount) this.readPose();
+    return this.poseA;
+  }
+
+  private poseStep = -1;
+  private poseX = 0;
+  private poseY = 0;
+  private poseA = 0;
+  /** The cosine and sine of poseA (turning a point to or from the body's frame needs them). */
+  private poseC = 1;
+  private poseS = 0;
+
+  private readPose(): void {
+    const t = this.body.translation();
+    this.setPose(t.x, t.y, this.body.rotation());
+  }
+
+  private setPose(x: number, y: number, a: number): void {
+    this.poseX = x;
+    this.poseY = y;
+    this.poseA = a;
+    this.poseC = Math.cos(a);
+    this.poseS = Math.sin(a);
+    this.poseStep = this.entity.game.physics.stepCount;
+  }
+
+  /** Its pose as read with everyone's (see Physics.readPoses()): six numbers at `k` (see syncFrom()). */
+  poseFrom(s: Float32Array, k: number): void {
+    // (its body gone: read as it would be)
+    if (s[k] === s[k]) this.setPose(s[k], s[k + 1], s[k + 2]);
+  }
+
+  /** Its body was put somewhere (body.setTranslation(), setRotation()): bodyX and the rest read it again. */
+  moved(): void {
+    this.poseStep = -1;
+  }
+
+  // (as rotate() turns them, with the angle's cosine and sine worked out once a step)
+
   /** World point -> body-local meters. */
   worldToLocal(wx: number, wy: number): V2 {
-    const t = this.body.translation();
-    return rotate(wx - t.x, wy - t.y, -this.body.rotation());
+    if (this.poseStep !== this.entity.game.physics.stepCount) this.readPose();
+    const x = wx - this.poseX;
+    const y = wy - this.poseY;
+    return { x: x * this.poseC + y * this.poseS, y: y * this.poseC - x * this.poseS };
   }
 
   localToWorld(lx: number, ly: number): V2 {
-    const t = this.body.translation();
-    const r = rotate(lx, ly, this.body.rotation());
-    return { x: t.x + r.x, y: t.y + r.y };
+    if (this.poseStep !== this.entity.game.physics.stepCount) this.readPose();
+    return { x: this.poseX + (lx * this.poseC - ly * this.poseS), y: this.poseY + (lx * this.poseS + ly * this.poseC) };
   }
 
   /** Local direction -> world direction. */
   localDir(dx: number, dy: number): V2 {
-    return rotate(dx, dy, this.body.rotation());
+    if (this.poseStep !== this.entity.game.physics.stepCount) this.readPose();
+    return { x: dx * this.poseC - dy * this.poseS, y: dx * this.poseS + dy * this.poseC };
   }
 
   /** World point -> sprite pixel (column, row) in art space. */
@@ -611,6 +751,7 @@ export class Part {
   setFrozen(on: boolean): void {
     if (this.frozen === on || this.destroyed) return;
     this.frozen = on;
+    this.entity.massChanged();
     this.body.setBodyType(on ? RAPIER.RigidBodyType.Fixed : RAPIER.RigidBodyType.Dynamic, true);
     if (!on) this.body.wakeUp();
     this.refreshTint();
@@ -661,6 +802,7 @@ export class Part {
   teleport(x: number, y: number, angle: number): void {
     this.body.setTranslation({ x, y }, true);
     this.body.setRotation(angle, true);
+    this.moved();
     this.resetInterpolation();
   }
 
@@ -677,8 +819,10 @@ export class Part {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.entity.massChanged();
     const phys = this.entity.game.physics;
-    for (const c of this.colliders) phys.partByCollider.delete(c.handle);
+    for (const c of this.colliders) phys.removeCollider(c);
+    phys.forgetBody(this.body);
     phys.world.removeRigidBody(this.body);
     this.sprite.dispose();
     if (this.ownsImage) this.sprites.release(this.region);

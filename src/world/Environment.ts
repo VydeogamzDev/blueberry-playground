@@ -593,6 +593,8 @@ export class Environment {
     }
     this.colliders.length = 0;
     this.colliders.push(...this.room, ...this.groundColliders);
+    // (to Rapier's own contact filter, the room is in no group: see Physics)
+    for (const c of this.colliders) c.setContactFilter(0, false);
     this.handles = new Set(this.colliders.map((c) => c.handle));
     this.drawGround();
   }

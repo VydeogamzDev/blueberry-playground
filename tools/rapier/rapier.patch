@@ -1,0 +1,1714 @@
+diff --git a/bindings/typescript/Cargo.toml b/bindings/typescript/Cargo.toml
+index d4ea70a8..6e074ced 100644
+--- a/bindings/typescript/Cargo.toml
++++ b/bindings/typescript/Cargo.toml
+@@ -22,3 +22,7 @@ rapier3d = { path = "../../crates/rapier3d" }
+ # placed next to this repository during development.
+ #nalgebra = { path = "../../../nalgebra" }
+ #simba = { path = "../../../simba" }
++
++# The threaded build's pool: rayon-core patched so the thread waiting on it spins (a
++# browser's main thread can't block). Blueberry Playground's tools/rapier/build.sh puts it here.
++rayon-core = { path = "../../../rayon-core" }
+diff --git a/bindings/typescript/builds/rapier2d-simd-mt/Cargo.toml b/bindings/typescript/builds/rapier2d-simd-mt/Cargo.toml
+new file mode 100644
+index 00000000..ed45a9fb
+--- /dev/null
++++ b/bindings/typescript/builds/rapier2d-simd-mt/Cargo.toml
+@@ -0,0 +1,34 @@
++[package]
++name = "dimforge_rapier2d-simd-mt"
++version = "0.21.0"
++edition = "2018"
++
++[features]
++default = ["dim2", "threads"]
++dim2 = []
++threads = []
++
++[lib]
++name = "rapier_wasm2d"
++path = "../../src/lib.rs"
++crate-type = ["cdylib", "rlib"]
++required-features = ["dim2"]
++
++[lints]
++rust.unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("dim3", "threads"))'] }
++
++[dependencies]
++rayon-core = "1"
++rayon = "1"
++rapier2d = { version = "0.36.0", features = ["serde-serialize", "debug-render", "profiler", "fem", "parallel"] }
++parry2d = { version = "0.31", default-features = false, features = ["required-features"] }
++ref-cast = "1"
++wasm-bindgen = "0.2.109"
++js-sys = "0.3"
++nalgebra = "0.35"
++serde = { version = "1", features = ["derive", "rc"] }
++bincode = "1"
++palette = "0.7"
++
++[package.metadata.wasm-pack.profile.release]
++wasm-opt = ['-O4', '-g', '--dce', '--enable-bulk-memory', '--enable-nontrapping-float-to-int', '--enable-simd', '--enable-threads']
+diff --git a/bindings/typescript/builds/rapier2d-simd/Cargo.toml b/bindings/typescript/builds/rapier2d-simd/Cargo.toml
+new file mode 100644
+index 00000000..4d4ffb10
+--- /dev/null
++++ b/bindings/typescript/builds/rapier2d-simd/Cargo.toml
+@@ -0,0 +1,31 @@
++[package]
++name = "dimforge_rapier2d-simd"
++version = "0.21.0"
++edition = "2018"
++
++[features]
++default = ["dim2"]
++dim2 = []
++
++[lib]
++name = "rapier_wasm2d"
++path = "../../src/lib.rs"
++crate-type = ["cdylib", "rlib"]
++required-features = ["dim2"]
++
++[lints]
++rust.unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("dim3", "threads"))'] }
++
++[dependencies]
++rapier2d = { version = "0.36.0", features = ["serde-serialize", "debug-render", "profiler", "fem"] }
++parry2d = { version = "0.31", default-features = false, features = ["required-features"] }
++ref-cast = "1"
++wasm-bindgen = "0.2.109"
++js-sys = "0.3"
++nalgebra = "0.35"
++serde = { version = "1", features = ["derive", "rc"] }
++bincode = "1"
++palette = "0.7"
++
++[package.metadata.wasm-pack.profile.release]
++wasm-opt = ['-O4', '-g', '--dce', '--enable-bulk-memory', '--enable-nontrapping-float-to-int', '--enable-simd']
+diff --git a/bindings/typescript/builds/rapier2d/Cargo.toml b/bindings/typescript/builds/rapier2d/Cargo.toml
+new file mode 100644
+index 00000000..20b9c50e
+--- /dev/null
++++ b/bindings/typescript/builds/rapier2d/Cargo.toml
+@@ -0,0 +1,31 @@
++[package]
++name = "dimforge_rapier2d"
++version = "0.21.0"
++edition = "2018"
++
++[features]
++default = ["dim2"]
++dim2 = []
++
++[lib]
++name = "rapier_wasm2d"
++path = "../../src/lib.rs"
++crate-type = ["cdylib", "rlib"]
++required-features = ["dim2"]
++
++[lints]
++rust.unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("dim3", "threads"))'] }
++
++[dependencies]
++rapier2d = { version = "0.36.0", features = ["serde-serialize", "debug-render", "profiler", "fem"] }
++parry2d = { version = "0.31", default-features = false, features = ["required-features"] }
++ref-cast = "1"
++wasm-bindgen = "0.2.109"
++js-sys = "0.3"
++nalgebra = "0.35"
++serde = { version = "1", features = ["derive", "rc"] }
++bincode = "1"
++palette = "0.7"
++
++[package.metadata.wasm-pack.profile.release]
++wasm-opt = ['-O4', '-g', '--dce', '--enable-bulk-memory', '--enable-nontrapping-float-to-int', '--enable-simd']
+diff --git a/bindings/typescript/rapier-compat/src2d-mt/init.ts b/bindings/typescript/rapier-compat/src2d-mt/init.ts
+new file mode 100644
+index 00000000..a68ad27d
+--- /dev/null
++++ b/bindings/typescript/rapier-compat/src2d-mt/init.ts
+@@ -0,0 +1,52 @@
++// @ts-ignore
++import wasmBase64 from "../pkg/dist/rapier_wasm2d_bg.wasm";
++import wasmInit, {
++    initSync,
++    initThreadPool as rawInitThreadPool,
++    runThreadPoolWorker as rawRunThreadPoolWorker,
++    threadPoolShare,
++} from "../pkg/dist/rapier_wasm2d";
++import base64 from "base64-js";
++
++/**
++ * Initializes RAPIER.
++ * Has to be called and awaited before using any library methods.
++ *
++ * (This build's memory is shared, which needs a cross-origin isolated page.)
++ */
++export async function init() {
++    await wasmInit({
++        module_or_path: base64.toByteArray(wasmBase64 as unknown as string)
++            .buffer,
++    });
++}
++
++/** What a worker running a thread of the pool needs (see `initWorker`). */
++export interface ThreadShare {
++    module: WebAssembly.Module;
++    memory: WebAssembly.Memory;
++}
++
++/**
++ * Makes the pool of threads that every physics pipeline (so every world) made afterwards
++ * steps on: the calling thread, which works on each step with the rest and waits for them by
++ * spinning, and `threads` more, each waiting for a worker to run it: start `threads` module
++ * workers, post each what this returns, have each call `initWorker` with it and then
++ * `runThreadPoolWorker`, and let them start (they can't while the calling thread keeps busy)
++ * before stepping.
++ */
++export function initThreadPool(threads: number): ThreadShare {
++    rawInitThreadPool(threads);
++    const [module, memory] = threadPoolShare();
++    return {module, memory};
++}
++
++/** In a worker: instantiates RAPIER on the memory of the thread that made the pool. */
++export function initWorker(share: ThreadShare) {
++    initSync(share);
++}
++
++/** In a worker, after `initWorker`: runs a thread of the pool, never returning. */
++export function runThreadPoolWorker() {
++    rawRunThreadPoolWorker();
++}
+diff --git a/bindings/typescript/rapier-compat/src2d-mt/raw.ts b/bindings/typescript/rapier-compat/src2d-mt/raw.ts
+new file mode 100644
+index 00000000..a1821e53
+--- /dev/null
++++ b/bindings/typescript/rapier-compat/src2d-mt/raw.ts
+@@ -0,0 +1 @@
++export * from "../pkg/dist/rapier_wasm2d";
+diff --git a/bindings/typescript/src.ts/dynamics/impulse_joint_set.ts b/bindings/typescript/src.ts/dynamics/impulse_joint_set.ts
+index 46aafccc..03103c40 100644
+--- a/bindings/typescript/src.ts/dynamics/impulse_joint_set.ts
++++ b/bindings/typescript/src.ts/dynamics/impulse_joint_set.ts
+@@ -110,6 +110,16 @@ export class ImpulseJointSet {
+         this.raw.forEachJointAttachedToRigidBody(handle, f);
+     }
+ 
++    /**
++     * Every joint's two rigid-bodies, three numbers a joint: their handles, then flags: 2 if
++     * the first body is fixed or asleep, 4 if the second is. One call for them all.
++     *
++     * @param bodies - The set of rigid-bodies the joints are attached to.
++     */
++    public bodyPairs(bodies: RigidBodySet): Float64Array {
++        return this.raw.jointBodyPairs(bodies.raw);
++    }
++
+     /**
+      * Internal function, do not call directly.
+      * @param handle
+diff --git a/bindings/typescript/src.ts/dynamics/rigid_body_set.ts b/bindings/typescript/src.ts/dynamics/rigid_body_set.ts
+index cb6191d1..fe124888 100644
+--- a/bindings/typescript/src.ts/dynamics/rigid_body_set.ts
++++ b/bindings/typescript/src.ts/dynamics/rigid_body_set.ts
+@@ -180,8 +180,9 @@ export class RigidBodySet {
+             multibodyJoints.raw,
+         );
+         this.map.delete(handle);
+-        // A cluster proxy takes its cluster's colliders with it.
+-        colliders.unmapRemovedColliders();
++        // A cluster proxy takes its cluster's colliders with it. (There are none without
++        // soft bodies.)
++        if (softBodies.len() > 0) colliders.unmapRemovedColliders();
+     }
+ 
+     /**
+@@ -269,4 +270,17 @@ export class RigidBodySet {
+     public getAll(): RigidBody[] {
+         return this.map.getAll();
+     }
++
++    // #if DIM2
++    /**
++     * The pose and motion of each of these rigid-bodies, six numbers for each: its
++     * translation (x, y), its angle, its linear velocity (x, y) and its angular velocity
++     * (NaNs for one that's gone). One call into the engine for them all.
++     *
++     * @param handles - The rigid-bodies' handles.
++     */
++    public states(handles: Float64Array): Float32Array {
++        return this.raw.rbStates(handles);
++    }
++    // #endif
+ }
+diff --git a/bindings/typescript/src.ts/geometry/broad_phase.ts b/bindings/typescript/src.ts/geometry/broad_phase.ts
+index b80f18bd..0c8ffa7d 100644
+--- a/bindings/typescript/src.ts/geometry/broad_phase.ts
++++ b/bindings/typescript/src.ts/geometry/broad_phase.ts
+@@ -99,6 +99,39 @@ export class BroadPhase {
+      *   whereas `false` implies that all shapes are hollow for this ray-cast.
+      * @param groups - Used to filter the colliders that can or cannot be hit by the ray.
+      */
++    /**
++     * Casts many rays, for the first hit of each, as `castRayAndGetNormal` would one at a time
++     * (without a filter predicate or an excluded collider): one call for them all.
++     *
++     * @param rays - Five numbers a ray: its origin (x, y), its direction (x, y), and how far
++     *   along it to look (its max time of impact).
++     * @param groups - The filter's interaction groups for each ray.
++     * @param excludeRigidBodies - The rigid body each ray ignores (its handle), or NaN for none.
++     * @returns Four numbers a ray: the time of impact (-1 if it hit nothing), the normal there
++     *   (x, y), and the handle of the collider hit.
++     */
++    public castRaysAndGetNormal(
++        narrowPhase: NarrowPhase,
++        bodies: RigidBodySet,
++        colliders: ColliderSet,
++        rays: Float32Array,
++        solid: boolean,
++        filterFlags: QueryFilterFlags,
++        groups: Uint32Array,
++        excludeRigidBodies: Float64Array,
++    ): Float64Array {
++        return this.raw.castRaysAndGetNormal(
++            narrowPhase.raw,
++            bodies.raw,
++            colliders.raw,
++            rays,
++            solid,
++            filterFlags,
++            groups,
++            excludeRigidBodies,
++        );
++    }
++
+     public castRayAndGetNormal(
+         narrowPhase: NarrowPhase,
+         bodies: RigidBodySet,
+diff --git a/bindings/typescript/src.ts/geometry/collider.ts b/bindings/typescript/src.ts/geometry/collider.ts
+index c56a8e56..9f58410a 100644
+--- a/bindings/typescript/src.ts/geometry/collider.ts
++++ b/bindings/typescript/src.ts/geometry/collider.ts
+@@ -465,6 +465,19 @@ export class Collider {
+         this.colliderSet.raw.coSetActiveHooks(this.handle, activeHooks);
+     }
+ 
++    /**
++     * Contact-filter rules for this collider that the contact-filter hook applies without
++     * calling into JS, for pairs of two colliders that have them: colliders sharing a non-zero
++     * `group` never touch, and any others do unless either `asks` and their bodies are kept
++     * apart (see `PhysicsPipeline.setBodyPairExcluded`). They take the collider's user data.
++     *
++     * @param group - Colliders sharing a non-zero group never touch (an unsigned 32-bit integer).
++     * @param asks - Whether it has bodies of its own to keep apart from.
++     */
++    public setContactFilter(group: number, asks: boolean) {
++        this.colliderSet.raw.coSetContactFilter(this.handle, group, asks);
++    }
++
+     /**
+      * The events active for this collider.
+      */
+diff --git a/bindings/typescript/src.ts/geometry/narrow_phase.ts b/bindings/typescript/src.ts/geometry/narrow_phase.ts
+index 6163053b..fb5fb2ff 100644
+--- a/bindings/typescript/src.ts/geometry/narrow_phase.ts
++++ b/bindings/typescript/src.ts/geometry/narrow_phase.ts
+@@ -1,6 +1,7 @@
+ import {RawNarrowPhase, RawContactManifold} from "../raw";
+ import {ColliderHandle} from "./collider";
+ import {RigidBodySet} from "../dynamics";
++import {ColliderSet} from "./collider_set";
+ import {Vector, VectorOps, scratchBuffer} from "../math";
+ 
+ /**
+@@ -41,6 +42,17 @@ export class NarrowPhase {
+         this.raw.contact_pairs_with(collider1, f);
+     }
+ 
++    /**
++     * Every pair of colliders in the narrow-phase (near enough to be checked for contacts) as
++     * their rigid-bodies, three numbers a pair: the bodies' handles, then flags: 1 if the
++     * colliders touch (a contact manifold has a point), 2 if the first body is fixed or
++     * asleep, 4 if the second is. Pairs with a collider attached to no body are left out.
++     * One call for them all.
++     */
++    public contactBodyPairs(colliders: ColliderSet, bodies: RigidBodySet): Float64Array {
++        return this.raw.contactBodyPairs(colliders.raw, bodies.raw);
++    }
++
+     /**
+      * Enumerates all the colliders intersecting the given colliders, assuming one of them
+      * is a sensor.
+diff --git a/bindings/typescript/src.ts/pipeline/event_queue.ts b/bindings/typescript/src.ts/pipeline/event_queue.ts
+index 4d87d978..546e298b 100644
+--- a/bindings/typescript/src.ts/pipeline/event_queue.ts
++++ b/bindings/typescript/src.ts/pipeline/event_queue.ts
+@@ -3,7 +3,7 @@ import {
+     RawEventQueue,
+     RawSoftBodyTearEvent,
+ } from "../raw";
+-import {RigidBodyHandle, SoftBodyTearEvent} from "../dynamics";
++import {RigidBodyHandle, RigidBodySet, SoftBodyTearEvent} from "../dynamics";
+ import {Collider, ColliderHandle} from "../geometry";
+ import {Vector, VectorOps, scratchBuffer} from "../math";
+ 
+@@ -146,6 +146,21 @@ export class EventQueue {
+      * @param f - JavaScript closure applied to each collision event. The
+      *            closure must take one `TempContactForceEvent` argument.
+      */
++    /**
++     * Drains the contact force events as plain numbers, eight per event: the two colliders'
++     * handles, the sum of the magnitudes of the forces between them, the direction (x, y) of the
++     * strongest, and the world point (x, y) of the first solver contact of the first of their
++     * manifolds that has any, then 1 (or 0, 0, 0 if none has, or they no longer touch).
++     *
++     * One call for them all, instead of a call and an object per event and a contact query
++     * each. (The point is where the step left the bodies: what was touching, moved with them.)
++     *
++     * @param bodies - The world's rigid bodies (`world.bodies`).
++     */
++    public drainContactForceEventsFlat(bodies: RigidBodySet): Float64Array {
++        return this.raw.drainContactForceEventsFlat(bodies.raw);
++    }
++
+     public drainContactForceEvents(f: (event: TempContactForceEvent) => void) {
+         let event = new TempContactForceEvent();
+         this.raw.drainContactForceEvents((raw: RawContactForceEvent) => {
+diff --git a/bindings/typescript/src.ts/pipeline/physics_pipeline.ts b/bindings/typescript/src.ts/pipeline/physics_pipeline.ts
+index b5854dc1..86b31cc6 100644
+--- a/bindings/typescript/src.ts/pipeline/physics_pipeline.ts
++++ b/bindings/typescript/src.ts/pipeline/physics_pipeline.ts
+@@ -20,6 +20,19 @@ import {EventQueue} from "./event_queue";
+ import {PhysicsHooks} from "./physics_hooks";
+ 
+ export class PhysicsPipeline {
++    /**
++     * Keeps two bodies' colliders from touching, once more (or once less: `excluded` false),
++     * where either collider's contact-filter rules ask (see `Collider.setContactFilter`).
++     */
++    public setBodyPairExcluded(body1: RigidBodyHandle, body2: RigidBodyHandle, excluded: boolean) {
++        this.raw.setBodyPairExcluded(body1, body2, excluded);
++    }
++
++    /** Forgets every pair kept apart with this body (it's being removed). */
++    public forgetBodyPairs(body: RigidBodyHandle) {
++        this.raw.forgetBodyPairs(body);
++    }
++
+     raw: RawPhysicsPipeline;
+ 
+     public free() {
+diff --git a/bindings/typescript/src.ts/pipeline/world.ts b/bindings/typescript/src.ts/pipeline/world.ts
+index 2ece4757..a57a439f 100644
+--- a/bindings/typescript/src.ts/pipeline/world.ts
++++ b/bindings/typescript/src.ts/pipeline/world.ts
+@@ -282,6 +282,7 @@ export class World {
+      *   events generated by the physics engine.
+      */
+     public step(eventQueue?: EventQueue, hooks?: PhysicsHooks) {
++        const soft = this.softBodies.len() > 0;
+         this.physicsPipeline.step(
+             this.gravity,
+             this.integrationParameters,
+@@ -298,7 +299,8 @@ export class World {
+             hooks,
+         );
+         // Tears split pieces off into soft bodies of their own, with proxies and colliders.
+-        this.mapNewSoftBodies();
++        // (Only soft bodies tear: without any, there's nothing new to find.)
++        if (soft) this.mapNewSoftBodies();
+     }
+ 
+     /**
+@@ -964,6 +966,36 @@ export class World {
+      *   whereas `false` implies that all shapes are hollow for this ray-cast.
+      * @param groups - Used to filter the colliders that can or cannot be hit by the ray.
+      */
++    /**
++     * Casts many rays, for the first hit of each, as `castRayAndGetNormal` would one at a time
++     * (without a filter predicate or an excluded collider): one call for them all.
++     *
++     * @param rays - Five numbers a ray: its origin (x, y), its direction (x, y), and how far
++     *   along it to look (its max time of impact).
++     * @param groups - The filter's interaction groups for each ray.
++     * @param excludeRigidBodies - The rigid body each ray ignores (its handle), or NaN for none.
++     * @returns Four numbers a ray: the time of impact (-1 if it hit nothing), the normal there
++     *   (x, y), and the handle of the collider hit.
++     */
++    public castRaysAndGetNormal(
++        rays: Float32Array,
++        solid: boolean,
++        filterFlags: QueryFilterFlags,
++        groups: Uint32Array,
++        excludeRigidBodies: Float64Array,
++    ): Float64Array {
++        return this.broadPhase.castRaysAndGetNormal(
++            this.narrowPhase,
++            this.bodies,
++            this.colliders,
++            rays,
++            solid,
++            filterFlags,
++            groups,
++            excludeRigidBodies,
++        );
++    }
++
+     public castRayAndGetNormal(
+         ray: Ray,
+         maxToi: number,
+@@ -1291,6 +1323,24 @@ export class World {
+         );
+     }
+ 
++    /**
++     * Every pair of colliders in the narrow-phase (near enough to be checked for contacts) as their
++     * rigid-bodies, three numbers a pair: the bodies' handles, then flags: 1 if the colliders
++     * touch (a contact manifold has a point), 2 if the first body is fixed or asleep, 4 if
++     * the second is. One call for them all.
++     */
++    public contactBodyPairs(): Float64Array {
++        return this.narrowPhase.contactBodyPairs(this.colliders, this.bodies);
++    }
++
++    /**
++     * Every impulse joint's two rigid-bodies, three numbers a joint: their handles, then
++     * flags: 2 if the first body is fixed or asleep, 4 if the second is. One call for them all.
++     */
++    public jointBodyPairs(): Float64Array {
++        return this.impulseJoints.bodyPairs(this.bodies);
++    }
++
+     /**
+      * Enumerates all the colliders intersecting the given colliders, assuming one of them
+      * is a sensor.
+diff --git a/bindings/typescript/src/alloc.rs b/bindings/typescript/src/alloc.rs
+new file mode 100644
+index 00000000..3f0fde43
+--- /dev/null
++++ b/bindings/typescript/src/alloc.rs
+@@ -0,0 +1,68 @@
++//! The threaded build's allocator (feature `threads`): Rust's own (dlmalloc), with the memory
++//! grown a lot at a time.
++//!
++//! Growing a memory the threads share stops every one of them (each is interrupted, to see the
++//! memory's new size), and dlmalloc grows it by what it needs there and then: a few pages at a
++//! time, dozens of times a step in a heap of ragdolls just crushed, whose contacts then took
++//! twice as long to work out, however many threads worked on them.
++
++use core::arch::wasm32::memory_size;
++use std::alloc::{GlobalAlloc, Layout, System};
++use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
++
++/// What the memory is grown by, once dlmalloc has grown it past the last of that (bytes).
++const GROW: usize = 16 << 20;
++const PAGE: usize = 64 << 10;
++
++/// The memory's size (pages) after it was last grown by `GROW`, and whether it is being.
++static GROWN: AtomicUsize = AtomicUsize::new(0);
++static GROWING: AtomicBool = AtomicBool::new(false);
++
++struct Growing;
++
++#[global_allocator]
++static ALLOCATOR: Growing = Growing;
++
++/// `p` (from dlmalloc), and if dlmalloc has grown the memory since it was last grown by `GROW`,
++/// the memory grown by `GROW` more: allocated and freed again, dlmalloc keeps that for later.
++#[inline]
++fn grown(p: *mut u8) -> *mut u8 {
++    if memory_size::<0>() > GROWN.load(Ordering::Relaxed) && !GROWING.swap(true, Ordering::Acquire) {
++        // (another thread may have grown it before this one got here)
++        if memory_size::<0>() > GROWN.load(Ordering::Relaxed) {
++            // SAFETY: a non-zero size, aligned to 8.
++            let room = unsafe { Layout::from_size_align_unchecked(GROW - PAGE, 8) };
++            unsafe {
++                let q = System.alloc(room);
++                if !q.is_null() {
++                    System.dealloc(q, room);
++                }
++            }
++            GROWN.store(memory_size::<0>(), Ordering::Relaxed);
++        }
++        GROWING.store(false, Ordering::Release);
++    }
++    p
++}
++
++unsafe impl GlobalAlloc for Growing {
++    #[inline]
++    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
++        grown(unsafe { System.alloc(layout) })
++    }
++
++    #[inline]
++    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
++        grown(unsafe { System.alloc_zeroed(layout) })
++    }
++
++    #[inline]
++    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
++        unsafe { System.dealloc(ptr, layout) }
++    }
++
++    #[inline]
++    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
++        grown(unsafe { System.realloc(ptr, layout, new_size) })
++    }
++}
+diff --git a/bindings/typescript/src/dynamics/impulse_joint_set.rs b/bindings/typescript/src/dynamics/impulse_joint_set.rs
+index b7ba1bf0..871b55f8 100644
+--- a/bindings/typescript/src/dynamics/impulse_joint_set.rs
++++ b/bindings/typescript/src/dynamics/impulse_joint_set.rs
+@@ -1,4 +1,4 @@
+-use crate::dynamics::RawGenericJoint;
++use crate::dynamics::{RawGenericJoint, RawRigidBodySet};
+ use crate::utils::{self, FlatHandle};
+ use rapier::dynamics::{ImpulseJoint, ImpulseJointSet};
+ use wasm_bindgen::prelude::*;
+@@ -79,6 +79,23 @@ impl RawImpulseJointSet {
+         }
+     }
+ 
++    /// Every joint's two rigid-bodies, three numbers a joint: their handles, then flags: 2 if
++    /// the first body is fixed or asleep, 4 if the second is (as `RawNarrowPhase::contactBodyPairs`
++    /// has them). One call for what's a few for each joint of a body.
++    pub fn jointBodyPairs(&self, bodies: &RawRigidBodySet) -> Vec<f64> {
++        let still = |h| bodies.0.get(h).is_some_and(|rb| rb.is_fixed() || rb.is_sleeping());
++        let mut out = Vec::with_capacity(self.0.len() * 3);
++        for (_, joint) in self.0.iter() {
++            let flags = (still(joint.body1()) as u32) << 1 | (still(joint.body2()) as u32) << 2;
++            out.extend_from_slice(&[
++                utils::flat_handle(joint.body1().0),
++                utils::flat_handle(joint.body2().0),
++                flags as f64,
++            ]);
++        }
++        out
++    }
++
+     /// Applies the given JavaScript function to the integer handle of each joint attached to the given rigid-body.
+     ///
+     /// # Parameters
+diff --git a/bindings/typescript/src/dynamics/rigid_body.rs b/bindings/typescript/src/dynamics/rigid_body.rs
+index 3d828ba4..4fc772a8 100644
+--- a/bindings/typescript/src/dynamics/rigid_body.rs
++++ b/bindings/typescript/src/dynamics/rigid_body.rs
+@@ -398,6 +398,32 @@ impl RawRigidBodySet {
+         self.map(handle, |rb| rb.angvel())
+     }
+ 
++    /// The pose and motion of each of these rigid-bodies, six numbers for each: its
++    /// translation, its angle, its linear velocity and its angular velocity (NaNs for one
++    /// that's gone). One call for what's four for each with the getters above.
++    #[cfg(feature = "dim2")]
++    pub fn rbStates(&self, handles: &[FlatHandle]) -> Vec<f32> {
++        let mut out = Vec::with_capacity(handles.len() * 6);
++        for &h in handles {
++            match self.0.get(utils::body_handle(h)) {
++                Some(rb) => {
++                    let p = rb.position();
++                    let v = rb.linvel();
++                    out.extend_from_slice(&[
++                        p.translation.x,
++                        p.translation.y,
++                        p.rotation.angle(),
++                        v.x,
++                        v.y,
++                        rb.angvel(),
++                    ]);
++                }
++                None => out.extend_from_slice(&[f32::NAN; 6]),
++            }
++        }
++        out
++    }
++
+     /// The angular velocity of this rigid-body.
+     ///
+     /// # Parameters
+diff --git a/bindings/typescript/src/geometry/broad_phase.rs b/bindings/typescript/src/geometry/broad_phase.rs
+index f85a7762..e9109066 100644
+--- a/bindings/typescript/src/geometry/broad_phase.rs
++++ b/bindings/typescript/src/geometry/broad_phase.rs
+@@ -65,6 +65,75 @@ impl RawBroadPhase {
+         })
+     }
+ 
++    /// Casts many rays, for the first hit of each, as `castRayAndGetNormal` would one at a
++    /// time (without a filter predicate or an excluded collider): one call for them all.
++    ///
++    /// # Parameters
++    /// - `rays`: five numbers a ray: its origin (x, y), its direction (x, y), and how far along
++    ///   it to look (its max time of impact).
++    /// - `groups`: the filter's interaction groups for each ray (packed as for `castRay`).
++    /// - `excludeRigidBodies`: the rigid body each ray ignores (its handle), or NaN for none.
++    ///
++    /// Returns four numbers a ray: the time of impact (-1 if it hit nothing), the normal there
++    /// (x, y), and the handle of the collider hit. (Many rays are cast on the thread pool, if
++    /// there is one: see `crate::threads`.)
++    #[cfg(feature = "dim2")]
++    pub fn castRaysAndGetNormal(
++        &self,
++        narrow_phase: &RawNarrowPhase,
++        bodies: &RawRigidBodySet,
++        colliders: &RawColliderSet,
++        rays: &[f32],
++        solid: bool,
++        filter_flags: u32,
++        groups: &[u32],
++        excludeRigidBodies: &[f64],
++    ) -> Vec<f64> {
++        let flags = QueryFilterFlags::from_bits(filter_flags).unwrap_or(QueryFilterFlags::empty());
++        let cast = |(i, r): (usize, &[f32])| -> [f64; 4] {
++            let exclude = excludeRigidBodies[i];
++            let query_filter = QueryFilter {
++                flags,
++                groups: Some(crate::geometry::unpack_interaction_groups(groups[i])),
++                exclude_collider: None,
++                exclude_rigid_body: if exclude.is_nan() {
++                    None
++                } else {
++                    Some(utils::body_handle(exclude))
++                },
++                predicate: None,
++            };
++            let query_pipeline = self.0.as_query_pipeline(
++                narrow_phase.0.query_dispatcher(),
++                &bodies.0,
++                &colliders.0,
++                query_filter,
++            );
++            let ray = Ray::new(rapier::math::Vector::new(r[0], r[1]), rapier::math::Vector::new(r[2], r[3]));
++            match query_pipeline.cast_ray_and_get_normal(&ray, r[4], solid) {
++                Some((handle, inter)) => [
++                    inter.time_of_impact as f64,
++                    inter.normal.x as f64,
++                    inter.normal.y as f64,
++                    utils::flat_handle(handle.0),
++                ],
++                None => [-1.0, 0.0, 0.0, 0.0],
++            }
++        };
++        // (below this many, waking the pool costs more than it saves)
++        #[cfg(feature = "threads")]
++        if rays.len() >= 5 * 256 {
++            if let Some(pool) = crate::threads::pool() {
++                use rayon::prelude::*;
++                let hits: Vec<[f64; 4]> = pool.install(|| {
++                    rays.par_chunks_exact(5).enumerate().map(cast).collect()
++                });
++                return hits.into_iter().flatten().collect();
++            }
++        }
++        rays.chunks_exact(5).enumerate().flat_map(cast).collect()
++    }
++
+     pub fn castRayAndGetNormal(
+         &self,
+         narrow_phase: &RawNarrowPhase,
+diff --git a/bindings/typescript/src/geometry/collider.rs b/bindings/typescript/src/geometry/collider.rs
+index 5b317804..55e74234 100644
+--- a/bindings/typescript/src/geometry/collider.rs
++++ b/bindings/typescript/src/geometry/collider.rs
+@@ -1191,6 +1191,22 @@ impl RawColliderSet {
+         self.map_mut(handle, |co| co.set_solver_groups(groups))
+     }
+ 
++    /// Contact-filter rules for this collider: colliders sharing a non-zero `group` never touch
++    /// (its exclusion group: Rapier never pairs them), and the contact-filter hook, for pairs
++    /// of two colliders that have rules, applies the rest without calling into JS: they touch
++    /// unless either `asks` and their bodies are kept apart (see
++    /// `RawPhysicsPipeline::setBodyPairExcluded`).
++    pub fn coSetContactFilter(&mut self, handle: FlatHandle, group: u32, asks: bool) {
++        use crate::pipeline::{FILTER_ASK, FILTER_TAG};
++        let data = FILTER_TAG | if asks { FILTER_ASK } else { 0 } | group as u128;
++        let h = utils::collider_handle(handle);
++        self.0.set_user_data(h, data);
++        // (marked modified only if the group changes: see `ColliderSet::set_user_data`)
++        if self.0.get(h).is_some_and(|co| co.exclusion_group() != group) {
++            self.map_mut(handle, |co| co.set_exclusion_group(group));
++        }
++    }
++
+     pub fn coSetActiveHooks(&mut self, handle: FlatHandle, hooks: u32) {
+         let hooks = ActiveHooks::from_bits(hooks).unwrap_or(ActiveHooks::empty());
+         self.map_mut(handle, |co| co.set_active_hooks(hooks));
+diff --git a/bindings/typescript/src/geometry/narrow_phase.rs b/bindings/typescript/src/geometry/narrow_phase.rs
+index 22d78a5c..b819a860 100644
+--- a/bindings/typescript/src/geometry/narrow_phase.rs
++++ b/bindings/typescript/src/geometry/narrow_phase.rs
+@@ -1,4 +1,5 @@
+ use crate::dynamics::RawRigidBodySet;
++use crate::geometry::RawColliderSet;
+ use crate::utils::{self, FlatHandle};
+ use rapier::geometry::{ContactManifold, ContactPair, NarrowPhase};
+ use rapier::math::Real;
+@@ -28,6 +29,28 @@ impl RawNarrowPhase {
+         }
+     }
+ 
++    /// Every pair of colliders this has (near enough to be checked for contacts) as their
++    /// rigid-bodies, three numbers a pair: the bodies' handles, then flags: 1 if the colliders
++    /// touch (a manifold has a contact point), 2 if the first body is fixed or asleep, 4 if the
++    /// second is. Pairs with a collider attached to no body are left out.
++    ///
++    /// One call for what's a call into JS for each pair (`contact_pairs_with`) and a few back
++    /// out of it for each (`contact_pair`).
++    pub fn contactBodyPairs(&self, colliders: &RawColliderSet, bodies: &RawRigidBodySet) -> Vec<f64> {
++        let still = |h| bodies.0.get(h).is_some_and(|rb| rb.is_fixed() || rb.is_sleeping());
++        let mut out = Vec::new();
++        for pair in self.0.contact_pairs() {
++            let body = |h| colliders.0.get(h).and_then(|co| co.parent());
++            let (Some(b1), Some(b2)) = (body(pair.collider1), body(pair.collider2)) else {
++                continue;
++            };
++            let touch = pair.manifolds().iter().any(|m| !m.points.is_empty());
++            let flags = touch as u32 | (still(b1) as u32) << 1 | (still(b2) as u32) << 2;
++            out.extend_from_slice(&[utils::flat_handle(b1.0), utils::flat_handle(b2.0), flags as f64]);
++        }
++        out
++    }
++
+     pub fn contact_pair(&self, handle1: FlatHandle, handle2: FlatHandle) -> Option<RawContactPair> {
+         let handle1 = utils::collider_handle(handle1);
+         let handle2 = utils::collider_handle(handle2);
+diff --git a/bindings/typescript/src/lib.rs b/bindings/typescript/src/lib.rs
+index 132809dc..8e65b5bf 100644
+--- a/bindings/typescript/src/lib.rs
++++ b/bindings/typescript/src/lib.rs
+@@ -29,4 +29,8 @@ pub mod dynamics;
+ pub mod geometry;
+ pub mod math;
+ pub mod pipeline;
++#[cfg(feature = "threads")]
++pub mod threads;
++#[cfg(feature = "threads")]
++mod alloc;
+ pub mod utils;
+diff --git a/bindings/typescript/src/pipeline/event_queue.rs b/bindings/typescript/src/pipeline/event_queue.rs
+index a49fc146..2feb139a 100644
+--- a/bindings/typescript/src/pipeline/event_queue.rs
++++ b/bindings/typescript/src/pipeline/event_queue.rs
+@@ -1,19 +1,77 @@
+-use crate::dynamics::RawSoftBodyTearEvent;
++use crate::dynamics::{RawRigidBodySet, RawSoftBodyTearEvent};
+ use crate::utils;
+ use crate::utils::FlatHandle;
+-use rapier::dynamics::SoftBodyTearEvent;
+-use rapier::geometry::{CollisionEvent, ContactForceEvent};
+-use rapier::pipeline::ChannelEventCollector;
++use rapier::dynamics::{RigidBodyHandle, RigidBodySet, SoftBodySet, SoftBodyTearEvent};
++use rapier::geometry::{ColliderSet, CollisionEvent, ContactForceEvent, ContactPair};
++use rapier::math::{Real, Vector};
++use rapier::pipeline::{ChannelEventCollector, EventHandler};
+ use std::sync::mpsc::Receiver;
++use std::sync::Mutex;
+ use wasm_bindgen::prelude::*;
+ 
++/// A contact force event, with what its contact point is worked out from once the bodies
++/// have moved (see `drainContactForceEventsFlat`): the first solver contact of the first of
++/// the pair's manifolds that has any, as its two anchors, each local to its body (or a world
++/// point already, with no body there or a world-attached side), and the bodies.
++struct ForceEvent {
++    event: ContactForceEvent,
++    anchors: Option<(Option<RigidBodyHandle>, Vector, Option<RigidBodyHandle>, Vector)>,
++}
++
++/// The event handler of a `RawEventQueue`: collision and soft-body tear events go to
++/// channels, as Rapier's `ChannelEventCollector` has them, contact force events to a list.
++pub(crate) struct RawEventCollector {
++    channels: ChannelEventCollector,
++    forces: Mutex<Vec<ForceEvent>>,
++}
++
++impl EventHandler for RawEventCollector {
++    fn handle_collision_event(
++        &self,
++        bodies: &RigidBodySet,
++        colliders: &ColliderSet,
++        event: CollisionEvent,
++        contact_pair: Option<&ContactPair>,
++    ) {
++        self.channels
++            .handle_collision_event(bodies, colliders, event, contact_pair);
++    }
++
++    fn handle_contact_force_event(
++        &self,
++        dt: Real,
++        _bodies: &RigidBodySet,
++        _colliders: &ColliderSet,
++        contact_pair: &ContactPair,
++        total_force_magnitude: Real,
++    ) {
++        let event = ContactForceEvent::from_contact_pair(dt, contact_pair, total_force_magnitude);
++        // (as ContactManifoldData::solver_contact_world_points() resolves them)
++        let anchors = contact_pair.manifolds().iter().find_map(|m| {
++            m.data.solver_contacts.first().map(|c| {
++                let d = m.data.relative_dominance;
++                (
++                    m.data.rigid_body1.filter(|_| d <= 0),
++                    c.anchor1,
++                    m.data.rigid_body2.filter(|_| d >= 0),
++                    c.anchor2,
++                )
++            })
++        });
++        self.forces.lock().unwrap().push(ForceEvent { event, anchors });
++    }
++
++    fn handle_soft_body_tear_event(&self, soft_bodies: &SoftBodySet, event: &SoftBodyTearEvent) {
++        self.channels.handle_soft_body_tear_event(soft_bodies, event);
++    }
++}
++
+ /// A structure responsible for collecting events generated
+ /// by the physics engine.
+ #[wasm_bindgen]
+ pub struct RawEventQueue {
+-    pub(crate) collector: ChannelEventCollector,
++    pub(crate) collector: RawEventCollector,
+     collision_events: Receiver<CollisionEvent>,
+-    contact_force_events: Receiver<ContactForceEvent>,
+     soft_body_tear_events: Receiver<SoftBodyTearEvent>,
+     pub(crate) auto_drain: bool,
+ }
+@@ -98,9 +156,11 @@ impl RawEventQueue {
+         );
+ 
+         Self {
+-            collector,
++            collector: RawEventCollector {
++                channels: collector,
++                forces: Mutex::new(Vec::new()),
++            },
+             collision_events: collision_channel.1,
+-            contact_force_events: contact_force_channel.1,
+             soft_body_tear_events: soft_body_tear_channel.1,
+             auto_drain: autoDrain,
+         }
+@@ -142,9 +202,48 @@ impl RawEventQueue {
+         }
+     }
+ 
++    /// Drains the contact force events as plain numbers, eight per event: the two colliders'
++    /// handles, the sum of the magnitudes of the forces between them, the direction (x, y) of the
++    /// strongest, and the world point (x, y) of the first solver contact of the first of their
++    /// manifolds that has any, then 1 (or 0, 0, 0 if none has, or they no longer touch).
++    ///
++    /// One call for them all, instead of a call and an object per event and a contact query
++    /// each. (The point is where the step left the bodies: what was touching, moved with them.)
++    #[cfg(feature = "dim2")]
++    pub fn drainContactForceEventsFlat(&mut self, bodies: &RawRigidBodySet) -> Vec<f64> {
++        // (drained in place: the list keeps its room for the next step's, thousands in a heap)
++        let mut forces = self.collector.forces.lock().unwrap();
++        let mut out = Vec::with_capacity(forces.len() * 8);
++        let resolve = |body: Option<RigidBodyHandle>, anchor: Vector| {
++            match body.and_then(|h| bodies.0.get(h)) {
++                Some(rb) => *rb.position() * (rb.local_center_of_mass() + anchor),
++                None => anchor,
++            }
++        };
++        for ForceEvent { event, anchors } in forces.drain(..) {
++            let dir = event.max_force_direction;
++            out.extend_from_slice(&[
++                utils::flat_handle(event.collider1.0),
++                utils::flat_handle(event.collider2.0),
++                event.total_force_magnitude as f64,
++                dir.x as f64,
++                dir.y as f64,
++            ]);
++            match anchors {
++                Some((b1, a1, b2, a2)) => {
++                    let p = (resolve(b1, a1) + resolve(b2, a2)) / 2.0;
++                    out.extend_from_slice(&[p.x as f64, p.y as f64, 1.0]);
++                }
++                None => out.extend_from_slice(&[0.0, 0.0, 0.0]),
++            }
++        }
++        out
++    }
++
+     pub fn drainContactForceEvents(&mut self, f: &js_sys::Function) {
+         let this = JsValue::null();
+-        while let Ok(event) = self.contact_force_events.try_recv() {
++        let forces = std::mem::take(&mut *self.collector.forces.lock().unwrap());
++        for ForceEvent { event, .. } in forces {
+             let _ = f.call1(&this, &JsValue::from(RawContactForceEvent(event)));
+         }
+     }
+@@ -161,7 +260,7 @@ impl RawEventQueue {
+     /// Removes all events contained by this collector.
+     pub fn clear(&self) {
+         while let Ok(_) = self.collision_events.try_recv() {}
+-        while let Ok(_) = self.contact_force_events.try_recv() {}
++        self.collector.forces.lock().unwrap().clear();
+         while let Ok(_) = self.soft_body_tear_events.try_recv() {}
+     }
+ }
+diff --git a/bindings/typescript/src/pipeline/physics_hooks.rs b/bindings/typescript/src/pipeline/physics_hooks.rs
+index 58ce9790..b29b1643 100644
+--- a/bindings/typescript/src/pipeline/physics_hooks.rs
++++ b/bindings/typescript/src/pipeline/physics_hooks.rs
+@@ -1,15 +1,66 @@
++#[cfg(not(feature = "threads"))]
+ use crate::utils;
+-use rapier::geometry::SolverFlags;
+-use rapier::pipeline::{ContactModificationContext, PairFilterContext, PhysicsHooks};
++use rapier::dynamics::RigidBodyHandle;
++use rapier::geometry::{ColliderSet, SolverFlags};
++#[cfg(not(feature = "threads"))]
++use rapier::pipeline::ContactModificationContext;
++use rapier::pipeline::{PairFilterContext, PhysicsHooks};
++use std::collections::HashMap;
+ use wasm_bindgen::prelude::*;
+ 
+-pub struct RawPhysicsHooks {
++#[cfg(not(feature = "threads"))]
++pub struct RawPhysicsHooks<'a> {
+     pub this: js_sys::Object,
+     pub filter_contact_pair: js_sys::Function,
+     pub filter_intersection_pair: js_sys::Function,
++    pub pairs: &'a BodyPairs,
+     // pub modify_solver_contacts: &'a js_sys::Function,
+ }
+ 
++/// Pairs of rigid bodies whose colliders never touch, for colliders whose contact-filter
++/// rules ask (see `RawColliderSet::coSetContactFilter`): how many times each was kept apart.
++#[derive(Default)]
++pub struct BodyPairs(HashMap<(u64, u64), u32>);
++
++impl BodyPairs {
++    fn id(body: RigidBodyHandle) -> u64 {
++        let (index, generation) = body.into_raw_parts();
++        index as u64 | (generation as u64) << 32
++    }
++
++    fn key(body1: RigidBodyHandle, body2: RigidBodyHandle) -> (u64, u64) {
++        let (a, b) = (Self::id(body1), Self::id(body2));
++        if a <= b {
++            (a, b)
++        } else {
++            (b, a)
++        }
++    }
++
++    /// Keeps the pair apart once more, or once less (`excluded` false).
++    pub fn set(&mut self, body1: RigidBodyHandle, body2: RigidBodyHandle, excluded: bool) {
++        let key = Self::key(body1, body2);
++        if excluded {
++            *self.0.entry(key).or_insert(0) += 1;
++        } else if let Some(n) = self.0.get_mut(&key) {
++            *n -= 1;
++            if *n == 0 {
++                self.0.remove(&key);
++            }
++        }
++    }
++
++    /// Forgets every pair with this body.
++    pub fn forget(&mut self, body: RigidBodyHandle) {
++        let id = Self::id(body);
++        self.0.retain(|&(a, b), _| a != id && b != id);
++    }
++
++    pub fn contains(&self, body1: RigidBodyHandle, body2: RigidBodyHandle) -> bool {
++        !self.0.is_empty() && self.0.contains_key(&Self::key(body1, body2))
++    }
++}
++
+ #[wasm_bindgen]
+ extern "C" {
+     // Use `js_namespace` here to bind `console.log(..)` instead of just
+@@ -18,8 +69,44 @@ extern "C" {
+     fn log(s: &str);
+ }
+ 
+-impl PhysicsHooks for RawPhysicsHooks {
++/// A collider whose user data has this bit set carries contact-filter rules the hook applies
++/// itself, without calling into JS (see `RawColliderSet::coSetContactFilter`): its low 32 bits
++/// are a group (colliders sharing a non-zero group never touch)...
++pub const FILTER_TAG: u128 = 1 << 64;
++/// ...and with this bit set too, it has bodies of its own to keep apart from (see `BodyPairs`).
++pub const FILTER_ASK: u128 = 1 << 65;
++
++/// The contact-filter rules both colliders carry, applied: `Some(answer)`, or `None` to ask JS.
++pub fn native_filter(
++    colliders: &ColliderSet,
++    pairs: &BodyPairs,
++    ctxt: &PairFilterContext,
++) -> Option<Option<SolverFlags>> {
++    let d1 = colliders.get(ctxt.collider1)?.user_data;
++    let d2 = colliders.get(ctxt.collider2)?.user_data;
++    if d1 & d2 & FILTER_TAG == 0 {
++        return None;
++    }
++    let g1 = d1 as u32;
++    if g1 != 0 && g1 == d2 as u32 {
++        return Some(None);
++    }
++    if (d1 | d2) & FILTER_ASK != 0 {
++        if let (Some(b1), Some(b2)) = (ctxt.rigid_body1, ctxt.rigid_body2) {
++            if pairs.contains(b1, b2) {
++                return Some(None);
++            }
++        }
++    }
++    Some(Some(SolverFlags::COMPUTE_RIGID_IMPULSES))
++}
++
++#[cfg(not(feature = "threads"))]
++impl<'a> PhysicsHooks for RawPhysicsHooks<'a> {
+     fn filter_contact_pair(&self, ctxt: &PairFilterContext) -> Option<SolverFlags> {
++        if let Some(answer) = native_filter(ctxt.colliders, self.pairs, ctxt) {
++            return answer;
++        }
+         let rb1 = ctxt
+             .rigid_body1
+             .map(|rb| JsValue::from(utils::flat_handle(rb.0)))
+@@ -69,6 +156,27 @@ impl PhysicsHooks for RawPhysicsHooks {
+     fn modify_solver_contacts(&self, _ctxt: &mut ContactModificationContext) {}
+ }
+ 
++/// The hooks of a build whose steps run on a pool of Web Workers (feature `threads`, see
++/// `crate::threads`), where nothing can call the JS hooks (they belong to the main thread):
++/// only the colliders' own contact-filter rules (see `native_filter`), and pairs they can't
++/// settle make contact.
++#[cfg(feature = "threads")]
++pub struct NativeHooks<'a> {
++    pub pairs: &'a BodyPairs,
++}
++
++#[cfg(feature = "threads")]
++impl<'a> PhysicsHooks for NativeHooks<'a> {
++    fn filter_contact_pair(&self, ctxt: &PairFilterContext) -> Option<SolverFlags> {
++        native_filter(ctxt.colliders, self.pairs, ctxt)
++            .unwrap_or(Some(SolverFlags::COMPUTE_RIGID_IMPULSES))
++    }
++
++    fn filter_intersection_pair(&self, _ctxt: &PairFilterContext) -> bool {
++        true
++    }
++}
++
+ /* NOTE: the following is an attempt to make contact modification work.
+  *
+ #[wasm_bindgen]
+diff --git a/bindings/typescript/src/pipeline/physics_pipeline.rs b/bindings/typescript/src/pipeline/physics_pipeline.rs
+index 27b76993..d19949eb 100644
+--- a/bindings/typescript/src/pipeline/physics_pipeline.rs
++++ b/bindings/typescript/src/pipeline/physics_pipeline.rs
+@@ -4,12 +4,13 @@ use crate::dynamics::{
+ };
+ use crate::geometry::{RawBroadPhase, RawColliderSet, RawNarrowPhase};
+ use crate::math::RawVector;
+-use crate::pipeline::{RawEventQueue, RawPhysicsHooks};
++use crate::pipeline::{BodyPairs, RawEventQueue};
+ use crate::rapier::pipeline::PhysicsPipeline;
++use crate::utils::{self, FlatHandle};
+ use wasm_bindgen::prelude::*;
+ 
+ #[wasm_bindgen]
+-pub struct RawPhysicsPipeline(pub(crate) PhysicsPipeline);
++pub struct RawPhysicsPipeline(pub(crate) PhysicsPipeline, pub(crate) BodyPairs);
+ 
+ #[wasm_bindgen]
+ impl RawPhysicsPipeline {
+@@ -17,7 +18,22 @@ impl RawPhysicsPipeline {
+     pub fn new() -> Self {
+         let mut pipeline = PhysicsPipeline::new();
+         pipeline.counters.disable(); // Disable perf counters by default.
+-        RawPhysicsPipeline(pipeline)
++        // (steps then run on the pool, with this thread waiting: see `crate::threads`)
++        #[cfg(feature = "threads")]
++        pipeline.set_thread_pool(crate::threads::pool());
++        RawPhysicsPipeline(pipeline, BodyPairs::default())
++    }
++
++    /// Keeps two bodies' colliders from touching, once more (or once less: `excluded` false),
++    /// where either collider's contact-filter rules ask (see `RawColliderSet::coSetContactFilter`).
++    pub fn setBodyPairExcluded(&mut self, body1: FlatHandle, body2: FlatHandle, excluded: bool) {
++        self.1
++            .set(utils::body_handle(body1), utils::body_handle(body2), excluded);
++    }
++
++    /// Forgets every pair kept apart with this body (it's being removed).
++    pub fn forgetBodyPairs(&mut self, body: FlatHandle) {
++        self.1.forget(utils::body_handle(body));
+     }
+ 
+     pub fn set_profiler_enabled(&mut self, enabled: bool) {
+@@ -149,10 +165,17 @@ impl RawPhysicsPipeline {
+             eventQueue.clear();
+         }
+ 
+-        let hooks = RawPhysicsHooks {
++        #[cfg(not(feature = "threads"))]
++        let hooks = crate::pipeline::RawPhysicsHooks {
+             this: hookObject,
+             filter_contact_pair: hookFilterContactPair,
+             filter_intersection_pair: hookFilterIntersectionPair,
++            pairs: &self.1,
++        };
++        #[cfg(feature = "threads")]
++        let hooks = {
++            let _ = (hookObject, hookFilterContactPair, hookFilterIntersectionPair);
++            crate::pipeline::NativeHooks { pairs: &self.1 }
+         };
+ 
+         self.0.step(
+diff --git a/bindings/typescript/src/threads.rs b/bindings/typescript/src/threads.rs
+new file mode 100644
+index 00000000..680bac9a
+--- /dev/null
++++ b/bindings/typescript/src/threads.rs
+@@ -0,0 +1,62 @@
++//! A pool of threads, each run by a Web Worker sharing this module's memory, that every
++//! physics pipeline made after `initThreadPool` steps on (feature `threads`).
++//!
++//! The thread that makes the pool (the page's) is one of its threads too: it works on each step
++//! with the others, and waits for them by spinning (rayon-core is patched for that, see
++//! tools/rapier), since a browser's main thread may never block. The JS hooks are never called
++//! (see `NativeHooks`): they can't be from the workers.
++
++use rayon::{ThreadBuilder, ThreadPool, ThreadPoolBuilder};
++use std::sync::{Arc, Mutex, OnceLock};
++use wasm_bindgen::prelude::*;
++
++static POOL: OnceLock<Arc<ThreadPool>> = OnceLock::new();
++/// The pool's threads, until a worker takes each (see `runThreadPoolWorker`).
++static WAITING: Mutex<Vec<ThreadBuilder>> = Mutex::new(Vec::new());
++
++/// Makes the pool: this thread and `threads` more, which wait for workers to run them (see
++/// `runThreadPoolWorker`): start that many, all sharing this module and its memory, and let
++/// them start (yield to the event loop) before stepping a pipeline made after this.
++#[wasm_bindgen]
++pub fn initThreadPool(threads: usize) {
++    if POOL.get().is_some() {
++        return;
++    }
++    // A panic aborts its thread here, and whoever waits on its work would wait forever.
++    let default_hook = std::panic::take_hook();
++    std::panic::set_hook(Box::new(move |info| {
++        rayon_core::pool_thread_panicked();
++        default_hook(info);
++    }));
++    rayon_core::never_sleep_on_this_thread();
++    let pool = ThreadPoolBuilder::new()
++        .num_threads(threads + 1)
++        .use_current_thread()
++        .spawn_handler(|thread| {
++            WAITING.lock().unwrap().push(thread);
++            Ok(())
++        })
++        .build()
++        .expect("couldn't make the thread pool");
++    let _ = POOL.set(Arc::new(pool));
++}
++
++/// This module and its memory, `[module, memory]`: what each worker running a thread of the
++/// pool (see `runThreadPoolWorker`) instantiates.
++#[wasm_bindgen]
++pub fn threadPoolShare() -> js_sys::Array {
++    js_sys::Array::of2(&wasm_bindgen::module(), &wasm_bindgen::memory())
++}
++
++/// Runs one of the pool's threads on this worker, never returning.
++#[wasm_bindgen]
++pub fn runThreadPoolWorker() {
++    let thread = WAITING.lock().unwrap().pop();
++    let thread = thread.expect("no thread of the pool is left to run");
++    thread.run();
++}
++
++/// The pool, once made.
++pub(crate) fn pool() -> Option<Arc<ThreadPool>> {
++    POOL.get().cloned()
++}
+diff --git a/src/dynamics/ccd/sweeps.rs b/src/dynamics/ccd/sweeps.rs
+index 3f576afd..a9520868 100644
+--- a/src/dynamics/ccd/sweeps.rs
++++ b/src/dynamics/ccd/sweeps.rs
+@@ -591,7 +591,9 @@ pub(super) fn sweep_fast_body(
+             if !tier_allows(rb1, rb2, co2) {
+                 return;
+             }
+-            if !co1.flags.collision_groups.test(co2.flags.collision_groups) {
++            if !co1.flags.collision_groups.test(co2.flags.collision_groups)
++                || co1.flags.excluded(&co2.flags)
++            {
+                 return;
+             }
+ 
+diff --git a/src/dynamics/solver/staged_island_solver/init.rs b/src/dynamics/solver/staged_island_solver/init.rs
+index 710c186c..58e2ff8b 100644
+--- a/src/dynamics/solver/staged_island_solver/init.rs
++++ b/src/dynamics/solver/staged_island_solver/init.rs
+@@ -21,7 +21,8 @@ use crate::dynamics::FrictionModel;
+ use super::sync::StageSync;
+ use super::worker::run_worker;
+ use super::{
+-    CHUNK_BATCH, ChunkSegment, GroupLayout, LAYOUT_REF_WORKERS, SharedCtx, StagedIslandSolver,
++    CHUNK_BATCH, ChunkSegment, GroupLayout, LAYOUT_REF_WORKERS, MIN_TAIL_CHUNKS, SharedCtx,
++    StagedIslandSolver, TAIL_COLORS,
+ };
+ 
+ impl StagedIslandSolver {
+@@ -342,36 +343,114 @@ impl StagedIslandSolver {
+                 }
+             }
+ 
+-            let overflow_start = next_chunk;
+-            // The overflow grouper's output lands in `overflow_chunk_refs`; its segments are
+-            // created only once the vec stops growing (they hold raw pointers into it). The
+-            // overflow color sorts last, so deferring them preserves the global chunk order.
+-            let mut overflow_grouped_len = 0usize;
++            // The tail (the colors too small to share out, and the overflow color) colored again,
++            // greedily, into colors of its own: in a dense heap the persistent colors run out
++            // into dozens of small ones, a fifth of the contacts, all of which worker 0 solved
++            // alone while the others waited. Most of it fits a few colors big enough to share out
++            // like the persistent ones; only the rest (and contacts with nothing to solve) is
++            // left to worker 0. The thresholds are constants, not the pool size: the order
++            // constraints are solved in depends on the scene alone (see LAYOUT_REF_WORKERS).
++            self.tail_refs.clear();
++            self.tail_colors.clear();
++            self.overflow_workspace.clear();
++            let mut tail_counts = [0u32; TAIL_COLORS];
+             for (color, refs) in graph.buckets() {
+-                let is_overflow_color = (color as usize) == NUM_COLORS - 1;
+-                if is_overflow_color {
+-                    // Overflow color: uncolorable pairs / 2nd+ manifolds of a pair CAN share both
+-                    // bodies; linear chunking would alias a dynamic body across SIMD lanes and the
+-                    // last-writer-wins scatter would drop an impulse. Body-mask grouping keeps each
+-                    // chunk's lanes disjoint (ungroupable => 1-lane chunks); worker 0 solves serially.
+-                    self.overflow_workspace.clear();
+-                    self.overflow_workspace.extend_from_slice(refs);
+-                    set.interaction_groups.clear_groups();
+-                    set.interaction_groups.group_manifold_refs(
+-                        island_bodies.len(),
+-                        store,
+-                        &self.overflow_workspace,
++                if (color as usize) < NUM_COLORS - 1
++                    && refs.len().div_ceil(SIMD_WIDTH) >= min_color_chunks
++                {
++                    continue;
++                }
++                for r in refs {
++                    let data = &store.get(*r).data;
++                    let [id1, id2] = data.solver_body_ids;
++                    let top = match (id1, id2) {
++                        (u32::MAX, u32::MAX) => None,
++                        (u32::MAX, id) | (id, u32::MAX) => Some(id),
++                        (a, b) => Some(a.max(b)),
++                    };
++                    let Some(top) = top.filter(|_| data.num_active_contacts() > 0) else {
++                        // (nothing to solve: the serial grouper below drops these)
++                        self.overflow_workspace.push(*r);
++                        continue;
++                    };
++                    if top as usize >= self.tail_masks.len() {
++                        self.tail_masks.resize(top as usize + 1, 0);
++                    }
++                    let masks = &self.tail_masks;
++                    let mask = |id: u32| if id == u32::MAX { 0 } else { masks[id as usize] };
++                    let free = !(mask(id1) | mask(id2));
++                    if free == 0 {
++                        self.overflow_workspace.push(*r);
++                        continue;
++                    }
++                    let k = free.trailing_zeros();
++                    for id in [id1, id2] {
++                        if id != u32::MAX {
++                            self.tail_masks[id as usize] |= 1 << k;
++                        }
++                    }
++                    self.tail_refs.push(*r);
++                    self.tail_colors.push(k as u8);
++                    tail_counts[k as usize] += 1;
++                }
++            }
++            for m in &mut self.tail_masks {
++                *m = 0;
++            }
++            // The colors big enough to share out, color by color; the rest to worker 0 (in order).
++            let shared =
++                |k: usize| (tail_counts[k] as usize).div_ceil(SIMD_WIDTH) >= MIN_TAIL_CHUNKS;
++            let mut starts = [0usize; TAIL_COLORS + 1];
++            for k in 0..TAIL_COLORS {
++                starts[k + 1] = starts[k] + if shared(k) { tail_counts[k] as usize } else { 0 };
++            }
++            self.tail_sorted.clear();
++            self.tail_sorted
++                .resize(starts[TAIL_COLORS], ContactRef::PADDING);
++            let mut at = starts;
++            for (r, k) in self.tail_refs.iter().zip(&self.tail_colors) {
++                let k = *k as usize;
++                if shared(k) {
++                    self.tail_sorted[at[k]] = *r;
++                    at[k] += 1;
++                } else {
++                    self.overflow_workspace.push(*r);
++                }
++            }
++            for k in 0..TAIL_COLORS {
++                if shared(k) {
++                    let range_start = next_chunk;
++                    push_segment(
++                        &mut self.chunk_segments,
++                        &mut next_chunk,
++                        &self.tail_sorted[starts[k]..starts[k + 1]],
+                     );
+-                    self.overflow_chunk_refs
+-                        .extend_from_slice(&set.interaction_groups.simd_ref_interactions);
+-                    overflow_grouped_len = self.overflow_chunk_refs.len();
+-                    self.overflow_chunk_refs
+-                        .extend_from_slice(&set.interaction_groups.nongrouped_ref_interactions);
+-                } else if refs.len().div_ceil(SIMD_WIDTH) < min_color_chunks {
+-                    // A real color too small to parallelize: body-disjoint already.
+-                    push_segment(&mut self.chunk_segments, &mut next_chunk, refs);
++                    self.color_ranges
++                        .push(((NUM_COLORS + k) as u8, range_start..next_chunk));
+                 }
+             }
++
++            let overflow_start = next_chunk;
++            // What's left of the tail can share bodies: linear chunking would alias a dynamic
++            // body across SIMD lanes and the last-writer-wins scatter would drop an impulse.
++            // Body-mask grouping keeps each chunk's lanes disjoint (ungroupable => 1-lane
++            // chunks); worker 0 solves them serially. The grouper's output lands in
++            // `overflow_chunk_refs`; its segments are created only once the vec stops growing
++            // (they hold raw pointers into it).
++            let mut overflow_grouped_len = 0usize;
++            if !self.overflow_workspace.is_empty() {
++                set.interaction_groups.clear_groups();
++                set.interaction_groups.group_manifold_refs(
++                    island_bodies.len(),
++                    store,
++                    &self.overflow_workspace,
++                );
++                self.overflow_chunk_refs
++                    .extend_from_slice(&set.interaction_groups.simd_ref_interactions);
++                overflow_grouped_len = self.overflow_chunk_refs.len();
++                self.overflow_chunk_refs
++                    .extend_from_slice(&set.interaction_groups.nongrouped_ref_interactions);
++            }
+             // The overflow segments: the grouped prefix is a multiple of SIMD_WIDTH
+             // (whole body-disjoint chunks); each ungroupable ref is its own 1-lane
+             // chunk, so it gets its own single-ref segment.
+diff --git a/src/dynamics/solver/staged_island_solver/mod.rs b/src/dynamics/solver/staged_island_solver/mod.rs
+index 193e5d44..868368fe 100644
+--- a/src/dynamics/solver/staged_island_solver/mod.rs
++++ b/src/dynamics/solver/staged_island_solver/mod.rs
+@@ -49,7 +49,17 @@ const JOINT_BATCH: usize = 16;
+ /// a color to the serial overflow tail moves its solve after every parallel color,
+ /// so a pool-sized threshold would change the Gauss-Seidel order (and therefore the
+ /// results) across machines with different core counts.
+-const LAYOUT_REF_WORKERS: usize = 8;
++///
++/// 4, not upstream's 8: a heap of ragdolls (100 people, 1 500 joints) colors its joints in a
++/// dozen colors of 70 to 140 joints, and under 64 (8's threshold) a color went to worker 0
++/// alone, the most solved serially in a step (the rest waiting).
++const LAYOUT_REF_WORKERS: usize = 4;
++
++/// The most colors the tail of the persistent colors is colored again into (see
++/// [`StagedIslandSolver::tail_refs`]), and the fewest SIMD chunks one is shared out at
++/// (calibrated, like [`LAYOUT_REF_WORKERS`], for the scene and not the pool).
++const TAIL_COLORS: usize = 64;
++const MIN_TAIL_CHUNKS: usize = CHUNK_BATCH * 2;
+ 
+ /// Claim-batch size of a constraint stage (~8 claims per worker): tiny batches multiply the
+ /// claim/steal cross-core traffic (measurably throttles high worker counts); huge batches leave
+@@ -275,6 +285,15 @@ pub(crate) struct StagedIslandSolver {
+     /// Workspace: the overflow-color manifolds handed to the greedy body-mask
+     /// grouper (snapshotted to sidestep an aliasing borrow of `contact_constraints`).
+     overflow_workspace: Vec<ContactRef>,
++    /// Workspace: the tail of the persistent colors (those too small to share out, and the
++    /// overflow color), each ref's color as colored again greedily (`tail_colors`), and the
++    /// refs of the tail colors big enough to share out, color by color (`tail_sorted`: stable
++    /// storage, `chunk_segments` point into it).
++    tail_refs: Vec<ContactRef>,
++    tail_colors: Vec<u8>,
++    tail_sorted: Vec<ContactRef>,
++    /// Workspace: the tail colors already taken at each solver body (all clear between steps).
++    tail_masks: Vec<u64>,
+     /// Constraint-row range of each scalar joint builder in
+     /// `joint_constraints.velocity_constraints` (a joint yields several rows which
+     /// must be solved by a same worker since they touch the same bodies).
+@@ -323,6 +342,10 @@ impl StagedIslandSolver {
+             groups: Vec::new(),
+             grouped_chunk_refs: Vec::new(),
+             overflow_workspace: Vec::new(),
++            tail_refs: Vec::new(),
++            tail_colors: Vec::new(),
++            tail_sorted: Vec::new(),
++            tail_masks: Vec::new(),
+             joint_colors: ParallelInteractionGroups::new(),
+             joint_color_ranges: Vec::new(),
+             joint_chunk_lanes: Vec::new(),
+diff --git a/src/geometry/broad_phase_bvh/update.rs b/src/geometry/broad_phase_bvh/update.rs
+index e3a198b2..d639d5ae 100644
+--- a/src/geometry/broad_phase_bvh/update.rs
++++ b/src/geometry/broad_phase_bvh/update.rs
+@@ -391,6 +391,7 @@ impl BroadPhaseBvh {
+                         .flags
+                         .collision_groups
+                         .test(collider2.flags.collision_groups)
++                        || collider1.flags.excluded(&collider2.flags)
+                     {
+                         return None;
+                     }
+diff --git a/src/geometry/collider.rs b/src/geometry/collider.rs
+index 6a7b9650..1323e969 100644
+--- a/src/geometry/collider.rs
++++ b/src/geometry/collider.rs
+@@ -460,6 +460,20 @@ impl Collider {
+         }
+     }
+ 
++    /// The exclusion group of this collider: colliders sharing a non-zero one never interact.
++    pub fn exclusion_group(&self) -> u32 {
++        self.flags.exclusion_group
++    }
++
++    /// Changes the exclusion group of this collider (see [`ColliderFlags::exclusion_group`]).
++    pub fn set_exclusion_group(&mut self, group: u32) {
++        if self.flags.exclusion_group != group {
++            // (a collision-groups change, as far as the pairs are concerned)
++            self.changes.insert(ColliderChanges::GROUPS);
++            self.flags.exclusion_group = group;
++        }
++    }
++
+     /// The solver groups for this collider (advanced collision filtering).
+     ///
+     /// Most users should use `collision_groups()` instead.
+@@ -1494,6 +1508,7 @@ impl ColliderBuilder {
+             } else {
+                 ColliderEnabled::Disabled
+             },
++            exclusion_group: 0,
+         };
+         let changes = ColliderChanges::all();
+         let pos = ColliderPosition(self.position);
+diff --git a/src/geometry/collider_components.rs b/src/geometry/collider_components.rs
+index 35fc5902..ff3226e6 100644
+--- a/src/geometry/collider_components.rs
++++ b/src/geometry/collider_components.rs
+@@ -393,6 +393,17 @@ pub struct ColliderFlags {
+     pub active_events: ActiveEvents,
+     /// Whether or not the collider is enabled.
+     pub enabled: ColliderEnabled,
++    /// Colliders sharing a non-zero exclusion group never interact (a ragdoll's limbs, say):
++    /// as if their collision groups kept them apart, without a bit for each group.
++    pub exclusion_group: u32,
++}
++
++impl ColliderFlags {
++    /// Do these colliders share an exclusion group (see [`Self::exclusion_group`])?
++    #[inline]
++    pub fn excluded(&self, other: &ColliderFlags) -> bool {
++        self.exclusion_group != 0 && self.exclusion_group == other.exclusion_group
++    }
+ }
+ 
+ impl Default for ColliderFlags {
+@@ -404,6 +415,7 @@ impl Default for ColliderFlags {
+             active_hooks: ActiveHooks::empty(),
+             active_events: ActiveEvents::empty(),
+             enabled: ColliderEnabled::Enabled,
++            exclusion_group: 0,
+         }
+     }
+ }
+diff --git a/src/geometry/collider_set.rs b/src/geometry/collider_set.rs
+index e83d6bbe..61274ae1 100644
+--- a/src/geometry/collider_set.rs
++++ b/src/geometry/collider_set.rs
+@@ -503,6 +503,20 @@ impl ColliderSet {
+         Some(result)
+     }
+ 
++    /// Sets the user data of the collider with the given handle, without marking it as
++    /// modified as [`get_mut()`](Self::get_mut) would: user data never changes the simulation,
++    /// and a modified collider is looked at again by the broad phase. Returns `false` if there
++    /// is no such collider.
++    pub fn set_user_data(&mut self, handle: ColliderHandle, data: u128) -> bool {
++        match self.colliders.get_mut(handle.0) {
++            Some(co) => {
++                co.user_data = data;
++                true
++            }
++            None => false,
++        }
++    }
++
+     /// Gets mutable references to two different colliders at once.
+     ///
+     /// Useful when you need to modify two colliders simultaneously. If both handles
+diff --git a/src/geometry/narrow_phase/intersections.rs b/src/geometry/narrow_phase/intersections.rs
+index eb7ec59d..7aa9754e 100644
+--- a/src/geometry/narrow_phase/intersections.rs
++++ b/src/geometry/narrow_phase/intersections.rs
+@@ -101,7 +101,9 @@ impl NarrowPhase {
+                 }
+ 
+                 // Filter based on collision groups.
+-                if !co1.flags.collision_groups.test(co2.flags.collision_groups) {
++                if !co1.flags.collision_groups.test(co2.flags.collision_groups)
++                    || co1.flags.excluded(&co2.flags)
++                {
+                     edge.weight.intersecting = false;
+                     break 'emit_events;
+                 }
+diff --git a/src/geometry/narrow_phase/mod.rs b/src/geometry/narrow_phase/mod.rs
+index f2fcc565..d0156022 100644
+--- a/src/geometry/narrow_phase/mod.rs
++++ b/src/geometry/narrow_phase/mod.rs
+@@ -26,6 +26,7 @@ use crate::geometry::{
+ };
+ use alloc::sync::Arc;
+ use parry::query::{DefaultQueryDispatcher, PersistentQueryDispatcher};
++use parry::utils::hashset::HashSet;
+ 
+ #[cfg_attr(feature = "serde-serialize", derive(Serialize, Deserialize))]
+ #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+@@ -158,6 +159,13 @@ fn assign_pair_solver_color(
+     pair.solver_color_bodies = bodies;
+ }
+ 
++/// A collider pair's key in [`NarrowPhase::contact_pair_keys`]: their arena indices, either way round.
++fn pair_key(a: ColliderHandle, b: ColliderHandle) -> u64 {
++    let (a, b) = (a.into_raw_parts().0, b.into_raw_parts().0);
++    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
++    ((hi as u64) << 32) | lo as u64
++}
++
+ /// Releases the solver graph color held by a contact pair (no-op if it holds none).
+ fn clear_pair_solver_color(masks: &mut [u128], pair: &mut ContactPair) {
+     use crate::geometry::contact_pair::{SOLVER_COLOR_OVERFLOW, SOLVER_COLOR_UNCOLORED};
+@@ -334,6 +342,11 @@ pub struct NarrowPhase {
+     contact_graph: InteractionGraph<ColliderHandle, ContactPair>,
+     intersection_graph: InteractionGraph<ColliderHandle, IntersectionPair>,
+     graph_indices: Coarena<ColliderGraphIndices>,
++    /// The contact graph's pairs (see [`pair_key`]): whether a pair the broad-phase reports
++    /// has an edge already, without walking one of its colliders' edge lists (the floor's,
++    /// or a big body's, run to hundreds). Rebuilt when it doesn't count as many as the edges.
++    #[cfg_attr(feature = "serde-serialize", serde(skip))]
++    contact_pair_keys: HashSet<u64>,
+     /// Workspace buffer holding the edge indices of pairs to process during a step, so
+     /// the per-step loops don’t have to iterate on the whole interaction graphs.
+     #[cfg_attr(feature = "serde-serialize", serde(skip))]
+@@ -434,6 +447,7 @@ impl NarrowPhase {
+             contact_graph: InteractionGraph::new(),
+             intersection_graph: InteractionGraph::new(),
+             graph_indices: Coarena::new(),
++            contact_pair_keys: HashSet::default(),
+             update_candidates: Vec::new(),
+             retired_pairs: Vec::new(),
+             body_solver_color_masks: Vec::new(),
+diff --git a/src/geometry/narrow_phase/pair_management.rs b/src/geometry/narrow_phase/pair_management.rs
+index 2eb99b28..0d733e96 100644
+--- a/src/geometry/narrow_phase/pair_management.rs
++++ b/src/geometry/narrow_phase/pair_management.rs
+@@ -4,7 +4,7 @@
+ 
+ use super::{
+     ColliderGraphIndices, NarrowPhase, PairRemovalMode, assign_pair_solver_color,
+-    clear_pair_solver_color,
++    clear_pair_solver_color, pair_key,
+ };
+ use crate::alloc_prelude::*;
+ use crate::dynamics::solver::solver_contact_graph::GraphPos;
+@@ -164,6 +164,15 @@ impl NarrowPhase {
+         // mirrored through node removal), so both must be rebuilt from scratch next step.
+         self.solver_graph_valid = false;
+         self.force_list_valid = false;
++        // The removed pairs give their solver colors back: left set in the bodies' masks, they
++        // would push every later contact of those bodies (and of bodies reusing their arena
++        // slots) to higher colors and into the sequential overflow.
++        let masks = &mut self.body_solver_color_masks;
++        let keys = &mut self.contact_pair_keys;
++        for (_, _, _, pair) in self.contact_graph.interactions_with_mut(contact_graph_id) {
++            clear_pair_solver_color(masks, pair);
++            keys.remove(&pair_key(pair.collider1, pair.collider2));
++        }
+         let pair_solver_hints = &mut self.pair_solver_hints;
+         // Persistent islands can't be rebuilt lazily like the tables above:
+         // unlink each removed edge and mirror each swap-remove exactly.
+@@ -544,6 +553,8 @@ impl NarrowPhase {
+                     // Also wake up the dynamic bodies that were in contact.
+                     if let Some(mut ctct) = contact_pair {
+                         clear_pair_solver_color(&mut self.body_solver_color_masks, &mut ctct);
++                        self.contact_pair_keys
++                            .remove(&pair_key(ctct.collider1, ctct.collider2));
+ 
+                         if ctct.has_any_active_contact() {
+                             if let Some(islands) = islands {
+@@ -627,11 +638,16 @@ impl NarrowPhase {
+                     gid2.contact_graph_index = self.contact_graph.graph.add_node(pair.collider2);
+                 }
+ 
++                if self.contact_pair_keys.len() != self.contact_graph.graph.edges.len() {
++                    let keys = &mut self.contact_pair_keys;
++                    keys.clear();
++                    for e in &self.contact_graph.graph.edges {
++                        keys.insert(pair_key(e.weight.collider1, e.weight.collider2));
++                    }
++                }
+                 if self
+-                    .contact_graph
+-                    .graph
+-                    .find_edge(gid1.contact_graph_index, gid2.contact_graph_index)
+-                    .is_none()
++                    .contact_pair_keys
++                    .insert(pair_key(pair.collider1, pair.collider2))
+                 {
+                     let interaction = if let Some(mut retired) = self.retired_pairs.pop() {
+                         retired.reset_for_reuse(pair.collider1, pair.collider2);
+diff --git a/src/geometry/narrow_phase/pair_update.rs b/src/geometry/narrow_phase/pair_update.rs
+index f4cc5de4..e9f42ba9 100644
+--- a/src/geometry/narrow_phase/pair_update.rs
++++ b/src/geometry/narrow_phase/pair_update.rs
+@@ -272,7 +272,9 @@ pub(super) fn process_pair(
+         }
+ 
+         // Filter based on collision groups.
+-        if !co1.flags.collision_groups.test(co2.flags.collision_groups) {
++        if !co1.flags.collision_groups.test(co2.flags.collision_groups)
++            || co1.flags.excluded(&co2.flags)
++        {
+             if clear_filtered_pair(pair) {
+                 outcome = OUTCOME_CLEARED_IN_GRAPH;
+             }
+diff --git a/src/pipeline/physics_pipeline/mod.rs b/src/pipeline/physics_pipeline/mod.rs
+index a6f3cfae..c4b3aa5b 100644
+--- a/src/pipeline/physics_pipeline/mod.rs
++++ b/src/pipeline/physics_pipeline/mod.rs
+@@ -136,7 +136,22 @@ impl PhysicsPipeline {
+     fn join_deferred_bvh_optimize(&mut self, broad_phase: &mut BroadPhaseBvh) {
+         #[cfg(feature = "parallel")]
+         if let Some(rx) = self.deferred_bvh.get_mut().unwrap().take() {
+-            let task = rx.recv().expect("the deferred BVH optimization task died");
++            // Never blocking: the thread stepping may be a web page's own, which mustn't (a
++            // blocking wait there throws). It works on what the pool has queued meanwhile,
++            // which may be that very task.
++            let task = loop {
++                match rx.try_recv() {
++                    Ok(task) => break task,
++                    Err(std::sync::mpsc::TryRecvError::Empty) => {
++                        if rayon::yield_now() != Some(rayon::Yield::Executed) {
++                            core::hint::spin_loop();
++                        }
++                    }
++                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
++                        panic!("the deferred BVH optimization task died")
++                    }
++                }
++            };
+             broad_phase.finish_deferred_optimize(task);
+             return;
+         }

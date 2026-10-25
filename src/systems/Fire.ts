@@ -276,7 +276,7 @@ export class Fire {
     // whatever touches it or is very close: a box round its sprite, a little bigger
     const o = p.spriteOffset;
     const c = p.localToWorld(o.x * PX * p.flip, o.y * PX);
-    const a = p.body.rotation();
+    const a = p.bodyAngle;
     const hx = (p.w * PX) / 2 + REACH;
     const hy = (p.h * PX) / 2 + REACH;
     const seen = this.seen;

@@ -1,6 +1,7 @@
 import type RAPIER from '@dimforge/rapier2d-compat';
 import { PX } from '../engine/constants';
 import { wrapAngle } from '../engine/math';
+import { handleIndex } from '../engine/Physics';
 import type { Game } from '../world/Game';
 import type { Entity } from '../world/Entity';
 import type { Part } from '../world/Part';
@@ -49,7 +50,7 @@ export function restCheck(entities: Entity[]): void {
     const mass = parts.length > 1 ? parts.reduce((m, p) => m + p.mass, 0) : 0;
     for (let i = 0; i < parts.length && slow; i++) {
       const p = parts[i];
-      if (!p.body.isSleeping()) awake = true;
+      if (!awake && !p.body.isSleeping()) awake = true;
       const v = Math.hypot(p.vx, p.vy);
       if (v > SLOW_SPEED) slow = false;
       if (v > REST_SPEED) still = false;
@@ -78,34 +79,25 @@ export function restCheck(entities: Entity[]): void {
  * around it is asleep, fixed, or resting too.
  */
 export function settle(game: Game, entities: Entity[]): void {
-  const world = game.physics.world;
-  const group = calmGroup(game, entities.filter((e) => e.atRest && !e.destroyed));
+  const resting = entities.filter((e) => e.atRest && !e.destroyed);
+  if (!resting.length) return;
+  const links = linksOf(game);
+  const group = calmGroup(game, resting, links);
   if (!group.length) return;
-  // separate heaps sleep (and wake) separately
-  const owner = new Map<number, number>();
-  group.forEach((e, i) => {
-    for (const p of e.parts) if (!p.destroyed) owner.set(p.body.handle, i);
-  });
+  // separate heaps sleep (and wake) separately: whatever of them is near (touching or not) or jointed
+  const owner = byBody(group, false);
+  const own = byBody(group, true);
   const root = group.map((_, i) => i);
   const find = (i: number): number => (root[i] === i ? i : (root[i] = find(root[i])));
-  const join = (i: number, h: number | undefined) => {
-    if (h !== undefined) root[find(i)] = find(h);
+  const join = (i: number, j: number) => {
+    if (i >= 0 && j >= 0) root[find(i)] = find(j);
   };
-  group.forEach((e, i) => {
-    for (const p of e.parts) {
-      if (p.destroyed || p.frozen) continue;
-      for (const c of p.colliders) {
-        world.contactPairsWith(c, (o) => {
-          const b = o.parent();
-          if (b) join(i, owner.get(b.handle));
-        });
-      }
-      world.impulseJoints.forEachJointHandleAttachedToRigidBody(p.body.handle, (h) => {
-        const j = world.impulseJoints.get(h);
-        if (j) join(i, owner.get((j.body1().handle === p.body.handle ? j.body2() : j.body1()).handle));
-      });
+  for (const pairs of [links.contacts, links.joints]) {
+    for (let k = 0; k < pairs.length; k += 3) {
+      join(memberAt(own, pairs[k]), memberAt(owner, pairs[k + 1]));
+      join(memberAt(own, pairs[k + 1]), memberAt(owner, pairs[k]));
     }
-  });
+  }
   const heaps = new Map<number, Part[]>();
   group.forEach((e, i) => {
     const r = find(i);
@@ -123,49 +115,76 @@ export function settle(game: Game, entities: Entity[]): void {
 }
 
 /**
- * Of a group of entities at rest, those that can sleep: touching or jointed to
- * nothing still moving, nor to anyone dropped for that, and so on. Who touches
- * whom is looked up once.
+ * Who is near whom and what's jointed to what, as Rapier has it now: three numbers
+ * a pair, two bodies' handles and flags (TOUCH, STILL1, STILL2: see
+ * World.contactBodyPairs() and jointBodyPairs()). One call each, not a few for each
+ * collider of everyone at rest: in a heap of a hundred people, a frame's worth.
  */
-export function calmGroup(game: Game, group: Entity[]): Entity[] {
+interface Links {
+  contacts: Float64Array;
+  joints: Float64Array;
+}
+
+/** The pair's colliders touch; its first body is fixed or asleep; its second is. */
+const TOUCH = 1;
+const STILL1 = 2;
+const STILL2 = 4;
+
+function linksOf(game: Game): Links {
   const world = game.physics.world;
-  const member = new Map<number, number>();
+  return { contacts: world.contactBodyPairs(), joints: world.jointBodyPairs() };
+}
+
+/** By its body's index (see handleIndex()), the member each part of a group is, + 1 (0: none); only the parts that move, if `moving`. */
+function byBody(group: Entity[], moving: boolean): Int32Array {
+  let n = 0;
+  for (const e of group) for (const p of e.parts) if (!p.destroyed) n = Math.max(n, handleIndex(p.body.handle) + 1);
+  const of = new Int32Array(n);
   group.forEach((e, i) => {
-    for (const p of e.parts) if (!p.destroyed) member.set(p.body.handle, i);
+    for (const p of e.parts) if (!p.destroyed && !(moving && p.frozen)) of[handleIndex(p.body.handle)] = i + 1;
   });
+  return of;
+}
+
+/** The member a body is part of (see byBody()), -1 for none. */
+function memberAt(of: Int32Array, body: number): number {
+  const k = handleIndex(body);
+  return k < of.length ? of[k] - 1 : -1;
+}
+
+/**
+ * Of a group of entities at rest, those that can sleep: touching or jointed to
+ * nothing still moving, nor to anyone dropped for that, and so on.
+ */
+export function calmGroup(game: Game, group: Entity[], links = linksOf(game)): Entity[] {
+  const member = byBody(group, false);
+  const own = byBody(group, true);
   const dropped = group.map(() => false);
   /** The members whose bodies touch each one (only awake ones count). */
   const touchedBy: number[][] = group.map(() => []);
-  const still = (b: RAPIER.RigidBody) => b.isFixed() || b.isSleeping();
   const queue: number[] = [];
-  const meet = (i: number, b: RAPIER.RigidBody | null) => {
-    if (!b || dropped[i]) return;
-    const j = member.get(b.handle);
-    if (j === i || still(b)) return;
-    if (j === undefined) {
+  // member i (-1: none) touches or is jointed to `body`: unless that's fixed or asleep, i is dropped, or will be with whoever it's part of
+  const meet = (i: number, body: number, still: boolean) => {
+    if (i < 0 || still || dropped[i]) return;
+    const j = memberAt(member, body);
+    if (j === i) return;
+    if (j < 0) {
       dropped[i] = true;
       queue.push(i);
     } else touchedBy[j].push(i);
   };
-  group.forEach((e, i) => {
-    for (const p of e.parts) {
-      if (dropped[i]) break;
-      if (p.destroyed || p.frozen) continue;
-      for (const c of p.colliders) {
-        world.contactPairsWith(c, (other) => {
-          const b = other.parent();
-          if (dropped[i] || !b || member.get(b.handle) === i || still(b)) return;
-          world.contactPair(c, other, (m) => {
-            if (m.numContacts() > 0) meet(i, b);
-          });
-        });
-      }
-      world.impulseJoints.forEachJointHandleAttachedToRigidBody(p.body.handle, (h) => {
-        const j = world.impulseJoints.get(h);
-        if (j) meet(i, j.body1().handle === p.body.handle ? j.body2() : j.body1());
-      });
-    }
-  });
+  const { contacts, joints } = links;
+  for (let k = 0; k < contacts.length; k += 3) {
+    const f = contacts[k + 2];
+    if (!(f & TOUCH)) continue;
+    meet(memberAt(own, contacts[k]), contacts[k + 1], (f & STILL2) !== 0);
+    meet(memberAt(own, contacts[k + 1]), contacts[k], (f & STILL1) !== 0);
+  }
+  for (let k = 0; k < joints.length; k += 3) {
+    const f = joints[k + 2];
+    meet(memberAt(own, joints[k]), joints[k + 1], (f & STILL2) !== 0);
+    meet(memberAt(own, joints[k + 1]), joints[k], (f & STILL1) !== 0);
+  }
   while (queue.length) {
     for (const i of touchedBy[queue.pop()!]) {
       if (dropped[i]) continue;

@@ -37,23 +37,19 @@ interface Box {
 }
 
 /**
- * Keeps an entity's own parts apart with collision groups rather than the
- * contact-filter hook wherever it can.
+ * Keeps the parts of things welded together apart with collision groups rather
+ * than the contact-filter hook wherever it can.
  *
- * Rapier asks the hook (see Physics) about every pair of nearby colliders where
- * either has it, and each call crosses from WebAssembly into JS: a heap of 100
- * people makes 12 000 calls a step. Most only keep one entity's parts apart
- * (Part.group), which collision groups can do inside Rapier given a bit per
- * entity. There are 11 bits to spare, so they're handed out as colors that no two
- * entities within reach of each other share; a colored entity's parts leave their
- * own color out and need the hook no more (unless a part has pairs of its own to
- * skip, Part.noCollide), nor do parts on their own. Entities in a crowd too dense
- * for a free color stay plain, with the hook, as before. The same contacts come out.
- *
- * Things welded together (a rigid unit, see Arrange.rigidUnitsOf()) are colored
- * as one: none of their parts touch each other, welded to each other directly
- * or not, and their welds' pairs need no hook either (a contraption of fifty
- * welded planks made 2 500 calls a step).
+ * An entity's own parts (Part.group) Rapier keeps apart itself, before it even
+ * looks at them as a pair (see Part.setContactFilter()). Things welded together
+ * (a rigid unit, see Arrange.rigidUnitsOf()) are several entities, and the hook
+ * would be asked about every pair of their parts. Collision groups do that inside
+ * Rapier given a bit per unit: there are 11 bits to spare, so they're handed out
+ * as colors that no two units within reach of each other share. A colored unit's
+ * parts leave their own color out, so none of them touch each other, welded to
+ * each other directly or not, and their welds' pairs need no hook (a contraption
+ * of fifty welded planks made 2 500 calls a step). Units in a crowd too dense for
+ * a free color stay plain, with the hook. The same contacts come out.
  *
  * Parts without the hook get a hook that is never called instead (NO_CALLS):
  * Rapier reuses the contacts of a pair that has barely moved (by up to 5 cm)
@@ -65,7 +61,7 @@ export class ContactGroups {
   /** Off: every part plain (for comparisons). */
   enabled = true;
   private colorOf = new Map<number, number>();
-  private byGroup = new Map<number, Part[]>();
+  private byUnit = new Map<number, Part[]>();
   /** The rigid units, by part (from 1), as the connections were at `unitsAt` (their version). */
   private units = new Map<Part, number>();
   private unitsAt = -1;
@@ -103,8 +99,8 @@ export class ContactGroups {
 
   /** Runs just before each physics step, after anything that moves or regroups parts. */
   update(): void {
-    const byGroup = this.byGroup;
-    byGroup.clear();
+    const byUnit = this.byUnit;
+    byUnit.clear();
     this.refreshUnits();
     const units = this.units;
     for (const e of this.game.entities) {
@@ -112,23 +108,22 @@ export class ContactGroups {
       for (const p of e.parts) {
         // parts in no-collide mode only touch the floor and walls
         if (p.destroyed || p.noCollideAll || p.onlyStatic) continue;
-        // (a rigid unit's parts are kept apart as one thing's: negative ids, apart from Part.group's)
+        // (a rigid unit's parts are kept apart as one thing's)
         const u = units.get(p);
-        const id = u !== undefined ? -u : p.group;
         if (!this.enabled) set(p, GROUPS_DYNAMIC, HOOK);
-        else if (id === 0) set(p, GROUPS_DYNAMIC, hookFor(p));
+        else if (u === undefined) set(p, GROUPS_DYNAMIC, hookFor(p));
         else {
-          let list = byGroup.get(id);
-          if (!list) byGroup.set(id, (list = []));
+          let list = byUnit.get(u);
+          if (!list) byUnit.set(u, (list = []));
           list.push(p);
         }
       }
     }
-    // the bounds of each entity with parts to keep apart, where Rapier has them now
+    // the bounds of each unit, where Rapier has them now
     // and wherever they may go this step (CCD sweeps them there, groups and all)
     const dt = this.game.stepDt;
     const boxes: Box[] = [];
-    for (const [id, parts] of byGroup) {
+    for (const [id, parts] of byUnit) {
       if (parts.length < 2) {
         set(parts[0], GROUPS_DYNAMIC, hookFor(parts[0]));
         continue;
@@ -149,7 +144,7 @@ export class ContactGroups {
       }
       boxes.push({ id, parts, x0, x1, y0, y1, color: this.colorOf.get(id) ?? -1, near: [] });
     }
-    for (const id of this.colorOf.keys()) if ((byGroup.get(id)?.length ?? 0) < 2) this.colorOf.delete(id);
+    for (const id of this.colorOf.keys()) if ((byUnit.get(id)?.length ?? 0) < 2) this.colorOf.delete(id);
     boxes.sort((a, b) => a.x0 - b.x0);
     for (let i = 0; i < boxes.length; i++) {
       const a = boxes[i];
@@ -178,10 +173,10 @@ export class ContactGroups {
     for (const b of boxes) {
       if (b.color >= 0) this.colorOf.set(b.id, b.color);
       else this.colorOf.delete(b.id);
-      const own = b.id < 0 ? new Set(b.parts) : null;
+      const unit = new Set(b.parts);
       for (const p of b.parts) {
         if (b.color < 0) set(p, GROUPS_DYNAMIC, HOOK);
-        else set(p, COLORED[b.color], own ? hookOutside(p, own) : hookFor(p));
+        else set(p, COLORED[b.color], hookOutside(p, unit));
       }
     }
   }

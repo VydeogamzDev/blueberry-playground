@@ -244,7 +244,7 @@ export class Rocket extends Entity {
   /** Sends it off at (vx, vy) with its motor lit, passing through `own` (the launcher and its holder) and going off with `blast`. */
   launch(own: Part[], vx: number, vy: number, blast: ExplosionOpts): void {
     const p = this.main;
-    p.noCollide = new Set(own);
+    p.setNoCollide(own);
     p.body.setLinvel({ x: vx, y: vy }, true);
     p.body.setGravityScale(BURN_GRAVITY, true);
     this.blast = blast;
@@ -264,10 +264,11 @@ export class Rocket extends Entity {
       return;
     }
     // clear of what fired it, it can come down on it like on anything else
-    if (p.noCollide && (!this.start || this.age > 1.5 || Math.hypot(p.x - this.start.x, p.y - this.start.y) > CLEAR)) p.noCollide = null;
+    if (p.noCollide && (!this.start || this.age > 1.5 || Math.hypot(p.x - this.start.x, p.y - this.start.y) > CLEAR)) p.setNoCollide(null);
     const v = p.body.linvel();
     if (v.x * v.x + v.y * v.y > 1) {
       p.body.setRotation(Math.atan2(v.y * p.flip, v.x * p.flip), false);
+      p.moved();
       p.body.setAngvel(0, false);
     }
     if (this.burn > 0) {

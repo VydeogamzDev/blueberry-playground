@@ -272,7 +272,7 @@ export class Bolt extends Prop {
   /** Sends it off at (vx, vy), passing through `own` (the crossbow and whoever holds it), sinking in with `power`. */
   launch(own: Part[], vx: number, vy: number, power: number): void {
     const p = this.main;
-    p.noCollide = new Set(own);
+    p.setNoCollide(own);
     p.body.setLinvel({ x: vx, y: vy }, true);
     p.body.setAngvel(0, true);
     this.power = power;
@@ -299,7 +299,7 @@ export class Bolt extends Prop {
     if (this.state !== 'flying') return;
     const p = this.main;
     this.age += dt;
-    if (p.noCollide && (!this.start || this.age > 0.5 || Math.hypot(p.x - this.start.x, p.y - this.start.y) > CLEAR)) p.noCollide = null;
+    if (p.noCollide && (!this.start || this.age > 0.5 || Math.hypot(p.x - this.start.x, p.y - this.start.y) > CLEAR)) p.setNoCollide(null);
     const v = p.body.linvel();
     const speed = Math.hypot(v.x, v.y);
     if (speed < SPENT_SPEED || this.age > MAX_FLIGHT) {
@@ -308,6 +308,7 @@ export class Bolt extends Prop {
     }
     // nose first, the fletching keeping it so
     p.body.setRotation(Math.atan2(v.y * p.flip, v.x * p.flip), false);
+    p.moved();
     p.body.setAngvel(0, false);
     this.look(speed * dt);
   }
@@ -402,6 +403,7 @@ export class Bolt extends Prop {
     const tip = p.pixelToWorld(BOLT_W - 1, 1);
     const t = p.body.translation();
     p.body.setTranslation({ x: t.x + at.x + f.x * depth - tip.x, y: t.y + at.y + f.y * depth - tip.y }, true);
+    p.moved();
     p.body.setLinvel(q.frozen ? STILL : q.velocityAt(at.x, at.y), true);
     p.body.setAngvel(q.frozen ? 0 : q.body.angvel(), true);
     this.stick(q, depth);
@@ -436,7 +438,7 @@ export class Bolt extends Prop {
     const data = RAPIER.JointData.fixed(q.worldToLocal(c.x, c.y), 0, { x: 0, y: 0 }, q.body.rotation() - p.body.rotation());
     this.joint = this.game.physics.world.createImpulseJoint(data, q.body, p.body, true);
     this.joint.setContactsEnabled(false);
-    p.noCollide = null;
+    p.setNoCollide(null);
     // (left out of the contact groups' sorting: see ContactGroups)
     p.onlyStatic = true;
     p.contactGroups = NO_CONTACTS;
@@ -468,7 +470,7 @@ export class Bolt extends Prop {
       if (q.mat.bleeds) this.game.particles.blood(t.x, t.y, -f.x, -f.y, 6, 2, q.body);
       this.game.sound.squish(0.4, t.x);
     }
-    (p.noCollide ??= new Set()).add(q);
+    p.noCollideWith(q);
     this.freed = q;
     this.freeT = 0.3;
   }
@@ -491,7 +493,7 @@ export class Bolt extends Prop {
     this.freeT -= dt;
     if (this.freeT > 0) return;
     if (this.freed.destroyed || !this.game.physics.overlaps(this.main, this.freed)) {
-      this.main.noCollide?.delete(this.freed);
+      this.main.collideWith(this.freed);
       this.freed = null;
     } else this.freeT = 0.1;
   }

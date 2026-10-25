@@ -3,6 +3,7 @@ import { RAPIER } from '../engine/Physics';
 import { PixelArt, CLEAR } from '../art/PixelArt';
 import { MAT, type PhysMaterial } from '../world/Materials';
 import { clamp, type V2 } from '../engine/math';
+import { PX } from '../engine/constants';
 import { toBase64, fromBase64 } from '../engine/base64';
 import type { Entity } from '../world/Entity';
 import type { Part, ShapeSpec } from '../world/Part';
@@ -27,8 +28,13 @@ const PLATE: PhysMaterial = { ...MAT.robot, name: 'Plating' };
 /** The biggest piece kept whole (px a side): a body's parts are well within it. */
 const MAX_SIDE = 48;
 
+/** The pixels of the configs made by goreConfig(), which only read them out of base64 for a save. */
+const artOfConfig = new WeakMap<object, PixelArt>();
+
 /** A config from a save or a paste, made safe: a known kind, a size within limits, pixels to match (a scrap of flesh if not). */
 export function readGoreConfig(c: EntityConfig | undefined): GoreConfig {
+  // (one made here is safe as it is)
+  if (c && artOfConfig.has(c)) return c as GoreConfig;
   const kind: GoreKind = c?.kind === 'plating' ? 'plating' : 'flesh';
   const w = Math.round(Number(c?.w));
   const h = Math.round(Number(c?.h));
@@ -44,52 +50,86 @@ export function readGoreConfig(c: EntityConfig | undefined): GoreConfig {
   return goreConfig(art, kind);
 }
 
-/** The config for a piece with these pixels. */
+/**
+ * The config for a piece with these pixels (which mustn't change after): its base64 made
+ * when it's first read, for a save or a copy (a blast tears off dozens of pieces at once).
+ */
 export function goreConfig(art: PixelArt, kind: GoreKind): GoreConfig {
-  const b = new Uint8Array(art.w * art.h * 4);
-  for (let i = 0; i < art.px.length; i++) {
-    const c = art.px[i];
-    if (c === CLEAR) continue;
-    b[i * 4] = (c >> 16) & 255;
-    b[i * 4 + 1] = (c >> 8) & 255;
-    b[i * 4 + 2] = c & 255;
-    b[i * 4 + 3] = 255;
-  }
-  return { w: art.w, h: art.h, px: toBase64(b), kind };
+  let px: string | undefined;
+  const cfg: GoreConfig = {
+    w: art.w,
+    h: art.h,
+    get px() {
+      if (px === undefined) {
+        const b = new Uint8Array(art.w * art.h * 4);
+        for (let i = 0; i < art.px.length; i++) {
+          const c = art.px[i];
+          if (c === CLEAR) continue;
+          b[i * 4] = (c >> 16) & 255;
+          b[i * 4 + 1] = (c >> 8) & 255;
+          b[i * 4 + 2] = c & 255;
+          b[i * 4 + 3] = 255;
+        }
+        px = toBase64(b);
+      }
+      return px;
+    },
+    kind,
+  };
+  artOfConfig.set(cfg, art);
+  return cfg;
 }
 
 function artOf(cfg: GoreConfig): PixelArt {
+  const made = artOfConfig.get(cfg);
+  if (made) return made;
   const a = new PixelArt(cfg.w, cfg.h);
   const b = fromBase64(cfg.px);
   for (let i = 0; i < cfg.w * cfg.h; i++) if (b[i * 4 + 3]) a.px[i] = (b[i * 4] << 16) | (b[i * 4 + 1] << 8) | b[i * 4 + 2];
   return a;
 }
 
-/** Its collider: the convex hull of its pixels (from its middle, y up). */
-function hullOf(art: PixelArt): ShapeSpec {
-  const pts: [number, number][] = [];
+/** Its collider: the convex hull of its pixels (from its middle, y up), counter-clockwise. */
+function hullOf(art: PixelArt): ShapeSpec & { kind: 'poly' } {
+  // (of each row's first and last pixels' corners: those between are inside it)
+  // Each corner is one number, x then y (in half pixels, made positive), sorted by
+  // x then y as a typed array sorts numbers: pairs sorted with a comparison were a
+  // good share of a piece's making, and a blast makes dozens.
+  const keys: number[] = [];
+  const key = (x: number, y: number) => (x * 2 + 256) * 1024 + y * 2 + 256;
   for (let y = 0; y < art.h; y++) {
+    let x0 = -1;
+    let x1 = -1;
     for (let x = 0; x < art.w; x++) {
-      if (!art.filled(x, y)) continue;
-      const cx = x - art.w / 2;
-      const cy = art.h / 2 - y;
-      pts.push([cx, cy], [cx + 1, cy], [cx, cy - 1], [cx + 1, cy - 1]);
+      if (art.px[y * art.w + x] === CLEAR) continue;
+      if (x0 < 0) x0 = x;
+      x1 = x;
     }
+    if (x0 < 0) continue;
+    const cy = art.h / 2 - y;
+    for (const cx of x0 === x1 ? [x0 - art.w / 2] : [x0 - art.w / 2, x1 - art.w / 2]) keys.push(key(cx, cy), key(cx + 1, cy), key(cx, cy - 1), key(cx + 1, cy - 1));
   }
-  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const cross = (o: [number, number], a: [number, number], b: [number, number]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-  const lower: [number, number][] = [];
-  for (const p of pts) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
-    lower.push(p);
+  const sorted = Int32Array.from(keys).sort();
+  const n = sorted.length;
+  const xs = new Float64Array(n);
+  const ys = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    xs[i] = (Math.floor(sorted[i] / 1024) - 256) / 2;
+    ys[i] = ((sorted[i] % 1024) - 256) / 2;
   }
-  const upper: [number, number][] = [];
-  for (let i = pts.length - 1; i >= 0; i--) {
-    const p = pts[i];
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
-    upper.push(p);
+  // (corners by their place in xs and ys)
+  const cross = (o: number, a: number, b: number) => (xs[a] - xs[o]) * (ys[b] - ys[o]) - (ys[a] - ys[o]) * (xs[b] - xs[o]);
+  const lower: number[] = [];
+  for (let i = 0; i < n; i++) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], i) <= 0) lower.pop();
+    lower.push(i);
   }
-  return { kind: 'poly', pts: lower.slice(0, -1).concat(upper.slice(0, -1)) };
+  const upper: number[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], i) <= 0) upper.pop();
+    upper.push(i);
+  }
+  return { kind: 'poly', pts: lower.slice(0, -1).concat(upper.slice(0, -1)).map((i): [number, number] => [xs[i], ys[i]]) };
 }
 
 /** How long a fresh piece of flesh drips (s), and how fast at first (drops a second). */
@@ -135,6 +175,24 @@ export class Gore extends Prop {
   }
 
   /** Hangs `part` from it by a joint at `at` (world): it came off with it. */
+  /**
+   * Its collider's shape, at its body's origin, for a query (made from the hull it was
+   * made from: reading it back out of Rapier, which then works the hull out again, is slow).
+   */
+  hullShape(): RAPIER.ConvexPolygon {
+    const pts = hullOfConfig.get(this.config as GoreConfig)!;
+    const f = this.main.flip;
+    const n = pts.length;
+    const v = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      // (mirrored, it goes round the other way: taken backwards)
+      const p = pts[f === 1 ? i : n - 1 - i];
+      v[i * 2] = p[0] * PX * f;
+      v[i * 2 + 1] = p[1] * PX;
+    }
+    return new RAPIER.ConvexPolygon(v, true);
+  }
+
   hold(part: Part, at: V2): void {
     if (part.destroyed || this.main.destroyed) return;
     const a = this.main.worldToLocal(at.x, at.y);
@@ -145,10 +203,10 @@ export class Gore extends Prop {
   private join(part: Part, a: V2, b: V2): void {
     const j = this.addJoint(RAPIER.JointData.revolute(a, b), this.main, part) as RAPIER.RevoluteImpulseJoint;
     // (limp, as it hung: a little either way of how it lies now)
-    const rel = part.body.rotation() - this.main.body.rotation();
+    const rel = part.bodyAngle - this.main.bodyAngle;
     j.setLimits(rel - 0.6, rel + 0.6);
-    (this.main.noCollide ??= new Set()).add(part);
-    (part.noCollide ??= new Set()).add(this.main);
+    this.main.noCollideWith(part);
+    part.noCollideWith(this.main);
     this.holds.push({ part, joint: j, a, b });
   }
 
@@ -202,13 +260,18 @@ export class Gore extends Prop {
   }
 }
 
+/** Each piece's hull, as goreProp() made its collider from it (see Gore.hullShape()). */
+const hullOfConfig = new WeakMap<GoreConfig, [number, number][]>();
+
 function goreProp(cfg: GoreConfig): PropConfig {
   const art = artOf(cfg);
   const n = art.px.reduce((s, c) => s + (c !== CLEAR ? 1 : 0), 0);
+  const hull = hullOf(art);
+  hullOfConfig.set(cfg, hull.pts);
   return {
     art: () => art,
     material: cfg.kind === 'flesh' ? MAT.flesh : PLATE,
-    shapes: [hullOf(art)],
+    shapes: [hull],
     ownTexture: true,
     ccd: true,
     angularDamping: 0.6,

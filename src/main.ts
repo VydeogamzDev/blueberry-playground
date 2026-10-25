@@ -6,6 +6,7 @@ import '@fontsource/tiny5/latin-ext-400.css';
 import './style.css';
 import { initPhysics, RAPIER, rapierBuild } from './engine/Physics';
 import { Game } from './world/Game';
+import { rehearseCrush } from './world/Warmup';
 import { Controls, DRAG } from './tools/Controls';
 import { UI } from './ui/UI';
 import { registerAll } from './catalog/registry';
@@ -60,6 +61,14 @@ async function boot(): Promise<void> {
     game.unthrottled = desktop.uncapped;
     desktop.onDisplayHz((hz) => game.setDisplayHz(hz));
   }
+  // a crush rehearsed out of sight, so the player's first isn't the slowest (see world/Warmup; ?nowarm: not)
+  let warmMs = 0;
+  if (!new URLSearchParams(location.search).has('nowarm')) {
+    await loading('Warming up…', 0.84);
+    const t = performance.now();
+    await rehearseCrush(game, () => loading('Warming up…', 0.86));
+    warmMs = performance.now() - t;
+  }
   const controls = new Controls(game, canvas);
   const ui = new UI(game, controls, document.getElementById('ui')!);
   sync.loaded();
@@ -88,7 +97,7 @@ async function boot(): Promise<void> {
     return fn(...a);
   };
   // exposed for debugging and automated tests in the browser console
-  (window as unknown as { bp: unknown }).bp = { game, controls, ui, getItem, ITEMS, kit: makeTestKit(game, controls), selftest: makeSelfTest(game, controls), bench: inSandbox(makeBench(game, controls)), benchLive: inSandbox(makeLiveBench(game, controls)), mixcheck: makeMixCheck(game, controls), BALANCE, GAIT, RAPIER, rapierBuild, DRAG };
+  (window as unknown as { bp: unknown }).bp = { game, controls, ui, getItem, ITEMS, kit: makeTestKit(game, controls), selftest: makeSelfTest(game, controls), bench: inSandbox(makeBench(game, controls)), benchLive: inSandbox(makeLiveBench(game, controls)), mixcheck: makeMixCheck(game, controls), BALANCE, GAIT, RAPIER, rapierBuild, DRAG, warmMs, rehearse: () => rehearseCrush(game, async () => {}) };
   // (npm run desktop -- --smoke: the app checks itself and quits)
   if (desktop?.smoke) void desktopSmoke(desktop, game, ui, performance.now() - booted);
 }

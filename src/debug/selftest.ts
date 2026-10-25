@@ -818,9 +818,11 @@ export function makeSelfTest(game: Game, controls: Controls) {
       return true;
     }],
     ['extra: contact groups make the same contacts as the filter hook', () => {
-      // a heap of people and dogs, someone holding a rifle firing into it: before
-      // every step, each pair Rapier considers gets the verdict the hook alone would
-      // give, and entities sharing a color are out of each other's reach
+      // a heap of people and dogs, someone holding a rifle firing into it, and towers of
+      // crates welded into one beside it: before every step, each pair Rapier considers
+      // gets the verdict the hook alone would give, none is two of one thing's own parts
+      // (Rapier keeps those apart before it pairs them), and welded things sharing a color
+      // are out of each other's reach
       kit.reset();
       const world = game.physics.world;
       const allowed = (a: Part, b: Part) => !(a.group !== 0 && a.group === b.group) && !a.noCollide?.has(b) && !b.noCollide?.has(a);
@@ -828,6 +830,7 @@ export function makeSelfTest(game: Game, controls: Controls) {
       const color = (p: Part) => (p.contactGroups >>> 16) & ~0x1f;
       let wrong = '';
       let pairs = 0;
+      let own = 0;
       let shared = 0;
       const cg = game.contactGroups;
       const update = cg.update;
@@ -838,6 +841,7 @@ export function makeSelfTest(game: Game, controls: Controls) {
           const q = game.physics.partOf(o);
           if (!q || q === p) return;
           pairs++;
+          if (p.group !== 0 && p.group === q.group) own++;
           const hooked = ((c.activeHooks() | o.activeHooks()) & 1) !== 0;
           const now = passes(c.collisionGroups(), o.collisionGroups()) && (!hooked || allowed(p, q));
           if (now !== allowed(p, q)) wrong ||= `${p.entity.def.id} ${p.name} / ${q.entity.def.id} ${q.name}: ${now ? 'touch' : 'kept apart'}`;
@@ -846,7 +850,7 @@ export function makeSelfTest(game: Game, controls: Controls) {
         for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) {
           const a = parts[i];
           const b = parts[j];
-          if (a.group === b.group || !color(a) || color(a) !== color(b) || Math.hypot(a.x - b.x, a.y - b.y) > 3) continue;
+          if (cg.unitOf(a) === cg.unitOf(b) || !color(a) || color(a) !== color(b) || Math.hypot(a.x - b.x, a.y - b.y) > 3) continue;
           shared++;
           for (const c1 of a.colliders) for (const c2 of b.colliders) if (c1.contactCollider(c2, 0.05)) wrong ||= `${a.name} / ${b.name} share a color within reach`;
         }
@@ -854,6 +858,16 @@ export function makeSelfTest(game: Game, controls: Controls) {
       try {
         for (let i = 0; i < 4; i++) kit.spawn('human', -0.4 + (i % 2) * 0.5, 0.4 + i * 0.6, { angle: i * 1.3 });
         for (let i = 0; i < 2; i++) kit.spawn('dog', -0.2 + i * 0.4, 3.5 + i * 0.7);
+        // (2 m apart: out of each other's reach, they may share a color)
+        for (let t = 0; t < 5; t++) {
+          let below: Part | null = null;
+          for (let k = 0; k < 3; k++) {
+            const y = 0.45 + k * 0.9;
+            const p = kit.spawn('crate', 3 + t * 2, y).parts[0];
+            if (below) game.connections.create('weld', below, { x: below.x, y: y - 0.45 }, p, { x: p.x, y: y - 0.45 });
+            below = p;
+          }
+        }
         const shooter = human(-4);
         kit.advance(0.5);
         const g = arm(shooter);
@@ -866,6 +880,7 @@ export function makeSelfTest(game: Game, controls: Controls) {
         cg.update = update;
       }
       if (wrong) return wrong;
+      if (own) return `${own} pairs of one thing's own parts`;
       if (pairs < 1000 || shared < 100) return `checked too little: ${pairs} pairs, ${shared} same-color part pairs nearby`;
       return true;
     }],
@@ -2191,9 +2206,11 @@ export function makeSelfTest(game: Game, controls: Controls) {
     game.sound.setMuted(true);
     // the tests play in the sandbox: the main menu, up as the game starts, would keep their keys from it
     (controls.ui as unknown as { mainMenu?: { close(): void } }).mainMenu?.close();
+    // (several names: "a|b")
+    const wanted = (name: string) => !filter || filter.split('|').some((f) => name.includes(f));
     await kit.still(async () => {
       for (const [name, fn] of tests) {
-        if (filter && !name.includes(filter)) continue;
+        if (!wanted(name)) continue;
         // (each on the short step: one that ran the frame loop on a busy machine may have left the longer one)
         game.resetStep();
         const t0 = performance.now();
@@ -2209,7 +2226,7 @@ export function makeSelfTest(game: Game, controls: Controls) {
         if (r !== true && /unreachable|recursive use|memory access out of bounds/.test(r)) {
           game.halted = true;
           for (const [other] of tests) {
-            if (results.some((x) => x.name === other) || (filter && !other.includes(filter))) continue;
+            if (results.some((x) => x.name === other) || !wanted(other)) continue;
             results.push({ name: other, pass: false, detail: `not run: Rapier broke in "${name}"`, ms: 0 });
           }
           break;

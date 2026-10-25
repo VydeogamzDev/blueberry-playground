@@ -228,7 +228,7 @@ export class Shell extends Entity {
 
   /** Sends it off at (vx, vy), passing through whatever fired it. */
   launch(from: Entity, vx: number, vy: number): void {
-    this.main.noCollide = new Set(from.parts);
+    this.main.setNoCollide(from.parts);
     this.main.body.setLinvel({ x: vx, y: vy }, true);
   }
 
@@ -240,7 +240,7 @@ export class Shell extends Entity {
     const p = this.main;
     this.age += dt;
     // well clear of the barrel, it can come down on its own tank (fired straight up)
-    if (this.age > 0.4 && p.noCollide) p.noCollide = null;
+    if (this.age > 0.4 && p.noCollide) p.setNoCollide(null);
     if (this.age > 10) {
       this.detonate();
       return;
@@ -248,6 +248,7 @@ export class Shell extends Entity {
     const v = p.body.linvel();
     if (v.x * v.x + v.y * v.y > 1) {
       p.body.setRotation(Math.atan2(v.y * p.flip, v.x * p.flip), false);
+      p.moved();
       p.body.setAngvel(0, false);
     }
     if (Math.random() < 0.5) this.game.particles.smoke(p.x, p.y, 1, 0.12);

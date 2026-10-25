@@ -13,7 +13,7 @@ import { Human } from './Human';
 import { getItem } from '../catalog/items';
 import { ACID_SCAR, Liquid, LIQUID_COLORS, liquidSound, paintWound, seep, woundSpot } from '../systems/Liquids';
 import { PK } from '../systems/Particles';
-import { FLESH, breakUp, blastEnergy, sliceLimb, takeChunk } from '../systems/Chunks';
+import { FLESH, breakUp, blastEnergy, gibNow, sliceLimb, takeChunk } from '../systems/Chunks';
 import { isFighter, isLiving, land, onFeet, stillUp, type Fighter } from '../systems/Fighting';
 import { allies, dress, dye, enemies, isTeamId, nearestEnemy, undead, type TeamId } from '../systems/Teams';
 import { LUNGS } from '../systems/Fluid';
@@ -2106,7 +2106,7 @@ export class Creature extends Entity {
       const j = l.joint;
       if (!j || !j.isValid() || !l.parent) continue;
       if (on) {
-        const a = wrapAngle(l.part.body.rotation() - l.parent.part.body.rotation());
+        const a = wrapAngle(l.part.bodyAngle - l.parent.part.bodyAngle);
         j.setLimits(a - 0.01, a + 0.01);
       } else if (this.f === 1) j.setLimits(l.spec.lo!, l.spec.hi!);
       else j.setLimits(-l.spec.hi!, -l.spec.lo!);
@@ -2505,7 +2505,7 @@ export class Creature extends Entity {
       const sy = -Math.round(ld.y / len);
       for (let k = -2; k <= 2; k++) p.paintPixel(bx + sx * k, by + sy * k, k === 0 ? 0x3a0606 : 0x7d0e0e);
     } else paintWound(p, bx, by, rate, look === 'hole');
-    const local = rotate(ox, oy, -p.body.rotation());
+    const local = rotate(ox, oy, -p.bodyAngle);
     const ll = Math.hypot(local.x, local.y) || 1;
     if (l.wounds.length >= 8) {
       l.wounds[Math.floor(Math.random() * l.wounds.length)].rate += rate;
@@ -2531,7 +2531,7 @@ export class Creature extends Entity {
         if (this.game.particles.bloodEnabled) seep(p, w, dt);
         if (Math.random() < w.rate * pulse * dt * (w.spurt ? 26 : 12)) {
           const wp = p.pixelToWorld(w.ix, w.iy);
-          const d = rotate(w.dx, w.dy, p.body.rotation());
+          const d = rotate(w.dx, w.dy, p.bodyAngle);
           const sp = w.spurt ? 1.2 + w.rate * 0.9 * pulse : 0.15 + Math.random() * 0.3;
           this.game.particles.blood(wp.x, wp.y, d.x, d.y, w.spurt ? 2 : 1, sp, p.body);
         }
@@ -2554,8 +2554,8 @@ export class Creature extends Entity {
       x.children.forEach(mark);
     };
     mark(l);
-    (l.part.noCollide ??= new Set()).add(l.parent.part);
-    (l.parent.part.noCollide ??= new Set()).add(l.part);
+    l.part.noCollideWith(l.parent.part);
+    l.parent.part.noCollideWith(l.part);
     const pj = l.parent.part.localToWorld(l.a1.x, l.a1.y);
     const cj = l.part.localToWorld(l.a2.x, l.a2.y);
     this.stump(l.parent, pj, 2, true);
@@ -2587,6 +2587,11 @@ export class Creature extends Entity {
   /** Blows a limb apart into pieces (see Human.gib()), flung `dir` if given. */
   gib(l: Limb, dir?: V2): void {
     if (l.gone) return;
+    // (a few at once wait their turn: see Chunks.gibNow())
+    const later = () => {
+      if (!this.destroyed) this.gib(l, dir);
+    };
+    if (!gibNow(this.game, l, later)) return;
     const p = l.part;
     const hung = l.children.filter((c) => !c.severed && !c.gone);
     for (const c of hung) this.sever(c, 'blast');

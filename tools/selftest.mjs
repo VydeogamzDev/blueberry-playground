@@ -2,9 +2,11 @@
  * Runs the in-game self-tests headlessly and exits non-zero if any fail:
  *
  *   npm test                 every test
- *   npm test -- liquids      only tests whose name contains "liquids"
+ *   npm test -- liquids      only tests whose name contains "liquids" ("a|b": either)
  *   SEED=7 npm test          with Math.random seeded, to replay a failure
  *   npm test -- --nosimd     on the plain build of Rapier (browsers without WebAssembly SIMD)
+ *   npm test -- --threads=0  on Rapier's SIMD build stepping on this thread alone (=N: on N
+ *                            worker threads; by default as many as the game picks)
  *   npm test -- --standalone on the one-file page instead (build it first: npm run standalone)
  *   npm run bench            time crowded scenes instead (npm run bench -- pile: one scene)
  *   npm run bench -- --live  run 100 people in real time on the graphics card, frames held to
@@ -25,7 +27,8 @@ const hz = Number(args.find((a) => a.startsWith('--hz='))?.slice(5) ?? 60);
 const mixMode = args.includes('--mix');
 const wavMode = args.includes('--wav');
 const filter = args.find((a) => !a.startsWith('--')) ?? '';
-const query = args.includes('--nosimd') ? 'nosimd' : undefined;
+const threads = args.find((a) => a.startsWith('--threads='))?.slice(10);
+const query = [args.includes('--nosimd') && 'nosimd', threads !== undefined && `threads=${threads}`].filter(Boolean).join('&') || undefined;
 const file = args.includes('--standalone') ? 'dist-standalone/Blueberry Playground.html' : undefined;
 const seed = process.env.SEED ? Number(process.env.SEED) >>> 0 : null;
 

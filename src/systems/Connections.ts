@@ -363,16 +363,16 @@ export class Connections {
     let ignored: [Part, Part][] | undefined;
     if (joint && b && kind !== 'spring' && kind !== 'rope' && kind !== 'fuse' && !opts?.collide) {
       // stop the two parts from fighting each other through contacts
-      (a.noCollide ??= new Set()).add(b);
-      (b.noCollide ??= new Set()).add(a);
+      a.noCollideWith(b);
+      b.noCollideWith(a);
       // things fixed to a rotor must swing past the rest of their machine (motor housings)
       ignored = [];
       for (const [p, q] of [[a, b], [b, a]] as [Part, Part][]) {
         if (!q.entity.attachIgnoresBody) continue;
         for (const r of q.entity.parts) {
           if (r === q || r === p || r.destroyed || p.noCollide?.has(r)) continue;
-          (p.noCollide ??= new Set()).add(r);
-          (r.noCollide ??= new Set()).add(p);
+          p.noCollideWith(r);
+          r.noCollideWith(p);
           ignored.push([p, r]);
         }
       }
@@ -526,12 +526,12 @@ export class Connections {
       if (opts?.collide) {
         const still = this.list.some((o) => o !== c && RIGID_KINDS.has(o.kind) && !o.opts?.collide && ((o.a === c.a && o.b === c.b) || (o.a === c.b && o.b === c.a)));
         if (!still) {
-          c.a.noCollide?.delete(c.b);
-          c.b.noCollide?.delete(c.a);
+          c.a.collideWith(c.b);
+          c.b.collideWith(c.a);
         }
       } else {
-        (c.a.noCollide ??= new Set()).add(c.b);
-        (c.b.noCollide ??= new Set()).add(c.a);
+        c.a.noCollideWith(c.b);
+        c.b.noCollideWith(c.a);
       }
     }
     if (c.kind === 'spring' && (before.damping ?? 1) !== (opts?.damping ?? 1)) this.remake(c);
@@ -797,13 +797,13 @@ export class Connections {
       const rigid = (o: Connection) => RIGID_KINDS.has(o.kind) && !o.opts?.collide;
       const still = this.list.some((o) => rigid(o) &&((o.a === c.a && o.b === c.b) || (o.a === c.b && o.b === c.a)));
       if (!still) {
-        c.a.noCollide?.delete(c.b);
-        c.b.noCollide?.delete(c.a);
+        c.a.collideWith(c.b);
+        c.b.collideWith(c.a);
       }
     }
     for (const [p, q] of c.ignored ?? []) {
-      p.noCollide?.delete(q);
-      q.noCollide?.delete(p);
+      p.collideWith(q);
+      q.collideWith(p);
     }
     if (c.kind === 'wire') this.recomputePower();
   }

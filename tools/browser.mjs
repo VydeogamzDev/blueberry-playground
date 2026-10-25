@@ -45,7 +45,7 @@ const vsync = (hz) => `(() => {
 })();`;
 
 /**
- * @param {{ width?: number, height?: number, phone?: boolean, still?: boolean, gpu?: boolean, vsync?: number, query?: string, file?: string }} opts
+ * @param {{ width?: number, height?: number, phone?: boolean, still?: boolean, gpu?: boolean, vsync?: number, query?: string, file?: string, args?: string[], init?: string }} opts
  *   phone: emulate a 390x844 touch phone
  *   still: the game's real-time loop never runs, not even while the page loads
  *     (how many steps it takes then depends on the machine, and the physics
@@ -54,6 +54,8 @@ const vsync = (hz) => `(() => {
  *   vsync: hold frames to a display of this refresh rate (Hz)
  *   query: added to the page's URL (e.g. 'nosimd')
  *   file: open this page from disk instead (the standalone build: see standalone.mjs)
+ *   args: more command-line switches for the browser
+ *   init: a script to run in the page before its own
  */
 export async function openGame(opts = {}) {
   const browser = candidates.find((p) => existsSync(p));
@@ -73,7 +75,7 @@ export async function openGame(opts = {}) {
   const proc = spawn(browser, [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, '--no-first-run',
     '--no-default-browser-check', ...(opts.gpu ? ['--use-angle=default', '--enable-gpu', '--ignore-gpu-blocklist'] : ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']),
-    '--autoplay-policy=no-user-gesture-required', `--window-size=${opts.width ?? 1280},${opts.height ?? 800}`, 'about:blank',
+    '--autoplay-policy=no-user-gesture-required', `--window-size=${opts.width ?? 1280},${opts.height ?? 800}`, ...(opts.args ?? []), 'about:blank',
   ], { stdio: 'ignore' });
   let ws;
   const close = async () => {
@@ -108,6 +110,8 @@ export async function openGame(opts = {}) {
     let nextId = 1;
     const pending = new Map();
     const errors = [];
+    /** Handlers of DevTools protocol events, by method (see on()). */
+    const listeners = new Map();
     // (a page erroring every frame would fill memory: the first 50, then a count)
     let more = 0;
     const note = (e) => {
@@ -126,6 +130,7 @@ export async function openGame(opts = {}) {
       } else if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
         note(msg.params.args.map((a) => a.value ?? a.description ?? '').join(' '));
       }
+      if (msg.method) listeners.get(msg.method)?.(msg.params);
     };
     const send = (method, params = {}) => new Promise((res, rej) => {
       const id = nextId++;
@@ -150,6 +155,7 @@ export async function openGame(opts = {}) {
       await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
       await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
     }
+    if (opts.init) await send('Page.addScriptToEvaluateOnNewDocument', { source: opts.init });
     if (opts.still) await send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.requestAnimationFrame = () => 0;' });
     else if (opts.vsync) await send('Page.addScriptToEvaluateOnNewDocument', { source: vsync(opts.vsync) });
     await send('Page.navigate', { url: opts.query ? `${url}?${opts.query}` : url });
@@ -164,7 +170,9 @@ export async function openGame(opts = {}) {
       const step = await evaluate(`document.querySelector('#loading .ld-step')?.textContent ?? document.body.innerText.slice(0, 200)`).catch((e) => String(e));
       throw new Error(`the game did not start (${step})${errors.length ? ': ' + errors.join('; ') : ''}`);
     }
-    return { send, evaluate, errors, close, browser: browser.split(/[\\/]/).pop() };
+    /** Calls `fn` with the params of each DevTools protocol event `method` (one handler a method). */
+    const on = (method, fn) => listeners.set(method, fn);
+    return { send, evaluate, on, errors, close, browser: browser.split(/[\\/]/).pop() };
   } catch (e) {
     await close();
     throw e;

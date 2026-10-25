@@ -57,6 +57,48 @@ export const FLESH: ChunkLook = { raw: [0x9c1a1a, 0x6e0c0c], bone: 0xe6dcc8, bit
 export const PLATING: ChunkLook = { raw: [0x3a3f46, 0x2a2e33], bone: 0xb87333, bits: [0x59616b, 0x3a3f46, 0xb87333], bleeds: false, piece: 'plating' };
 
 /**
+ * The most limbs blown apart in one step. Each is a few new bodies, and a heap of
+ * people crushed at once had a dozen go in the steps that were the slowest anyway:
+ * past it one waits for a later step (a step or a few, too quick to see), first
+ * come first served.
+ */
+const GIBS_PER_STEP = 1;
+
+interface Gibbing {
+  step: number;
+  n: number;
+  waiting: { limb: ChunkLimb; go: () => void }[];
+}
+const gibbing = new WeakMap<Game, Gibbing>();
+
+/**
+ * Whether `limb` may be blown apart this step (see GIBS_PER_STEP): if not, `later` is
+ * called at the start of one when it may (once, however often it's asked meanwhile).
+ */
+export function gibNow(game: Game, limb: ChunkLimb, later: () => void): boolean {
+  let g = gibbing.get(game);
+  if (!g) {
+    const made: Gibbing = { step: -1, n: 0, waiting: [] };
+    // (as many as may go: one gone meanwhile takes none of the step's)
+    game.preStepHandlers.push(() => {
+      while (made.waiting.length && !(made.step === game.physics.stepCount && made.n >= GIBS_PER_STEP)) made.waiting.shift()!.go();
+    });
+    gibbing.set(game, (g = made));
+  }
+  const step = game.physics.stepCount;
+  if (g.step !== step) {
+    g.step = step;
+    g.n = 0;
+  }
+  if (g.n < GIBS_PER_STEP) {
+    g.n++;
+    return true;
+  }
+  if (!g.waiting.some((w) => w.limb === limb)) g.waiting.push({ limb, go: later });
+  return false;
+}
+
+/**
  * Under `from` J a round takes no chunk (a pistol's, a revolver's, a minigun's,
  * a lone shotgun pellet's only wound); over it the bite's radius (px) grows from
  * `base` by one for every `per` J more, to `max` (a rifle's comes out about 3 px
@@ -394,7 +436,7 @@ function tearOff<L extends ChunkLimb>(body: ChunkBody<L>, l: L, px: number[], ou
   const cy = sy / n;
   let best = 0;
   for (let k = 3; k < rim.length; k += 3) if (Math.hypot(rim[k] - cx, rim[k + 1] - cy) < Math.hypot(rim[best] - cx, rim[best + 1] - cy)) best = k;
-  const local = rotate(out.x, out.y, -p.body.rotation());
+  const local = rotate(out.x, out.y, -p.bodyAngle);
   const ll = Math.hypot(local.x, local.y) || 1;
   const rate = 0.2 + n * 0.06;
   if (l.wounds.length >= 10) l.wounds[Math.floor(Math.random() * l.wounds.length)].rate += rate;
@@ -611,7 +653,7 @@ function piecesOff<L extends ChunkLimb>(body: ChunkBody<L>, l: L, lists: number[
     }
     // where it was: its middle, from the part's (as Part.pixelToLocal() has it)
     const at = p.localToWorld((x0 + w / 2 - p.w / 2 + p.spriteOffset.x) * f * PX, (p.h / 2 - y0 - h / 2 + p.spriteOffset.y) * PX);
-    const e = g.spawn(def, at.x, at.y, { angle: p.body.rotation(), flip: f === -1, config: goreConfig(art, look.piece) }) as Gore | null;
+    const e = g.spawn(def, at.x, at.y, { angle: p.bodyAngle, flip: f === -1, config: goreConfig(art, look.piece) }) as Gore | null;
     if (!e) continue;
     made[k] = e;
     // (as the part moved, but no faster than a piece thrown hard: a blast that has just
@@ -622,9 +664,8 @@ function piecesOff<L extends ChunkLimb>(body: ChunkBody<L>, l: L, lists: number[
       v.x *= PIECE_FLING / vl;
       v.y *= PIECE_FLING / vl;
     }
-    const c = p.body.translation();
-    const rx = at.x - c.x;
-    const ry = at.y - c.y;
+    const rx = at.x - p.bodyX;
+    const ry = at.y - p.bodyY;
     const rl = Math.hypot(rx, ry) || 1;
     const s = speed * (0.4 + Math.random() * 0.6);
     const b = burst * (0.5 + Math.random() * 0.5);
@@ -632,18 +673,19 @@ function piecesOff<L extends ChunkLimb>(body: ChunkBody<L>, l: L, lists: number[
     // (not against what of the body it lies on, nor the rest of it: they'd fly apart)
     const q = e.main;
     const apart = (a: Part, z: Part) => {
-      (a.noCollide ??= new Set()).add(z);
-      (z.noCollide ??= new Set()).add(a);
+      a.noCollideWith(z);
+      z.noCollideWith(a);
     };
     apart(q, p);
     for (const m of made) if (m && m !== e) apart(q, m.main);
-    for (const col of q.colliders) {
-      g.physics.world.intersectionsWithShape(col.translation(), col.rotation(), col.shape, (hit) => {
-        const o = g.physics.partOf(hit);
-        if (o && o !== q && o.entity === p.entity && !o.destroyed) apart(q, o);
-        return true;
-      });
-    }
+    // (found first, kept apart after: Rapier can't change a collider in the middle of a query)
+    const under = new Set<Part>();
+    g.physics.world.intersectionsWithShape({ x: q.x, y: q.y }, q.a, e.hullShape(), (hit) => {
+      const o = g.physics.partOf(hit);
+      if (o && o !== q && o.entity === p.entity && !o.destroyed) under.add(o);
+      return true;
+    });
+    for (const o of under) apart(q, o);
   }
   return made;
 }

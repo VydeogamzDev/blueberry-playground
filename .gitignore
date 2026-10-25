@@ -1,5 +1,7 @@
 node_modules
 dist
+# (but the Rapier packages built from tools/rapier: the game installs them from there)
+!/vendor/rapier/*/dist/
 dist-standalone
 dist-desktop
 *.log

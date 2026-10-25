@@ -186,8 +186,8 @@ export class Blade extends Item {
     const world = this.game.physics.world;
     const p = this.main;
     const fwd = this.forward();
-    (p.noCollide ??= new Set()).add(target);
-    (target.noCollide ??= new Set()).add(p);
+    p.noCollideWith(target);
+    target.noCollideWith(p);
     const tip = { x: pt.x + fwd.x * depth, y: pt.y + fwd.y * depth };
     const tr = target.body.rotation();
     const axisLocal = rotate(fwd.x, fwd.y, -tr);
@@ -261,8 +261,8 @@ export class Blade extends Item {
   /** Through `q` without being held by it (see enter()). */
   private pass(q: Part): void {
     this.passing.add(q);
-    (this.main.noCollide ??= new Set()).add(q);
-    (q.noCollide ??= new Set()).add(this.main);
+    this.main.noCollideWith(q);
+    q.noCollideWith(this.main);
   }
 
   /** Pulled out of everything it's in. */
@@ -319,8 +319,8 @@ export class Blade extends Item {
       const left = t - dt;
       if (left > 0) this.released.set(q, left);
       else if (q.destroyed || !this.game.physics.overlaps(this.main, q)) {
-        this.main.noCollide?.delete(q);
-        q.noCollide?.delete(this.main);
+        this.main.collideWith(q);
+        q.collideWith(this.main);
         this.released.delete(q);
       } else this.released.set(q, 0.1);
     }

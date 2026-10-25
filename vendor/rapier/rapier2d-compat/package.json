@@ -1,0 +1,16 @@
+{
+  "name": "@dimforge/rapier2d-compat",
+  "version": "0.21.0",
+  "description": "Rapier's 2D physics engine, as Blueberry Playground builds it (see tools/rapier in the game)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "module": "dist/rapier.mjs",
+  "types": "dist/rapier.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/rapier.d.ts",
+      "import": "./dist/rapier.mjs"
+    }
+  },
+  "sideEffects": false
+}

@@ -1,0 +1,196 @@
+diff --git a/src/latch.rs b/src/latch.rs
+index f4c96a3..9623028 100644
+--- a/src/latch.rs
++++ b/src/latch.rs
+@@ -1,10 +1,10 @@
+ use std::marker::PhantomData;
+ use std::ops::Deref;
+-use std::sync::atomic::{AtomicUsize, Ordering};
+-use std::sync::Arc;
++use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
++use std::sync::{Arc, MutexGuard, TryLockError};
+ 
+ use crate::registry::{Registry, WorkerThread};
+-use crate::sync::{Condvar, Mutex};
++use crate::sync::Mutex;
+ 
+ /// We define various kinds of latches, which are all a primitive signaling
+ /// mechanism. A latch starts as false. Eventually someone calls `set()` and
+@@ -224,35 +224,37 @@ impl Latch for SpinLatch<'_> {
+ 
+ /// A Latch starts as false and eventually becomes true. You can block
+ /// until it becomes true.
++///
++/// (Patched: waiting spins. The threads that wait on these are the ones outside the pool,
++/// and in WebAssembly one of those is the browser's main thread, which may never block.)
+ #[derive(Debug)]
+ pub(super) struct LockLatch {
+-    m: Mutex<bool>,
+-    v: Condvar,
++    set: AtomicBool,
+ }
+ 
+ impl LockLatch {
+     #[inline]
+     pub(super) const fn new() -> LockLatch {
+         LockLatch {
+-            m: Mutex::new(false),
+-            v: Condvar::new(),
++            set: AtomicBool::new(false),
+         }
+     }
+ 
+     /// Block until latch is set, then resets this lock latch so it can be reused again.
+     pub(super) fn wait_and_reset(&self) {
+-        let mut guard = self.m.lock().unwrap();
+-        while !*guard {
+-            guard = self.v.wait(guard).unwrap();
+-        }
+-        *guard = false;
++        self.wait();
++        self.set.store(false, Ordering::Relaxed);
+     }
+ 
+     /// Block until latch is set.
+     pub(super) fn wait(&self) {
+-        let mut guard = self.m.lock().unwrap();
+-        while !*guard {
+-            guard = self.v.wait(guard).unwrap();
++        let mut spins = 0u32;
++        while !self.set.load(Ordering::Acquire) {
++            std::hint::spin_loop();
++            spins = spins.wrapping_add(1);
++            if spins % 1024 == 0 && POOL_DIED.load(Ordering::Relaxed) {
++                panic!("a thread of the pool panicked: what it was running never finishes");
++            }
+         }
+     }
+ }
+@@ -260,9 +262,35 @@ impl LockLatch {
+ impl Latch for LockLatch {
+     #[inline]
+     unsafe fn set(this: *const Self) {
+-        let mut guard = (*this).m.lock().unwrap();
+-        *guard = true;
+-        (*this).v.notify_all();
++        (*this).set.store(true, Ordering::Release);
++    }
++}
++
++/// Set (by `pool_thread_panicked`) once a pool thread has panicked: in WebAssembly a panic
++/// aborts that thread, so nothing it was running would ever set the latch waited on.
++static POOL_DIED: AtomicBool = AtomicBool::new(false);
++
++/// Tells the threads spinning outside the pool (see `LockLatch`) to give up waiting: call it
++/// from a panic hook, since a panicking thread in WebAssembly is aborted and so never sets
++/// the latches they wait on.
++pub fn pool_thread_panicked() {
++    POOL_DIED.store(true, Ordering::Relaxed);
++}
++
++/// Has a pool thread panicked (see `pool_thread_panicked`)?
++pub(super) fn pool_died() -> bool {
++    POOL_DIED.load(Ordering::Relaxed)
++}
++
++/// Locks by spinning, never blocking: some callers are threads outside the pool (see
++/// `LockLatch`), and these locks are only ever held for a moment.
++pub(super) fn lock_spinning<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
++    loop {
++        match m.try_lock() {
++            Ok(guard) => return guard,
++            Err(TryLockError::WouldBlock) => std::hint::spin_loop(),
++            Err(TryLockError::Poisoned(e)) => panic!("{e}"),
++        }
+     }
+ }
+ 
+diff --git a/src/lib.rs b/src/lib.rs
+index 3745076..a855ea2 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -92,6 +92,8 @@ pub use self::scope::{in_place_scope, scope, Scope};
+ pub use self::scope::{in_place_scope_fifo, scope_fifo, ScopeFifo};
+ pub use self::spawn::{spawn, spawn_fifo};
+ pub use self::thread_pool::current_thread_has_pending_tasks;
++pub use self::latch::pool_thread_panicked;
++pub use self::sleep::never_sleep_on_this_thread;
+ pub use self::thread_pool::current_thread_index;
+ pub use self::thread_pool::ThreadPool;
+ pub use self::thread_pool::{yield_local, yield_now, Yield};
+diff --git a/src/registry.rs b/src/registry.rs
+index 809976a..db51c27 100644
+--- a/src/registry.rs
++++ b/src/registry.rs
+@@ -465,7 +465,7 @@ impl Registry {
+     pub(super) fn inject_broadcast(&self, injected_jobs: impl ExactSizeIterator<Item = JobRef>) {
+         assert_eq!(self.num_threads(), injected_jobs.len());
+         {
+-            let broadcasts = self.broadcasts.lock().unwrap();
++            let broadcasts = crate::latch::lock_spinning(&self.broadcasts);
+ 
+             // It should not be possible for `state.terminate` to be true
+             // here. It is only set to true when the user creates (and
+diff --git a/src/sleep/mod.rs b/src/sleep/mod.rs
+index 9b02b39..02a1a9f 100644
+--- a/src/sleep/mod.rs
++++ b/src/sleep/mod.rs
+@@ -4,6 +4,7 @@
+ use crate::latch::CoreLatch;
+ use crate::sync::{Condvar, Mutex};
+ use crossbeam_utils::CachePadded;
++use std::cell::Cell;
+ use std::sync::atomic::Ordering;
+ use std::thread;
+ 
+@@ -53,9 +54,27 @@ struct WorkerSleepState {
+     condvar: Condvar,
+ }
+ 
++#[cfg(not(target_family = "wasm"))]
+ const ROUNDS_UNTIL_SLEEPY: u32 = 32;
++/// In WebAssembly `thread::yield_now()` does nothing, so 32 rounds of looking for work pass in
++/// microseconds, and an idle thread goes to sleep (on a futex, slow to wake) in each gap between a
++/// physics step's many short parallel parts: it looks this many times first instead.
++#[cfg(target_family = "wasm")]
++const ROUNDS_UNTIL_SLEEPY: u32 = 4096;
+ const ROUNDS_UNTIL_SLEEPING: u32 = ROUNDS_UNTIL_SLEEPY + 1;
+ 
++thread_local! {
++    /// Set on a thread of a pool that may never block (see `never_sleep_on_this_thread`).
++    static NEVER_SLEEPS: Cell<bool> = const { Cell::new(false) };
++}
++
++/// Has this thread, as a thread of a pool (`ThreadPoolBuilder::use_current_thread`), look for
++/// work by spinning however long it waits, never sleeping: in WebAssembly the browser's main
++/// thread may never block, and as one of the pool's threads it works on what it waits for.
++pub fn never_sleep_on_this_thread() {
++    NEVER_SLEEPS.with(|f| f.set(true));
++}
++
+ impl Sleep {
+     pub(super) fn new(n_threads: usize) -> Sleep {
+         assert!(n_threads <= THREADS_MAX);
+@@ -91,6 +110,13 @@ impl Sleep {
+         latch: &CoreLatch,
+         has_injected_jobs: impl FnOnce() -> bool,
+     ) {
++        if NEVER_SLEEPS.with(Cell::get) {
++            if crate::latch::pool_died() {
++                panic!("a thread of the pool panicked: what it was running never finishes");
++            }
++            std::hint::spin_loop();
++            return;
++        }
+         if idle_state.rounds < ROUNDS_UNTIL_SLEEPY {
+             thread::yield_now();
+             idle_state.rounds += 1;
+@@ -288,7 +314,7 @@ impl Sleep {
+     fn wake_specific_thread(&self, index: usize) -> bool {
+         let sleep_state = &self.worker_sleep_states[index];
+ 
+-        let mut is_blocked = sleep_state.is_blocked.lock().unwrap();
++        let mut is_blocked = crate::latch::lock_spinning(&sleep_state.is_blocked);
+         if *is_blocked {
+             *is_blocked = false;
+             sleep_state.condvar.notify_one();

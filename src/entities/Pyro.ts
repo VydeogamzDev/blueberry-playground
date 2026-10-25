@@ -274,7 +274,7 @@ export class Firework extends Item {
       this.wasHeld = this.holder.parts;
       this.holder.dropItem(this);
     }
-    if (this.wasHeld) p.noCollide = new Set(this.wasHeld);
+    if (this.wasHeld) p.setNoCollide(this.wasHeld);
     this.state = 'flight';
     this.flight = 0;
     this.game.sound.play('explosion/firework_launch', { gain: 0.9, x: p.x, vary: 0.05 });
@@ -285,7 +285,7 @@ export class Firework extends Item {
     const p = this.main;
     const game = this.game;
     this.flight += dt;
-    if (p.noCollide && this.flight > 0.4) p.noCollide = null;
+    if (p.noCollide && this.flight > 0.4) p.setNoCollide(null);
     const v = p.body.linvel();
     const up = p.localDir(0, 1);
     if (this.flight < MOTOR) {
@@ -307,6 +307,7 @@ export class Firework extends Item {
     // the stick keeps it pointing along its flight
     if (v.x * v.x + v.y * v.y > 4 && !p.frozen) {
       p.body.setRotation(Math.atan2(v.y, v.x) - Math.PI / 2, false);
+      p.moved();
       p.body.setAngvel(0, false);
     }
   }

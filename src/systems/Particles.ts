@@ -81,6 +81,11 @@ class Layer {
   /** Liquid kind of droplets (see Liquids). */
   readonly liq: Uint8Array;
   readonly ignore: (RAPIER.RigidBody | null)[];
+  /**
+   * How far its step has got (see Particles.stepLayer()): -2 not begun (new this step),
+   * -1 moved, else moved and its path cast, the ray of that number.
+   */
+  readonly prep: Int32Array;
   readonly geo = new THREE.BufferGeometry();
   readonly pos: Float32Array;
   readonly rgba: Float32Array;
@@ -107,6 +112,7 @@ class Layer {
     this.seed = new Float32Array(cap);
     this.liq = new Uint8Array(cap);
     this.ignore = new Array(cap).fill(null);
+    this.prep = new Int32Array(cap).fill(-2);
     this.pos = new Float32Array(cap * 3);
     this.rgba = new Float32Array(cap * 4);
     this.psize = new Float32Array(cap);
@@ -130,11 +136,10 @@ class Layer {
   }
 
   add(): number {
-    if (this.count >= this.cap) {
-      // overwrite a random old particle
-      return Math.floor(Math.random() * this.cap);
-    }
-    return this.count++;
+    // (overwriting a random old particle when full)
+    const i = this.count >= this.cap ? Math.floor(Math.random() * this.cap) : this.count++;
+    this.prep[i] = -2;
+    return i;
   }
 
   kill(i: number): void {
@@ -153,6 +158,7 @@ class Layer {
     this.drag[i] = this.drag[last];
     this.seed[i] = this.seed[last];
     this.liq[i] = this.liq[last];
+    this.prep[i] = this.prep[last];
     this.ignore[i] = this.ignore[last];
     this.ignore[last] = null;
     for (let k = 0; k < 4; k++) {
@@ -225,6 +231,8 @@ function unpack(c: number, out: Float32Array, o: number, a: number): void {
 const BLOOD_FILTER = groups(GROUP.DEBRIS, GROUP.STATIC | GROUP.DYNAMIC);
 /** Runoff only meets the floor and walls. */
 const RUNOFF_FILTER = groups(GROUP.DEBRIS, GROUP.STATIC);
+/** The rays' query flags: none. */
+const NO_FLAGS = 0 as RAPIER.QueryFilterFlags;
 /** Flag on `liq` for a drop running off something on its way to the floor. */
 const RUNOFF = 0x80;
 /**
@@ -240,7 +248,10 @@ export class Particles {
   private fireL = new Layer(4000, false, 45.5);
   private additive = new Layer(4000, true, 46);
   private game: Game;
-  private ray = new RAPIER.Ray({ x: 0, y: 0 }, { x: 1, y: 0 });
+  /** The droplets' paths this step, cast together (see stepLayer()): five numbers a ray, its groups, the body it ignores. */
+  private rays = new Float32Array(5 * 256);
+  private rayGroups = new Uint32Array(256);
+  private rayIgnore = new Float64Array(256);
   bloodEnabled = true;
   /** Share of effect particles made (Settings > Graphics): smoke, sparks, flames, dust; blood, liquids and flashes always are. */
   detail = 1;
@@ -448,59 +459,107 @@ export class Particles {
     this.stepLayer(this.additive, dt);
   }
 
+  /**
+   * Moves a particle by a step and, a droplet, adds the ray of its path to those to cast
+   * (returning its number: -1 if none).
+   */
+  private move(L: Layer, i: number, dt: number, n: number): number {
+    const drag = Math.exp(-L.drag[i] * dt);
+    L.vx[i] *= drag;
+    L.vy[i] = L.vy[i] * drag + this.game.gravity * L.grav[i] * dt;
+    if (L.kind[i] !== PK.Blood) return -1;
+    const ox = L.x[i];
+    const oy = L.y[i];
+    const dx = ox + L.vx[i] * dt - ox;
+    const dy = oy + L.vy[i] * dt - oy;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d <= 1e-5) return -1;
+    if (n === this.rayGroups.length) {
+      const grow = <T extends Float32Array | Uint32Array | Float64Array>(a: T): T => {
+        const b = new (a.constructor as new (n: number) => T)(a.length * 2);
+        b.set(a);
+        return b;
+      };
+      this.rays = grow(this.rays);
+      this.rayGroups = grow(this.rayGroups);
+      this.rayIgnore = grow(this.rayIgnore);
+    }
+    const r = this.rays;
+    r[n * 5] = ox;
+    r[n * 5 + 1] = oy;
+    r[n * 5 + 2] = dx / d;
+    r[n * 5 + 3] = dy / d;
+    r[n * 5 + 4] = d;
+    this.rayGroups[n] = (L.liq[i] & RUNOFF) !== 0 ? RUNOFF_FILTER : BLOOD_FILTER;
+    const ign = L.ignore[i];
+    this.rayIgnore[n] = ign && ign.isValid() ? ign.handle : NaN;
+    return n;
+  }
+
+  /** Casts the first n rays (see move()): four numbers a ray, as World.castRaysAndGetNormal(). */
+  private cast(n: number): Float64Array {
+    return this.game.physics.world.castRaysAndGetNormal(this.rays.subarray(0, n * 5), true, NO_FLAGS, this.rayGroups.subarray(0, n), this.rayIgnore.subarray(0, n));
+  }
+
   private stepLayer(L: Layer, dt: number): void {
-    const g = this.game.gravity;
     const floor = WORLD.floor;
-    const world = this.game.physics.world;
     const env = this.game.env;
     // (on a map with ground, bits land on whatever top of it is under them)
     const terrain = env.ground.length > 0;
+    // every particle moved first, and the droplets' paths cast against the world all
+    // together, so they can stain what they hit (one call into Rapier, not one each)
+    let n = 0;
     for (let i = 0; i < L.count; i++) {
       L.life[i] -= dt;
+      L.prep[i] = L.life[i] <= 0 ? -1 : this.move(L, i, dt, n);
+      if (L.prep[i] >= 0) n++;
+    }
+    const hits = n > 0 ? this.cast(n) : null;
+    for (let i = 0; i < L.count; i++) {
+      let ray = L.prep[i];
+      let res = hits;
+      // (one made meanwhile, by one landing: moved now, its path cast on its own)
+      if (ray === -2) {
+        L.life[i] -= dt;
+        ray = L.life[i] <= 0 ? -1 : this.move(L, i, dt, 0);
+        if (ray === 0) res = this.cast(1);
+      }
       if (L.life[i] <= 0) {
         L.kill(i--);
         continue;
       }
       const kd = L.kind[i];
-      const drag = Math.exp(-L.drag[i] * dt);
-      L.vx[i] *= drag;
-      L.vy[i] = L.vy[i] * drag + g * L.grav[i] * dt;
       const ox = L.x[i];
       const oy = L.y[i];
       const nx = ox + L.vx[i] * dt;
       const ny = oy + L.vy[i] * dt;
       if (kd === PK.Blood) {
-        // ray-cast the droplet's path against the world so it can stain what it hits
         const dx = nx - ox;
         const dy = ny - oy;
         const d = Math.sqrt(dx * dx + dy * dy);
-        if (d > 1e-5) {
-          this.ray.origin = { x: ox, y: oy };
-          this.ray.dir = { x: dx / d, y: dy / d };
-          const ign = L.ignore[i];
+        if (ray >= 0) {
           const liq = L.liq[i] & ~RUNOFF;
-          const runoff = (L.liq[i] & RUNOFF) !== 0;
-          const hit = world.castRayAndGetNormal(
-            this.ray, d, true, undefined, runoff ? RUNOFF_FILTER : BLOOD_FILTER, undefined, ign && ign.isValid() ? ign : undefined,
-          );
-          if (hit) {
-            const hx = ox + (dx / d) * hit.timeOfImpact;
-            const hy = oy + (dy / d) * hit.timeOfImpact;
-            const part = this.game.physics.partOf(hit.collider) ?? null;
+          const toi = res![ray * 4];
+          if (toi >= 0) {
+            const hx = ox + (dx / d) * toi;
+            const hy = oy + (dy / d) * toi;
+            const hnx = res![ray * 4 + 1];
+            const hny = res![ray * 4 + 2];
+            const part = this.game.physics.partOf(res![ray * 4 + 3]) ?? null;
             // (a guest's drops are only for show: the stains and puddles they leave come from the host)
             if (this.game.net?.guest) {
               L.kill(i--);
               continue;
             }
             // (a drop caught in a bucket is used up there)
-            const caught = landDroplet(this.game, liq, part, hx, hy, hit.normal.x, hit.normal.y, L.col[i * 4], L.col[i * 4 + 1], L.col[i * 4 + 2], L.vx[i], L.vy[i], L.size[i] > PX * 1.5);
+            const caught = landDroplet(this.game, liq, part, hx, hy, hnx, hny, L.col[i * 4], L.col[i * 4 + 1], L.col[i * 4 + 2], L.vx[i], L.vy[i], L.size[i] > PX * 1.5);
             // (blood sticks; a liquid wets what it hits, as landDroplet() has it, and
             // all of it runs off: none of a flask's worth is lost on the way down)
             if (part && !caught && liq !== Liquid.Blood) {
               // trickles off and drips down to the floor
-              L.x[i] = hx + hit.normal.x * PX * 0.5;
+              L.x[i] = hx + hnx * PX * 0.5;
               L.y[i] = hy;
-              L.vx[i] = L.vx[i] * 0.1 + hit.normal.x * 0.3;
+              L.vx[i] = L.vx[i] * 0.1 + hnx * 0.3;
               L.vy[i] = Math.min(0, L.vy[i] * 0.1);
               L.liq[i] = liq | RUNOFF;
               L.life[i] = Math.max(L.life[i], 2);

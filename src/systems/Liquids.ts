@@ -168,7 +168,7 @@ function splat(p: Part, x: number, y: number, nx: number, ny: number, color: Col
 
 /** World down in a part's art space (art rows run down, and a mirrored sprite's columns the other way). */
 function down(p: Part): { x: number; y: number } {
-  const d = rotate(0, -1, -p.body.rotation());
+  const d = rotate(0, -1, -p.bodyAngle);
   return { x: d.x * p.flip, y: -d.y };
 }
 

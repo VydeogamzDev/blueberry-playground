@@ -4,6 +4,26 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## Unreleased
+
+### Speed in crowded scenes
+- The physics runs on several of the computer's cores at once (up to 6 besides the game's own), in the
+  desktop app and from `npm run dev`; the standalone page, opened from disk, can't, and stays on one. The
+  worst moments are about four times as smooth: 100 people crushed under a huge brick all at once ran at
+  22 fps in its slowest 1% of frames, now 94-98; its slowest frame took 70 ms, now 11-12. On one core
+  (the standalone page) it's 55-60, more than two and a half times as smooth.
+- The physics engine is our own build of Rapier (tools/rapier), with what the game asks of it most done
+  inside it: which parts may touch (a person's own limbs are never even paired up), collision reports,
+  the rays of blood and debris, and who is touching whom, all at once.
+- Its memory grows 16 MB at a time. Grown a little at a time, as a crush needed it, every core stopped
+  for each bit: the contacts of a heap just crushed took twice as long to work out.
+- A heap of people coming to rest no longer stutters every half second while the game checks whether it
+  can sleep, nor does everyone lying in it look for a way off at the same moment.
+- Limbs blown apart in the same instant break up one per physics step, all within a tenth of a second,
+  rather than all at once in the slowest step there is.
+- Blood painted on bodies reaches the screen with one call per texture, not a dozen per body.
+- The desktop app readies all of the physics engine at start, so the first big crush isn't the slowest.
+
 ## 0.2.0 — 2026-10-24
 
 ### Phones and tablets

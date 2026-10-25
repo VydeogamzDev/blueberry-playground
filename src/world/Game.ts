@@ -859,6 +859,7 @@ export class Game {
     this.contactGroups.update();
     lap?.('step: groups');
     this.physics.step();
+    this.physics.readPoses(this.entities);
     resleepSettled(this);
     lap?.('step: physics');
     this.impacts.process();
@@ -873,7 +874,7 @@ export class Game {
       settle(this, this.entities);
     }
     lap?.('step: settle');
-    for (const e of this.entities) for (const p of e.parts) if (!p.destroyed) p.sync();
+    this.physics.syncAll(this.entities);
     this.connections.postStep(dt);
     lap?.('step: sync');
     this.fire.step(dt);
@@ -911,7 +912,7 @@ export class Game {
     this.physics.step();
     // (nothing here reads what bumped into what)
     this.physics.events.clear();
-    for (const e of this.entities) for (const p of e.parts) if (!p.destroyed) p.sync();
+    this.physics.syncAll(this.entities);
     this.fire.showStep(dt);
     this.puddles.showStep(dt);
     this.fluid.step(dt, true);

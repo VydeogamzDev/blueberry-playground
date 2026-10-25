@@ -201,10 +201,24 @@ export abstract class Entity {
     return this.totalMass();
   }
 
+  private massAt = -1;
+  private massNow = 0;
+
+  /** What its parts that move weigh together: added up once a step (or again, see massChanged()). */
   totalMass(): number {
-    let m = 0;
-    for (const p of this.parts) if (!p.destroyed && !p.frozen) m += p.mass;
-    return m;
+    const step = this.game.physics.stepCount;
+    if (this.massAt !== step) {
+      let m = 0;
+      for (const p of this.parts) if (!p.destroyed && !p.frozen) m += p.mass;
+      this.massNow = m;
+      this.massAt = step;
+    }
+    return this.massNow;
+  }
+
+  /** A part of it has gone, been frozen or let go, or has a new collider: totalMass() adds them up again. */
+  massChanged(): void {
+    this.massAt = -1;
   }
 
   private bodySpeedAt = -1;

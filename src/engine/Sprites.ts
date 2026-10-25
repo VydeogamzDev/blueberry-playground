@@ -205,9 +205,6 @@ class Page {
 export class Sprites {
   private pages: Page[] = [];
   private uploads = new Map<Region, Uint8Array>();
-  /** A never-drawn texture wrapping the bytes to send: three copies its data straight in. */
-  private scratch = new THREE.DataTexture(null, 1, 1);
-  private at = new THREE.Vector2();
 
   constructor(private readonly gl: THREE.WebGLRenderer, private readonly scene: THREE.Scene) {}
 
@@ -236,12 +233,23 @@ export class Sprites {
 
   /** Sends pending images and this frame's sprite data to the GPU. */
   flush(): void {
-    const img = this.scratch.image as { data: Uint8Array; width: number; height: number };
+    // straight into each page's texture, bound once for all of its (three's copyTextureToTexture()
+    // binds it, and sets how the bytes are read and back, a dozen calls for each: a crush paints hundreds)
+    const gl = this.gl.getContext() as WebGL2RenderingContext;
+    const state = this.gl.state;
+    let bound: Page | null = null;
     for (const [r, rgba] of this.uploads) {
-      img.data = rgba;
-      img.width = r.w;
-      img.height = r.h;
-      this.gl.copyTextureToTexture(this.scratch, r.page.tex, null, this.at.set(r.x, r.y));
+      if (r.page !== bound) {
+        bound = r.page;
+        this.gl.initTexture(bound.tex);
+        state.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, bound.tex.flipY);
+        state.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, bound.tex.premultiplyAlpha);
+        state.pixelStorei(gl.UNPACK_ALIGNMENT, bound.tex.unpackAlignment);
+        state.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+        state.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+        state.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+      }
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x, r.y, r.w, r.h, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
     }
     this.uploads.clear();
     for (const p of this.pages) p.batch.flush();

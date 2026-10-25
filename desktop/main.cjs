@@ -136,6 +136,10 @@ app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 // the graphics card even where Chrome's list of troublesome ones would draw in software
 app.commandLine.appendSwitch('ignore-gpu-blocklist');
+// the physics engine's WebAssembly all optimized in the background soon after it loads,
+// not each function once it's run a while: the first time 100 people are crushed runs
+// code nothing ran before, and ran it unoptimized (its worst steps a quarter slower)
+app.commandLine.appendSwitch('js-flags', '--no-wasm-dynamic-tiering');
 if (uncapped) {
   app.commandLine.appendSwitch('disable-frame-rate-limit');
   app.commandLine.appendSwitch('disable-gpu-vsync');
@@ -183,7 +187,13 @@ async function serve(req) {
   } catch {
     return missing();
   }
-  const headers = { 'content-type': TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream', 'accept-ranges': 'bytes' };
+  const headers = {
+    'content-type': TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream',
+    'accept-ranges': 'bytes',
+    // cross-origin isolated, so the physics engine's threads can share memory (see vite.config.ts)
+    'cross-origin-opener-policy': 'same-origin',
+    'cross-origin-embedder-policy': 'require-corp',
+  };
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.get('range') ?? '');
   if (range && (range[1] || range[2])) {
     const start = range[1] ? Number(range[1]) : Math.max(0, data.length - Number(range[2]));

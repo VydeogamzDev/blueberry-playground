@@ -392,7 +392,7 @@ export class LauncherRound extends Entity {
 
   launch(own: Part[], vx: number, vy: number, mode: LauncherMode, blast: ExplosionOpts): void {
     const p = this.main;
-    p.noCollide = new Set(own);
+    p.setNoCollide(own);
     p.body.setLinvel({ x: vx, y: vy }, true);
     this.mode = mode;
     this.blast = blast;
@@ -409,7 +409,7 @@ export class LauncherRound extends Entity {
     this.age += dt;
     const travelled = this.start ? Math.hypot(p.x - this.start.x, p.y - this.start.y) : Infinity;
     if (!this.armed && this.age > ARM_TIME && travelled > ARM_DIST) this.armed = true;
-    if (p.noCollide && (this.age > 1 || travelled > CLEAR)) p.noCollide = null;
+    if (p.noCollide && (this.age > 1 || travelled > CLEAR)) p.setNoCollide(null);
     if ((this.mode === 'timed' && this.age > TIME_FUZE) || this.age > MAX_FLIGHT) {
       this.detonate();
       return;
@@ -418,6 +418,7 @@ export class LauncherRound extends Entity {
     // spun as it left the barrel, it flies nose first until it first hits something
     if (this.flying && v.x * v.x + v.y * v.y > 4) {
       p.body.setRotation(Math.atan2(v.y * p.flip, v.x * p.flip), false);
+      p.moved();
       p.body.setAngvel(0, false);
       if (Math.random() < 0.3) {
         this.game.particles.emit(PK.Smoke, p.x, p.y, {

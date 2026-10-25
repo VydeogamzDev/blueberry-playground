@@ -28,13 +28,16 @@ export class Impacts {
     let count = 0;
     const seen = this.seen;
     seen.clear();
-    phys.events.drainContactForceEvents((ev) => {
-      const h1 = ev.collider1();
-      const h2 = ev.collider2();
+    // all the events at once, as numbers (see drainContactForceEventsFlat): no object
+    // made for each, and no call back into Rapier for its point
+    const evs = phys.events.drainContactForceEventsFlat(world.bodies);
+    for (let k = 0; k < evs.length; k += 8) {
+      const h1 = evs[k];
+      const h2 = evs[k + 1];
       const p1 = phys.partOf(h1) ?? null;
       const p2 = phys.partOf(h2) ?? null;
-      if (!p1 && !p2) return;
-      if ((p1 && p1.destroyed) || (p2 && p2.destroyed)) return;
+      if (!p1 && !p2) continue;
+      if ((p1 && p1.destroyed) || (p2 && p2.destroyed)) continue;
 
       // quick reject using body-center velocities: first however they're moving
       // (bodies pressed together in a heap, going nowhere: most events there)...
@@ -43,43 +46,33 @@ export class Impacts {
       const v2x = p2 ? p2.vx : 0;
       const v2y = p2 ? p2.vy : 0;
       const maxAng = Math.max(p1 ? Math.abs(p1.av) : 0, p2 ? Math.abs(p2.av) : 0);
-      if (Math.hypot(v1x - v2x, v1y - v2y) + maxAng * 0.6 < MIN_SPEED) return;
+      // (Math.hypot() is a lot slower than this, thousands of times a step in a heap)
+      const rx = v1x - v2x;
+      const ry = v1y - v2y;
+      if (Math.sqrt(rx * rx + ry * ry) + maxAng * 0.6 < MIN_SPEED) continue;
       // one impact per collider pair per step
       // (handles are opaque f64 bit patterns: no one number holds two, and turning them into strings is slow)
       const lo = h1 < h2 ? h1 : h2;
       const hi = h1 < h2 ? h2 : h1;
       const met = seen.get(lo);
       if (!met) seen.set(lo, [hi]);
-      else if (met.includes(hi)) return;
+      else if (met.includes(hi)) continue;
       else met.push(hi);
-      const force = ev.totalForceMagnitude();
-      const dir = ev.maxForceDirection();
-      const dl = Math.hypot(dir.x, dir.y);
-      if (dl < 1e-6) return;
-      const nx = dir.x / dl;
-      const ny = dir.y / dl;
+      const force = evs[k + 2];
+      const dx = evs[k + 3];
+      const dy = evs[k + 4];
+      const dl = Math.sqrt(dx * dx + dy * dy);
+      if (dl < 1e-6) continue;
+      const nx = dx / dl;
+      const ny = dy / dl;
       // ...then toward each other
-      const quick = Math.abs((v1x - v2x) * nx + (v1y - v2y) * ny);
-      if (quick + maxAng * 0.6 < MIN_SPEED) return;
+      const quick = Math.abs(rx * nx + ry * ny);
+      if (quick + maxAng * 0.6 < MIN_SPEED) continue;
 
-      // contact point
-      let px = 0;
-      let py = 0;
-      let found = false;
-      const c1 = world.getCollider(h1);
-      const c2 = world.getCollider(h2);
-      if (c1 && c2) {
-        world.contactPair(c1, c2, (m) => {
-          if (found || m.numSolverContacts() === 0) return;
-          const pt = m.solverContactPoint(0);
-          if (pt) {
-            px = pt.x;
-            py = pt.y;
-            found = true;
-          }
-        });
-      }
-      if (!found) {
+      // contact point (where they touch first, as Rapier has it; else the part's middle)
+      let px = evs[k + 5];
+      let py = evs[k + 6];
+      if (evs[k + 7] === 0) {
         const a = p1 ?? p2!;
         px = a.x;
         py = a.y;
@@ -92,8 +85,10 @@ export class Impacts {
       const rvy = va.y - vb.y;
       const along = rvx * nx + rvy * ny;
       const speed = Math.abs(along);
-      const slide = Math.hypot(rvx - along * nx, rvy - along * ny);
-      if (speed < MIN_SPEED) return;
+      const sx = rvx - along * nx;
+      const sy = rvy - along * ny;
+      const slide = Math.sqrt(sx * sx + sy * sy);
+      if (speed < MIN_SPEED) continue;
       count++;
 
       const m1 = p1 && !p1.frozen ? p1.mass : Infinity;
@@ -124,7 +119,7 @@ export class Impacts {
         p2.entity.onImpact(info);
       }
       this.playSound(p1, p2, speed, m1, m2, px, py, n1x, n1y);
-    });
+    }
     this.lastCount = count;
   }
 

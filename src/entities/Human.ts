@@ -12,7 +12,7 @@ import type { Item, Holder } from './Item';
 import { adrenalineRush, type Drug } from './Syringe';
 import { washBlood } from './Medical';
 import { Tendons } from '../systems/Tendons';
-import { FLESH, PLATING, breakUp, blastEnergy, sliceLimb, takeChunk } from '../systems/Chunks';
+import { FLESH, PLATING, breakUp, blastEnergy, gibNow, sliceLimb, takeChunk } from '../systems/Chunks';
 import { isFighter, isLiving, land, onFeet, stillUp, strikePoint, type Fighter } from '../systems/Fighting';
 import { allies, bombNear, dress, dye, enemies, isTeamId, lyingNear, nearestEnemy, TEAMS, undead, type TeamId } from '../systems/Teams';
 import type { PixelArt } from '../art/PixelArt';
@@ -446,7 +446,8 @@ export class Human extends Entity implements Holder {
   /** Shuffling off someone they're lying on top of: which way, for how long, and how many goes so far. */
   private crawlDir = 0;
   private crawlT = 0;
-  private crawlCheck = 0;
+  /** (each their own moment to look: a heap of people knocked down at once all looked in the same step) */
+  private crawlCheck = Math.random() * 0.25;
   private crawls = 0;
   /** Where the trunk was at the last look while crawling, and how many looks in a row it hadn't moved. */
   private crawlX = 0;
@@ -1382,7 +1383,7 @@ export class Human extends Entity implements Holder {
     if (!j || !j.isValid()) return;
     l.loose = l.broken;
     if (this.stiff && l.parent) {
-      const a = wrapAngle(l.part.body.rotation() - l.parent.part.body.rotation());
+      const a = wrapAngle(l.part.bodyAngle - l.parent.part.bodyAngle);
       j.setLimits(a - 0.01, a + 0.01);
       return;
     }
@@ -1432,7 +1433,7 @@ export class Human extends Entity implements Holder {
     // open, a folded leg kicks the body metres into the air. They go down and get up.)
     for (const k of ['lowerLegF', 'lowerLegB'] as LimbKey[]) {
       const l = this.L(k);
-      if (!l.gone && l.attached && l.parent && Math.abs(wrapAngle(l.part.body.rotation() - l.parent.part.body.rotation())) > KNEE_CATCH) return false;
+      if (!l.gone && l.attached && l.parent && Math.abs(wrapAngle(l.part.bodyAngle - l.parent.part.bodyAngle)) > KNEE_CATCH) return false;
     }
     const col = this.column();
     return col.grounded && Math.abs(col.theta) < 0.45 && Math.abs(col.omega) < 2 && this.grounded(true);
@@ -2539,7 +2540,7 @@ export class Human extends Entity implements Holder {
    * Null: everything it passed through solid again.
    */
   private freeWeapon(part: Part | null): void {
-    if (this.freed) for (const p of this.freed.from) this.freed.part.noCollide?.delete(p);
+    if (this.freed) for (const p of this.freed.from) this.freed.part.collideWith(p);
     this.freed = null;
     if (!part) return;
     const world = this.game.physics.world;
@@ -2554,7 +2555,7 @@ export class Human extends Entity implements Holder {
       });
     }
     if (!from.length) return;
-    for (const p of from) (part.noCollide ??= new Set()).add(p);
+    for (const p of from) part.noCollideWith(p);
     this.freed = { part, from };
   }
 
@@ -3967,7 +3968,7 @@ export class Human extends Entity implements Holder {
       for (const [i, j] of [[1, 0], [0, 1]]) p.paintPixel(bx + i, by + j, 0x3a3f45, 0.7);
     }
     if (!this.variant.bleeds) return;
-    const local = rotate(ox, oy, -p.body.rotation());
+    const local = rotate(ox, oy, -p.bodyAngle);
     const ll = Math.hypot(local.x, local.y) || 1;
     if (l.wounds.length >= 10) {
       l.wounds[Math.floor(Math.random() * l.wounds.length)].rate += rate;
@@ -3994,7 +3995,7 @@ export class Human extends Entity implements Holder {
         const n = w.rate * pulse * dt * (w.spurt ? 26 : 12);
         if (Math.random() < n) {
           const wp = p.pixelToWorld(w.ix, w.iy);
-          const d = rotate(w.dx, w.dy, p.body.rotation());
+          const d = rotate(w.dx, w.dy, p.bodyAngle);
           const sp = w.spurt ? 1.2 + w.rate * 0.9 * pulse : 0.15 + Math.random() * 0.3;
           ps.blood(wp.x, wp.y, d.x, d.y, w.spurt ? 2 : 1, sp, p.body);
         }
@@ -4021,8 +4022,8 @@ export class Human extends Entity implements Holder {
     };
     mark(l);
     // never let the stump faces push each other apart violently
-    (l.part.noCollide ??= new Set()).add(l.parent.part);
-    (l.parent.part.noCollide ??= new Set()).add(l.part);
+    l.part.noCollideWith(l.parent.part);
+    l.parent.part.noCollideWith(l.part);
 
     const pj = l.parent.part.localToWorld(l.a1.x, l.a1.y);
     const cj = l.part.localToWorld(l.a2.x, l.a2.y);
@@ -4091,6 +4092,11 @@ export class Human extends Entity implements Holder {
    */
   gib(l: Limb, dir?: V2): void {
     if (l.gone) return;
+    // (a few at once wait their turn: see Chunks.gibNow())
+    const later = () => {
+      if (!this.destroyed) this.gib(l, dir);
+    };
+    if (!gibNow(this.game, l, later)) return;
     const p = l.part;
     const hung = l.children.filter((c) => !c.severed && !c.gone);
     for (const c of hung) this.sever(c, 'blast');
@@ -4295,8 +4301,8 @@ export class Human extends Entity implements Holder {
     // the item never collides with its holder
     for (const l of this.order) {
       if (l.gone) continue;
-      (ip.noCollide ??= new Set()).add(l.part);
-      (l.part.noCollide ??= new Set()).add(ip);
+      ip.noCollideWith(l.part);
+      l.part.noCollideWith(ip);
     }
     let steady: Grip['support'] = null;
     const g2 = support ? item.gripLocal(true) : null;
@@ -4345,8 +4351,8 @@ export class Human extends Entity implements Holder {
   private forgetItem(item: Item): void {
     const ip = item.main;
     for (const l of this.order) {
-      ip.noCollide?.delete(l.part);
-      l.part.noCollide?.delete(ip);
+      ip.collideWith(l.part);
+      l.part.collideWith(ip);
     }
   }
 
