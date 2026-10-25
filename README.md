@@ -28,9 +28,17 @@ It runs in a browser, as a desktop app on Windows and Mac, and on phones and tab
 
 ## Playing
 
-The game builds to a single HTML page with everything inside it. Open it in a desktop browser
-(it's tested in Chrome). An iPhone can't run a page from a file, so it needs a hosted copy.
-The desktop app is the smoothest way to play: it runs the physics on several cores at once.
+Download the latest version from **[Releases](https://github.com/VydeogamzDev/blueberry-playground/releases/latest)**:
+
+- **Windows:** `Blueberry-Playground-<version>-windows.exe`, the desktop app in one file, with nothing to
+  install. It's the smoothest way to play, because the physics runs on several cores at once. It isn't
+  signed, so if SmartScreen stops it, click **More info**, then **Run anyway**.
+- **Any computer:** `Blueberry-Playground-<version>.html`, the whole game in one page. Open it in a
+  desktop browser (it's tested in Chrome).
+- **Mac (Apple silicon):** `Blueberry-Playground-<version>-mac.tar.xz`. It needs two Terminal commands
+  before it opens (see [below](#building-from-source), or the release notes).
+
+An iPhone or iPad can't run the page from a file, so it needs a hosted copy.
 
 ## Controls
 
