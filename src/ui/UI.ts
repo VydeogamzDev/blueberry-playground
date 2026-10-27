@@ -34,6 +34,7 @@ import { Friends } from '../net/Friends';
 import { store } from '../engine/Store';
 import { desktop } from '../engine/Desktop';
 import { savesSettings } from './SavesSettings';
+import { offline } from '../engine/Offline';
 import { rapierBuild } from '../engine/Physics';
 import { version } from '../../package.json';
 
@@ -60,6 +61,7 @@ const ICONS: Record<string, string> = {
   battle: '<svg viewBox="0 0 16 16"><path d="M2.5 2.5l8 8M13.5 2.5l-8 8M9.5 11.5l3 3M6.5 11.5l-3 3M11 13l2-2M5 13l-2-2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
   drag: '<svg viewBox="0 0 16 16"><path d="M4 1.5v10.5l2.6-2.4 1.9 4.6 2-.9-1.9-4.4H12z"/></svg>',
   rewind: '<svg viewBox="0 0 16 16"><path d="M8 3L2 8l6 5zM14 3L8 8l6 5z"/></svg>',
+  more: '<svg viewBox="0 0 16 16"><circle cx="3" cy="8" r="1.6"/><circle cx="8" cy="8" r="1.6"/><circle cx="13" cy="8" r="1.6"/></svg>',
   push: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="1.8"/><path d="M8 5V1M8 11v4M5 8H1M11 8h4M6.5 2.5L8 1l1.5 1.5M6.5 13.5L8 15l1.5-1.5M2.5 6.5L1 8l1.5 1.5M13.5 6.5L15 8l-1.5 1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
   pull: '<svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="1.8"/><path d="M8 1v4M8 15v-4M1 8h4M15 8h-4M6.5 3.5L8 5l1.5-1.5M6.5 12.5L8 11l1.5 1.5M3.5 6.5L5 8 3.5 9.5M12.5 6.5L11 8l1.5 1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>',
   lift: '<svg viewBox="0 0 16 16"><path d="M8 13V3M4.5 6.5L8 3l3.5 3.5M3 14.5h10" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
@@ -366,11 +368,53 @@ export class UI implements UIBridge {
       controls.touchMode = true;
       this.setTouchMode(true);
     }
-    // (an iPhone zooms the page at a pinch, whatever the viewport says: a pinch is the sandbox's own zoom)
-    document.addEventListener('gesturestart', (e) => e.preventDefault());
+    // (an iPhone's pinch on the sandbox is the sandbox's own zoom, not the page's: see main.ts's interaction protection)
     // the camera centers on the part of the screen the catalog leaves free
     this.updateInset(false);
     window.addEventListener('resize', () => this.updateInset(false));
+    // (a phone's browser bars and keyboard change what's seen of the page, without always a resize)
+    window.visualViewport?.addEventListener('resize', () => {
+      game.renderer.resize();
+      this.updateInset(false);
+    });
+    // the graphics taken back (an iPad short of memory does it to a page in the background): the scene is
+    // kept and the page starts again with it (see carryOn()), rather than a black screen
+    const canvas = game.renderer.canvas;
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.keepScene();
+    });
+    canvas.addEventListener('webglcontextrestored', () => location.reload());
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && game.renderer.gl.getContext().isContextLost()) location.reload();
+    });
+    // a new version of the website, downloaded: offered, and the scene carried over into it
+    offline.beforeReload = () => this.keepScene();
+    offline.onUpdate = (activate) => this.offerUpdate(activate);
+  }
+
+  /** The scene as it is, kept for the page starting again (see carryOn()), and every save written. */
+  private keepScene(): void {
+    try {
+      sessionStorage.setItem(CARRY_ON, saveToString(this.game));
+    } catch {
+      // (too big to carry over, or unreadable: it starts again without it)
+    }
+    store.flush();
+  }
+
+  /** A new version is ready (see engine/Offline): a button to switch to it, when the player likes. */
+  private offerUpdate(activate: () => Promise<boolean>): void {
+    if (this.root.querySelector('.update-btn')) return;
+    const b = el('button', 'update-btn', 'New version ready · Reload');
+    b.title = 'Starts the new version, with your scene as it is';
+    b.onclick = () => {
+      b.disabled = true;
+      void activate().then((ok) => {
+        if (!ok) b.disabled = false;
+      });
+    };
+    this.root.appendChild(b);
   }
 
   // ---- catalog (the toybox) --------------------------------------------------------
@@ -550,10 +594,13 @@ export class UI implements UIBridge {
         fn();
         // (left focused, Enter would press it again: Clear everything or Quick load a second time)
         b.blur();
+        // (on a phone, the rest of the bar folds away again once one of its buttons is used)
+        if (b !== more) bar.classList.remove('more-open');
       };
       bar.appendChild(b);
       return b;
     };
+    let more: HTMLButtonElement | null = null;
     this.btnPause = btn('pause', 'Toggle time', () => this.controls.togglePause());
     this.btnStep = btn('step', 'Step one tick', () => this.controls.step());
     this.btnRewind = btn('rewind', 'Back to build: the scene as it was before Play (Shift + Toggle time)', () => this.controls.rewind());
@@ -607,6 +654,14 @@ export class UI implements UIBridge {
     this.btnHelp = btn('help', 'Controls', () => this.toggleHelp());
     // (a phone has no Esc: the way back to the title screen)
     btn('home', 'Main menu', () => this.mainMenu.show());
+    // on a phone held upright only the everyday buttons show (time, speed, undo): ⋯ opens the rest in rows below them
+    const everyday: Element[] = [this.btnPause, this.btnRewind, this.speedSel, this.btnUndo, this.btnRedo];
+    for (const e of bar.children) if (!everyday.includes(e)) e.classList.add('tb-extra');
+    bar.appendChild(el('div', 'tb-break'));
+    more = btn('more', 'More', () => bar.classList.toggle('more-open'));
+    more.classList.add('tb-more');
+    // (a touch in the sandbox folds them away too)
+    this.game.renderer.canvas.addEventListener('pointerdown', () => bar.classList.remove('more-open'));
     this.root.appendChild(bar);
     // (what sits under it on a phone, where it wraps to rows, goes by where it ends)
     new ResizeObserver(() => this.root.style.setProperty('--tb-bottom', `${Math.round(bar.getBoundingClientRect().bottom)}px`)).observe(bar);

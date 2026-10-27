@@ -1,4 +1,5 @@
 import { desktop } from '../engine/Desktop';
+import { offline } from '../engine/Offline';
 import { store } from '../engine/Store';
 import { sync, SYNC_FILE } from '../engine/Sync';
 
@@ -84,6 +85,20 @@ export function savesSettings(row: Row, o: { toast(msg: string): void; download(
   const io = el('div', 'set-sync');
   io.append(exp, imp);
   row('Everything', io, 'Every save and setting in one file (graphics aside: they stay with each computer). Import merges a file in, keeping the newer of each thing.');
+
+  // playing with no signal (the website only: see engine/Offline)
+  if (offline.supported) {
+    const off = el('span', 'set-note');
+    const offBox = el('div', 'set-sync');
+    offBox.append(off, button('Save for offline', () => void offline.saveAll()), button('Check for update', () => void offline.checkForUpdate()));
+    row('Offline', offBox, 'The game keeps its files on this device, so it opens and plays with no signal (from the home screen too). Saving every file takes a good signal, once.');
+    const showOff = () => (off.textContent = [offline.summary(), offline.note].filter(Boolean).join(' · '));
+    offline.onChange(showOff);
+    new IntersectionObserver((seen) => {
+      if (seen.some((e) => e.isIntersecting)) void offline.refresh();
+    }).observe(off);
+    showOff();
+  }
 
   const show = () => {
     const where = store.kind === 'desktop' ? `in the app’s data folder (${desktop?.dataDir ?? ''})` : store.kind === 'browser' ? 'in this browser (cleared with its site data)' : 'nowhere: this browser won’t keep anything (a private window?), so it’s all gone when the page closes';

@@ -324,6 +324,20 @@ canvas.cat-icon,
   margin: 0 4px;
 }
 
+/* (⋯ and the break before what it opens: only on a phone held upright, below) */
+.tb-more,
+.tb-break {
+  display: none;
+}
+
+.toolbar.more-open .tb-more {
+  background: #3a3423;
+}
+
+.toolbar.more-open .tb-more svg {
+  fill: var(--accent);
+}
+
 /* ---------------- tool bar: tools and powers (right) ---------------- */
 .tools {
   position: absolute;
@@ -1508,9 +1522,30 @@ body {
   -webkit-touch-callout: none;
 }
 
-/* nor zooming the page at a double tap or a pinch on the panels (they still scroll) */
-html {
-  touch-action: pan-x pan-y;
+/* (no zooming the page at a double tap: the interaction protection's touch-action: manipulation; a pinch
+   on the panels still zooms, for whoever needs to) and no grey flash over what's tapped */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* a new version of the website downloaded (see engine/Offline): under the tool bar */
+.update-btn {
+  position: absolute;
+  top: calc(var(--tb-bottom, 40px) + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  padding: 8px 14px;
+  background: #3a3423;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.touch .update-btn {
+  min-height: 40px;
 }
 
 .items {
@@ -1721,6 +1756,27 @@ body:not(.touch) .touch-only {
     margin-left: auto;
     width: max-content;
     max-width: calc(100vw - 60px);
+  }
+
+  /* a phone: one row of the everyday buttons and ⋯, which opens the rest in rows under it */
+  .touch .toolbar .tb-sep,
+  .touch .toolbar:not(.more-open) .tb-extra {
+    display: none;
+  }
+
+  .touch .toolbar .tb-more {
+    display: grid;
+  }
+
+  .touch .toolbar .tb-extra {
+    order: 2;
+  }
+
+  .touch .toolbar.more-open .tb-break {
+    display: block;
+    order: 1;
+    flex-basis: 100%;
+    height: 4px;
   }
 
   .cat-panel {

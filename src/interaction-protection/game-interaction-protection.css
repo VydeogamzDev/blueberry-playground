@@ -1,0 +1,44 @@
+/* Game Interaction Protection Kit v1.0.0
+   Stop accidental browser double-tap zoom and unwanted text/image selection.
+   IMPORTANT: do not disable picture pinch-to-zoom globally. The game viewport
+   owns its own pan/pinch gestures using touch-action:none. */
+
+/* 'manipulation' keeps normal scrolling and browser accessibility pinch zoom
+   outside the game canvas, but removes the double-tap-to-zoom gesture. */
+html, body, #app {
+  touch-action: manipulation;
+}
+
+/* Keep the game interface from selecting text when repeatedly tapping. */
+#app, #app button, #app img, #app .scene-world {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* Images are not draggable onto the browser or outside the game. */
+#app img {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+/* The *custom* in-game picture pinch / drag handler gets unmodified pointer
+   events. This does NOT switch off the game's own pinch zoom. */
+#app .image-area, #app .scene-world {
+  touch-action: none;
+  -webkit-touch-callout: none;
+}
+
+/* Natural left/right swipes in the bottom tray and normal vertical scrolling
+   through menus remain enabled under touch-action:manipulation. */
+
+/* Never interfere with text entry, file selection, or offline backup/restore. */
+#app input,
+#app textarea,
+#app select,
+#app [contenteditable="true"],
+#app [role="textbox"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}

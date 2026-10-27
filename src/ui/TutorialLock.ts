@@ -261,7 +261,8 @@ export class TutorialLock {
       return;
     }
     const title = (e: HTMLElement) => e.dataset.tutTitle ?? e.title;
-    for (const e of all('.toolbar .tb-btn')) mark(e, this.buttonOk(title(e)));
+    // (the bar's ⋯, which only opens the rest of it, is never greyed out)
+    for (const e of all('.toolbar .tb-btn:not(.tb-more)')) mark(e, this.buttonOk(title(e)));
     for (const e of all('.toolbar .tb-select')) mark(e, r.buttons.some((b) => title(e).toLowerCase().startsWith(b)));
     for (const e of all('.tools .tool-btn[data-tool], .tools .tool-btn[data-power]')) mark(e, this.toolOk(e));
     for (const e of all('.tools .tool-tab')) mark(e, this.tabOk());

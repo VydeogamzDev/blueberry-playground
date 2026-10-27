@@ -2,11 +2,11 @@
   "name": "blueberry-playground",
   "private": true,
   "license": "PolyForm-Noncommercial-1.0.0",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node offline/tools/prepare-offline.mjs --dist dist --config offline/offline.config.json",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "standalone": "tsc --noEmit && node tools/standalone.mjs",
@@ -18,7 +18,9 @@
     "bench": "node tools/selftest.mjs --bench",
     "mixcheck": "node tools/selftest.mjs --mix",
     "sfxaudit": "python tools/sfxaudit.py",
-    "sheet": "vitest run --config tools/vitest.config.ts"
+    "sheet": "vitest run --config tools/vitest.config.ts",
+    "apple-audio": "node tools/apple-audio.mjs",
+    "icons": "node tools/icons.mjs"
   },
   "dependencies": {
     "@dimforge/rapier2d-compat": "file:vendor/rapier/rapier2d-compat",
@@ -30,7 +32,9 @@
     "three": "^0.186.1"
   },
   "devDependencies": {
+    "@breezystack/lamejs": "^1.2.7",
     "@types/three": "^0.186.0",
+    "@wasm-audio-decoders/ogg-vorbis": "^0.1.20",
     "electron": "^45.0.0",
     "electron-builder": "^26.15.3",
     "fflate": "^0.8.3",

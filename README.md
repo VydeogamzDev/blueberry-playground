@@ -38,7 +38,10 @@ Download the latest version from **[Releases](https://github.com/VydeogamzDev/bl
 - **Mac (Apple silicon):** `Blueberry-Playground-<version>-mac.tar.xz`. It needs two Terminal commands
   before it opens (see [below](#building-from-source), or the release notes).
 
-An iPhone or iPad can't run the page from a file, so it needs a hosted copy.
+- **iPhone, iPad and Android:** open **[blueberry-playground.vercel.app](https://blueberry-playground.vercel.app/)**
+  in Safari (or Chrome), then **Share › Add to Home Screen**. It opens full screen like an app, and once
+  it has loaded with a good signal it plays offline too (Settings › Saves and sync › Offline shows how
+  much is saved). A page opened from a file can't run on an iPhone or iPad.
 
 ## Controls
 

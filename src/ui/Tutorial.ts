@@ -703,6 +703,8 @@ export class Tutorial {
     this.glowing?.classList.remove('tut-glow');
     this.glowing = e;
     e?.classList.add('tut-glow');
+    // (a button folded away under the tool bar's ⋯, on a phone: opened, so it's there to press)
+    if (e?.classList.contains('tb-extra')) e.closest('.toolbar')?.classList.add('more-open');
   }
 }
 

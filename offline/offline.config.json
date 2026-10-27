@@ -1,0 +1,5 @@
+{
+  "appId": "blueberry-playground",
+  "mode": "split",
+  "coreInclude": ["icons/**"]
+}

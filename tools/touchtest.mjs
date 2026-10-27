@@ -169,7 +169,15 @@ try {
   const helpTop = await ev(`(() => { const t = document.querySelector('.help-touch'); const others = [...t.parentElement.children].filter((e) => e !== t && e.offsetHeight); return others.length > 0 && others.every((e) => t.getBoundingClientRect().top < e.getBoundingClientRect().top); })()`);
   check('help lists the touch controls first', helpTop);
   await ev(`bp.ui.toggleHelp(); true`);
+  // (upright, the tool bar is one row: time, speed, undo and ⋯, which opens the rest)
+  const tb = await ev(`(() => { const r = document.querySelector('.toolbar').getBoundingClientRect(); const shown = (t) => !!document.querySelector('.tb-btn[title^="' + t + '"]')?.offsetWidth; return { h: r.height, undo: shown('Undo'), detail: shown('Detail') }; })()`);
+  check('upright, the tool bar is one row, its other buttons folded under ⋯', tb.h < 60 && tb.undo && !tb.detail, JSON.stringify(tb));
+  await tap(await centerOf(`document.querySelector('.tb-more')`));
+  const opened = await ev(`(() => { const b = document.querySelector('.tb-btn[title^="Settings"]').getBoundingClientRect(); return b.width > 0 && b.right <= innerWidth && b.bottom <= innerHeight; })()`);
+  check('tapping ⋯ opens the rest, on the screen', opened);
   check('the tool bar has a Detail button (the detail view has no key on a phone)', await ev(`(() => { const b = document.querySelector('.tb-btn[title^="Detail"]'); return !!b && b.offsetWidth > 0; })()`));
+  await tap({ x: 220, y: 450 });
+  check('a tap in the sandbox folds it again', await ev(`!document.querySelector('.toolbar').classList.contains('more-open')`));
 
   // a vehicle: tapped, the drive buttons show at the screen's sides; held, it drives
   // (from the view a sandbox starts with: the pinch and pan above left it anywhere)

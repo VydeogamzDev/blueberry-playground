@@ -1,0 +1,6 @@
+.offline-kit{padding:18px;background:#15181d;color:#f4f6fa;border:1px solid #343b46;border-radius:14px;font:15px/1.5 system-ui,-apple-system,sans-serif;max-width:460px}
+.offline-kit h3{margin:0 0 12px;letter-spacing:.05em}.offline-kit p{margin:8px 0;color:#c1c9d2}
+.offline-kit [data-ok]{font-weight:700;color:#d9e6ff}.offline-kit-buttons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:16px 0}
+.offline-kit button{border:1px solid #485060;background:#282f39;color:#fff;border-radius:8px;padding:12px 7px;font:inherit;font-size:12px;font-weight:700;cursor:pointer}
+.offline-kit button:focus-visible{outline:3px solid #a4d4ff;outline-offset:2px}.offline-kit textarea{display:block;width:100%;box-sizing:border-box;min-height:64px;background:#0b0d11;border:1px solid #454b54;border-radius:8px;color:#dbe3eb;margin-bottom:12px}
+.offline-kit input[type=file]{display:block;max-width:100%;font-size:12px}

@@ -2,13 +2,34 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <!-- added to a phone's home screen, it opens full screen, as an app does (the style keeps clear of the notch: env(safe-area-inset-*)) -->
+    <!-- (no maximum-scale or user-scalable=no: they'd stop people who need to from zooming; the sandbox's pinch is its own, see the interaction protection) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- added to a phone's or tablet's home screen, it opens full screen, as an app does (the style keeps clear of the notch: env(safe-area-inset-*)) -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Blueberry" />
     <meta name="theme-color" content="#16171a" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <!-- installed on an iPhone or iPad (iOS 27), the system blurs the top of the screen over the game: an opaque edge in the game's colour stops it (the Game Display Compatibility Kit's early guard) -->
+    <script>
+      (function () {
+        var n = navigator, ua = n.userAgent || '';
+        var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        var ios = /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && n.maxTouchPoints > 1 && coarse);
+        var stand = !!n.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+        if (!ios || !stand || document.getElementById('ga-ios-top-guard')) return;
+        var e = document.createElement('div');
+        e.id = 'ga-ios-top-guard';
+        e.setAttribute('aria-hidden', 'true');
+        e.style.cssText = 'position:fixed;top:0;left:0;right:0;height:12px;pointer-events:none;z-index:2147483000;background-clip:text;-webkit-background-clip:text;user-select:none;';
+        e.style.backgroundColor = '#16171a';
+        document.documentElement.appendChild(e);
+        document.addEventListener('DOMContentLoaded', function () { if (document.body && e.isConnected) document.body.appendChild(e); }, { once: true });
+      })();
+    </script>
     <title>Blueberry Playground</title>
     <style>
       /* the loading screen: up while the game downloads and starts (main.ts moves the bar along, then fades it out) */
@@ -39,7 +60,7 @@
       </div>
     </div>
     <div id="app">
-      <canvas id="view"></canvas>
+      <canvas id="view" class="scene-world image-area"></canvas>
       <div id="ui"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>

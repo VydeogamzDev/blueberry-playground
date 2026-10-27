@@ -1,4 +1,5 @@
 import type { Sound } from './Sound';
+import { audioPath } from './assets';
 import { store } from './Store';
 
 /** What music is on: the main menu's theme, or the sandbox's tracks. */
@@ -92,7 +93,7 @@ export function musicUrl(path: string): string {
   let url = urls.get(path);
   if (url === undefined) {
     const packed = (globalThis as { BP_ASSETS?: Record<string, Uint8Array<ArrayBuffer>> }).BP_ASSETS?.[path];
-    url = packed ? URL.createObjectURL(new Blob([packed], { type: 'audio/ogg' })) : import.meta.env.BASE_URL + path;
+    url = packed ? URL.createObjectURL(new Blob([packed], { type: 'audio/ogg' })) : import.meta.env.BASE_URL + audioPath(path);
     urls.set(path, url);
   }
   return url;

@@ -4,6 +4,31 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.3.0 — 2026-10-27
+
+### New
+- Plays offline. Opened once on the website with a good signal, the game keeps every file on the phone,
+  tablet or computer, and opens and plays with no signal after that, from the home screen too.
+  Settings › Saves and sync › Offline says how much is kept, and saves the rest or checks for a new
+  version there. A new version downloads in the background and waits for a tap on **New version ready ·
+  Reload**, which carries the scene in the sandbox over into it.
+- Added to an iPhone's or iPad's home screen, it has its own blueberry icon and name, and opens full
+  screen as an app does (an installable web app, with a manifest).
+
+### Changes
+- On a phone held upright, the tool bar is one row: time, speed, undo, redo and **⋯**, which opens the
+  rest in rows under it (a tap in the sandbox folds them away). It used to take three rows, a quarter of
+  the screen. A tutorial pointing at a button under ⋯ opens it.
+- Sound on iPhones and iPads: they're given MP3s of every sound and track (Safari there can't be relied
+  on to play the Ogg recordings, and older iOS can't at all).
+- The page can be zoomed with a pinch on the menus and panels again, for whoever needs to; a pinch on
+  the sandbox is still its own zoom, and a double tap zooms nothing. No grey flash over a tapped button.
+
+### Fixes
+- An iPad that takes the graphics back from the game while it's in the background (short of memory)
+  no longer leaves a black screen: the game starts again with the scene as it was.
+- The view keeps up with a phone's browser bars and keyboard coming and going.
+
 ## 0.2.2 — 2026-10-26
 
 ### Fixes

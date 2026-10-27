@@ -4,6 +4,10 @@ import '@fontsource/dotgothic16/latin-ext-400.css';
 import '@fontsource/tiny5/latin-400.css';
 import '@fontsource/tiny5/latin-ext-400.css';
 import './style.css';
+// (no browser zoom at a double tap, text selection or long-press menus over the game: the Game Interaction Protection Kit)
+import './interaction-protection/game-interaction-protection.css';
+import { installGameInteractionProtection } from './interaction-protection/game-interaction-protection.js';
+import { offline } from './engine/Offline';
 import { initPhysics, RAPIER, rapierBuild } from './engine/Physics';
 import { Game } from './world/Game';
 import { rehearseCrush } from './world/Warmup';
@@ -39,6 +43,7 @@ function loading(step: string, done: number): Promise<void> {
 
 async function boot(): Promise<void> {
   const booted = performance.now();
+  installGameInteractionProtection({ root: document.getElementById('app') });
   await loading('Starting the physics engine…', 0.1);
   // the saves the other version (browser or desktop) made, merged in meanwhile: before anything reads them
   const synced = sync.start();
@@ -93,6 +98,8 @@ async function boot(): Promise<void> {
   const screen = document.getElementById('loading');
   screen?.classList.add('done');
   setTimeout(() => screen?.remove(), 600);
+  // playing offline (the website only): started once the game is going, on a timer (a hidden tab runs no animation frames)
+  setTimeout(() => void offline.start().catch((e) => console.warn('Offline play unavailable:', e)), 2000);
   // (benchmarks time the sandbox as it's played, without the main menu over it; the self-tests close it themselves)
   const inSandbox = <A extends unknown[], R>(fn: (...a: A) => R) => (...a: A): R => {
     ui.mainMenu.close();

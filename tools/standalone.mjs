@@ -58,7 +58,8 @@ const walk = (dir) => {
     const p = join(dir, f);
     const path = relative(outDir, p).replaceAll('\\', '/');
     if (statSync(p).isDirectory()) walk(p);
-    else if (!/\.(html|css)$/.test(path)) files.push([path, readFileSync(p)]);
+    // (nor the MP3s made for Apple's browsers: a page opened from disk plays the Oggs)
+    else if (!/\.(html|css|mp3)$/.test(path)) files.push([path, readFileSync(p)]);
   }
 };
 walk(outDir);

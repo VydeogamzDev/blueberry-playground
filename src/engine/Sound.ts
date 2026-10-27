@@ -1,5 +1,5 @@
 import type { ImpactSound } from '../world/Materials';
-import { fetchAsset } from './assets';
+import { audioPath, fetchAsset } from './assets';
 import { store } from './Store';
 
 export type GunSound = 'pistol' | 'revolver' | 'smg' | 'rifle' | 'shotgun' | 'sniper' | 'minigun' | 'laser'
@@ -245,7 +245,7 @@ export class Sound {
       while (next < files.length) {
         const f = files[next++];
         try {
-          const data = await (await fetchAsset(f)).arrayBuffer();
+          const data = await (await fetchAsset(audioPath(f))).arrayBuffer();
           this.buffers.set(f, await ctx.decodeAudioData(data));
         } catch {
           /* skip broken files */
