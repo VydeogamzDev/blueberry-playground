@@ -1,5 +1,5 @@
 import type { Test, TestCtx } from './types';
-import type { UI } from '../../ui/UI';
+import { CARRY_ON, type UI } from '../../ui/UI';
 import type { Entity } from '../../world/Entity';
 import type { ContextAction } from '../../world/types';
 import { capture } from '../../world/Snapshot';
@@ -230,6 +230,49 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       } finally {
         tool.stop();
       }
+    }],
+    ['extra: bugs: the physics engine breaking says so, gives the details to send in, and the game carries on with the scene after a restart', () => {
+      kit.reset();
+      kit.spawn('crate', 1, 0.5);
+      kit.advance(0.2);
+      // a frame that breaks as Rapier does when it panics
+      const boom = () => {
+        throw new Error('RuntimeError: unreachable (a test)');
+      };
+      game.frameHandlers.push(boom);
+      // (what it says in the console is this test's, not a page error)
+      const said = console.error;
+      console.error = () => {};
+      try {
+        (game as unknown as { frameAt(now: number): void }).frameAt(performance.now());
+      } finally {
+        console.error = said;
+        game.frameHandlers.splice(game.frameHandlers.indexOf(boom), 1);
+      }
+      const box = document.querySelector('.halt-panel');
+      try {
+        if (!game.halted) return 'the frames went on';
+        if (!box) return 'nothing said the game had stopped';
+        const details = box.querySelector('textarea')?.value ?? '';
+        if (!details.includes('unreachable (a test)')) return `the details don’t say what broke: “${details.slice(0, 120)}”`;
+        if (![...box.querySelectorAll('button')].some((b) => b.textContent === 'Carry on')) return 'no way to carry on with the scene';
+      } finally {
+        box?.closest('.overlay')?.remove();
+        game.halted = false;
+      }
+      // the scene as of the last edit (what's carried when the scene now can't be read), over a restart
+      controls.history.clear();
+      controls.history.record('A test');
+      kit.spawn('human', -1, 1);
+      const text = controls.history.lastSave();
+      if (!text) return 'no save made of the last undo step';
+      sessionStorage.setItem(CARRY_ON, text);
+      kit.reset();
+      ui().carryOn();
+      if (sessionStorage.getItem(CARRY_ON) !== null) return 'the scene carried on was left to carry on again at the next start';
+      const ids = game.entities.filter((e) => !e.destroyed).map((e) => e.def.id);
+      if (ids.join() !== 'crate') return `carried on with ${ids.join(', ') || 'nothing'}: before the last edit there was a crate`;
+      return true;
     }],
   ];
 }

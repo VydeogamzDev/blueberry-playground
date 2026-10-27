@@ -9,7 +9,7 @@ import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOp
 import { creatureArt, creatureFigure, CREATURE_EYE, type CreatureKind } from '../art/creatures';
 import { adrenalineRush, type Drug } from './Syringe';
 import { washBlood } from './Medical';
-import { Human } from './Human';
+import { Human, CRUSHING, LIMB_BEARS } from './Human';
 import { getItem } from '../catalog/items';
 import { ACID_SCAR, Liquid, LIQUID_COLORS, liquidSound, paintWound, seep, woundSpot } from '../systems/Liquids';
 import { PK } from '../systems/Particles';
@@ -2387,6 +2387,14 @@ export class Creature extends Entity {
     if ((frac > 0.2 || Eother > 6 * this.totalMass()) && this.state === 'stand') this.setState('down');
   }
 
+  /** Pressed on by a weight: as a person's limbs, crushed and in the end pressed flat (see Human.onLoad()). */
+  onLoad(part: Part, other: Part, force: number, point: V2, normal: V2): void {
+    if (force <= LIMB_BEARS || other.entity.canWalk) return;
+    const l = this.limbOf(part);
+    if (!l || l.gone) return;
+    this.damage(part, (force - LIMB_BEARS) * CRUSHING * this.game.stepDt, 'crush', point, { x: -normal.x, y: -normal.y });
+  }
+
   onBullet(hit: BulletHit): void {
     const l = this.limbOf(hit.part);
     if (!l || l.gone) return;
@@ -2474,6 +2482,13 @@ export class Creature extends Entity {
     if (kind === 'cut' || kind === 'stab') {
       if (point) this.addWound(l, point.x, point.y, -(dir?.x ?? 0), -(dir?.y ?? 0), 0.25 + amt * 0.03, kind === 'cut' ? 'cut' : 'blot', dir);
       this.injure(l, amt, kind, point, dir);
+      return;
+    }
+    if (kind === 'crush') {
+      // pressed on by a weight, as a person is (see Human.onLoad())
+      this.injure(l, amt, kind, point, dir);
+      // (its chest holds the rest together: crushed, it stays, as with blasts)
+      if (!l.gone && part.hp < -l.spec.hp * 0.3 && l.spec.key !== 'chest') this.gib(l, dir);
       return;
     }
     this.injure(l, amt, kind, point, dir);

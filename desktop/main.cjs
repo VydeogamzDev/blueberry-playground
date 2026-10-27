@@ -73,6 +73,29 @@ function writeAtomic(file, text) {
   }
 }
 
+// ---- what went wrong (the page's errors, a hang, a crash), kept for the player to send in
+
+const logFile = path.join(dataDir, 'log.txt');
+/** The log moves to log-old.txt once it's this big (bytes). */
+const LOG_MOST = 512 * 1024;
+/** Lines kept a session at most (a page erring every frame would fill the disk). */
+const LOG_LINES = 300;
+let logged = 0;
+let lastLogged = '';
+
+/** Adds a line, with the time, to log.txt in the data folder (a line the same as the last is left out). */
+function log(text) {
+  const line = String(text).slice(0, 4000);
+  if (line === lastLogged || ++logged > LOG_LINES) return;
+  lastLogged = line;
+  try {
+    if ((fs.statSync(logFile, { throwIfNoEntry: false })?.size ?? 0) > LOG_MOST) fs.renameSync(logFile, path.join(dataDir, 'log-old.txt'));
+    fs.appendFileSync(logFile, `${new Date().toISOString()} ${line}\n`);
+  } catch {
+    // (nowhere to write it: it goes unkept)
+  }
+}
+
 // ---- the app's own settings: the window's place, the sync folder, the screen's refresh last seen
 
 const configFile = path.join(dataDir, 'desktop.json');
@@ -283,6 +306,61 @@ function createWindow() {
     e.preventDefault();
     openOutside(url);
   });
+  // what goes wrong goes in the log (see log()); a hang or a crash offers to start the game again
+  page.on('console-message', (e) => {
+    if (e.level === 'error') log(`[page] ${e.message}`);
+  });
+  let waiting = null;
+  let restarting = false;
+  win.on('unresponsive', () => {
+    log('the game stopped responding');
+    if (smoke || waiting) return;
+    waiting = new AbortController();
+    void dialog
+      .showMessageBox(win, {
+        type: 'warning',
+        title: 'Blueberry Playground',
+        message: 'The game isn’t responding',
+        detail: `It may come back by itself. Restart starts it again (the scene in the sandbox is lost). What happened is noted in ${logFile}.`,
+        buttons: ['Wait', 'Restart'],
+        defaultId: 0,
+        cancelId: 0,
+        signal: waiting.signal,
+      })
+      .then((r) => {
+        waiting = null;
+        if (r.response !== 1 || !win) return;
+        log('restarted by the player');
+        restarting = true;
+        page.forcefullyCrashRenderer();
+        page.reload();
+      });
+  });
+  win.on('responsive', () => {
+    log('the game responds again');
+    waiting?.abort();
+  });
+  page.on('render-process-gone', (_e, d) => {
+    log(`the game's page died (${d.reason}, exit code ${d.exitCode})`);
+    if (smoke || d.reason === 'clean-exit' || restarting) {
+      restarting = false;
+      return;
+    }
+    void dialog
+      .showMessageBox(win, {
+        type: 'error',
+        title: 'Blueberry Playground',
+        message: 'The game crashed',
+        detail: `(${d.reason}) Restart starts it again. What happened is noted in ${logFile}.`,
+        buttons: ['Restart', 'Quit'],
+        defaultId: 0,
+      })
+      .then((r) => {
+        if (!win) return;
+        if (r.response === 0) page.reload();
+        else app.quit();
+      });
+  });
   if (smoke) {
     page.on('console-message', (e) => {
       if (e.level === 'error') console.error(`[page] ${e.message}`);
@@ -426,7 +504,9 @@ else {
     win.focus();
   });
   app.setAppUserModelId('com.blueberryplayground.app');
+  app.on('child-process-gone', (_e, d) => log(`the ${d.type} process died (${d.reason}, exit code ${d.exitCode})`));
   app.whenReady().then(() => {
+    log(`Blueberry Playground ${app.getVersion()} started: Electron ${process.versions.electron}, ${os.type()} ${os.release()} ${os.arch()}, ${os.cpus().length} logical processors`);
     // (none on Windows; a Mac's app menu, with Quit, Hide and copy and paste)
     Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]) : null);
     protocol.handle('app', serve);

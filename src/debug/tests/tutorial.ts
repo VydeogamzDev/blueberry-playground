@@ -1462,5 +1462,66 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
         tidy();
       }
     }],
+    ['extra: tutorial: in Ouch the knife handles as anywhere (A/D turn it and keep it to its angle), and flung at them it goes in, not into their hand', () => {
+      const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+      try {
+        return keepingProgress(() => {
+          // (a quick throw, and a slower one)
+          for (const frames of [6, 14]) {
+            kit.reset();
+            tut().start('people');
+            tut().go(tut().steps.findIndex((s) => s.id === 'p-stab'));
+            live(0.6);
+            const h = ref<Human>('patient');
+            const torso = h.limbs.get('midTorso')!.part;
+            const g0 = ref<Item>('knife').gripWorld()!;
+            // picked up and brought to chest height, 1.4 m short of them
+            kit.down(g0.x, g0.y);
+            const ax = torso.x - 1.4;
+            const ay = torso.y;
+            for (let i = 1; i <= 20; i++) {
+              kit.move(g0.x + ((ax - g0.x) * i) / 20, g0.y + ((ay - g0.y) * i) / 20);
+              live(1 / 60);
+            }
+            live(0.3);
+            // turned with A/D till it points at them
+            const k = ref<Item>('knife');
+            const want = k.flipped ? Math.PI : 0;
+            for (let i = 0; i < 120 && Math.abs(wrap(k.main.a - want)) > 0.08; i++) {
+              const code = keyOf(wrap(k.main.a - want) > 0 ? 'rotateRight' : 'rotateLeft');
+              kit.key(code, true);
+              live(1 / 60);
+              kit.key(code, false);
+            }
+            if (!controls.grab?.locked) return 'A/D didn’t take hold of the knife’s angle in this step';
+            live(0.3);
+            const a = k.main.a;
+            // whirled about, it keeps to that angle
+            for (let i = 0; i < 30; i++) {
+              kit.move(ax + Math.sin(i / 3) * 0.6, ay + Math.cos(i / 3) * 0.4);
+              live(1 / 60);
+            }
+            kit.move(ax, ay);
+            live(0.4);
+            const off = Math.abs(wrap(k.main.a - a));
+            if (off > 0.2) return `whirled about, the knife turned ${((off * 180) / Math.PI).toFixed(0)}° from where A/D left it`;
+            // flung at their chest
+            const tx = torso.x + 0.6;
+            for (let i = 1; i <= frames; i++) {
+              kit.move(ax + ((tx - ax) * i) / frames, ay);
+              live(1 / 60);
+            }
+            kit.up(tx, ay);
+            live(1.2);
+            if (h.heldItems().length) return `flung at them (over ${frames} frames), they caught the knife`;
+            if (on() === 'p-stab') return `flung at them (over ${frames} frames), the knife didn’t go in`;
+            tut().stop(false);
+          }
+          return true;
+        });
+      } finally {
+        tut().stop(false);
+      }
+    }],
   ];
 }

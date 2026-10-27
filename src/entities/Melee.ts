@@ -99,6 +99,11 @@ export class Blade extends Item {
     return m;
   }
 
+  /** Stuck in someone, it isn't taken by a hand it's pushed past. */
+  offer(at?: V2): boolean {
+    return !this.lodges.length && super.offer(at);
+  }
+
   onImpact(info: ImpactInfo): void {
     const o = info.other;
     const p = this.main;

@@ -28,10 +28,11 @@ export interface Allow {
 /**
  * Always to hand, whatever the step: looking about, stopping time, Esc (the
  * pause menu, and the way out), Shift (multiselect, chaining connections), the
- * Drag tool's key (back to bare hands, as its button always is), and showing the
- * toybox and the interface again (a step may need them, hidden before it).
+ * Drag tool's key (back to bare hands, as its button always is), A/D (turning
+ * what's held: part of dragging it), and showing the toybox and the interface
+ * again (a step may need them, hidden before it).
  */
-const SAFE = new Set(['panLeft', 'panRight', 'panUp', 'panDown', 'zoomIn', 'zoomOut', 'recenter', 'time', 'menu', 'fast', 'tool1', 'toybox', 'toggleUi']);
+const SAFE = new Set(['panLeft', 'panRight', 'panUp', 'panDown', 'zoomIn', 'zoomOut', 'recenter', 'time', 'menu', 'fast', 'tool1', 'rotateLeft', 'rotateRight', 'toybox', 'toggleUi']);
 /** Tool bar buttons that do what a key does (allowed with it), by the start of their tooltip. */
 const BUTTON_KEYS: [string, string][] = [
   ['Toggle time', 'time'], ['Step one tick', 'step'], ['Slow motion', 'slowmo'], ['X-ray', 'xray'], ['Controls', 'help'],

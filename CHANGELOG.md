@@ -4,6 +4,46 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.2.2 — 2026-10-26
+
+### Fixes
+- Contraptions welded together no longer shake themselves apart. Where a light part had several heavy
+  ones welded round it (a short beam with long wings either side and a frame on top), the welds wobbled
+  more with every step: a player's rocket lifted off, then spun up to 100 turns a second and flung itself
+  away, and its frame did the same floating still in empty space. Things welded together now move as
+  one piece (each welded group keeps its own momentum and spin); a hinge or a rope still lets things move.
+- A balloon tied to someone who has stood still long enough to settle lifts them. The rope (or weld, or
+  spring) used to snap at once: they were put straight back to sleep every step, hanging where they stood.
+- An RPG or a grenade launcher swung or spun round fires along its barrel. Its rocket took the launcher's
+  sideways speed along with it, and flew 20-36 degrees off where it pointed.
+- A fan built onto a cart drives it forward, blowing backward, as it should: it pushes itself back a
+  little as it blows (not enough to slide off on the floor), and its wind and draw leave alone what it's
+  welded, hinged or pinned to. Its draw used to pull the cart backward, the way the wind blew.
+- Heavy things crush. Something pressing down harder than a car's wheel (a tonne set down, a slab of
+  bricks) crushes what's under it: a person's limbs give and are pressed flat, a glass tank or a crate
+  breaks, a fuel drum goes off, a car's roof caves in until it goes up. A great slab dropped on someone
+  leaves only a mess; a heap of people, or crates stacked up, are no heavier than before.
+- A 1000 kg weight dropped on a glass tank breaks it, with water in it or not: glass counts the full
+  weight of a heavy thing coming down on it. A crate dropped in still leaves it standing.
+- A jet engine can be wrecked. Run into a wall (or blown up) while it's running, its fuel goes up in a
+  fireball; switched off, a hard enough knock breaks it up.
+- A knock is counted once for each pair of things, not once for each of their shapes: a glass tank set
+  down hard on the floor was hurt three times over (its floor and both walls).
+- Knocks land the way they came. Which way a knock went was guessed from where each thing's middle
+  was, and a car at full speed (sunk past a leg's middle in one step) or a weight landing on a glass
+  tank's floor (below the tank's middle) seemed to hit from the far side, and did nothing.
+- Riding in a car you built, knocks count how fast things meet, not how fast they go: a rider's foot
+  swung into the chair at 9 m/s, the car going 8, met it at 1-3 m/s and was mangled as if at 9. Things
+  welded together don't crush each other, either (a rider welded in, their leg jammed against the chair).
+- A motor wheel (or a motor, or a servo) pinned or hinged on by its hub drives: the pin holds its hub fast,
+  as a weld does, and the motor turns the wheel. Its hub used to spin round on the pin instead.
+- In the tutorial's Ouch, the knife turns with A and D as anywhere, and flung at the patient it goes in;
+  they no longer catch it.
+- If the physics engine breaks (it can, very rarely), the game says so rather than freezing: a window
+  with the details to send in, and Carry on, which reloads the game with the scene as it was. The
+  desktop app keeps a log (log.txt, beside the saves), and if the game stops responding it offers to wait
+  or restart it.
+
 ## 0.2.1 — 2026-10-25
 
 ### Water

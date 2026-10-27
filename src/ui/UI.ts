@@ -34,6 +34,8 @@ import { Friends } from '../net/Friends';
 import { store } from '../engine/Store';
 import { desktop } from '../engine/Desktop';
 import { savesSettings } from './SavesSettings';
+import { rapierBuild } from '../engine/Physics';
+import { version } from '../../package.json';
 
 const ICONS: Record<string, string> = {
   pause: '<svg viewBox="0 0 16 16"><rect x="4" y="3" width="3" height="10"/><rect x="9" y="3" width="3" height="10"/></svg>',
@@ -107,6 +109,24 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: 
   if (cls) e.className = cls;
   if (html !== undefined) e.innerHTML = html;
   return e;
+}
+
+/** The scene carried over a restart after the physics engine broke (see UI.halted()), in the page's session storage. */
+export const CARRY_ON = 'blueberry-carry-on';
+
+/** What broke the physics engine, for the player to send in: the version, the physics build, the browser, the error and where. */
+function haltDetails(e: unknown): string {
+  const stack = e instanceof Error && e.stack ? e.stack.split('\n').slice(1).map((s) => s.trim()) : [];
+  // (the engine's own calls have no names: how many, then the game's that led to them, without the site's address)
+  const inside = stack.filter((s) => s.includes('wasm-function')).length;
+  const calls = stack.filter((s) => !s.includes('wasm-function')).slice(0, 16).map((s) => s.replace(/(https?|app|file):\/\/[^/\s)]*\//g, ''));
+  return [
+    `Blueberry Playground ${version}${desktop ? ` desktop (Electron ${desktop.electron})` : ''}, physics: ${rapierBuild}`,
+    navigator.userAgent,
+    String(e),
+    ...(inside ? [`(${inside} calls inside the physics engine)`] : []),
+    ...calls,
+  ].join('\n');
 }
 
 export class UI implements UIBridge {
@@ -296,6 +316,7 @@ export class UI implements UIBridge {
     });
     // (no time played while the title screen is up)
     game.stats.inMenu = () => this.mainMenu.open;
+    game.onHalt = (e) => this.halted(e);
     this.tutorial = new Tutorial(game, controls, root, {
       contraptions: () => this.contraptions.items().length,
       tutorials: () => this.showTutorials(),
@@ -1661,6 +1682,88 @@ export class UI implements UIBridge {
       input.focus();
       input.select();
     } else yes.focus();
+  }
+
+  /**
+   * The physics engine broke and the frames have stopped (see Game.onHalt): says so,
+   * with what broke (to copy and send in), and offers to carry on: the page starts
+   * again and the scene is put back (see carryOn()), as it is now if it can still be
+   * read, else as it was before the last edit (see History.lastSave()).
+   */
+  private halted(e: unknown): void {
+    let scene: string | null = null;
+    let when = 'as it was a moment ago';
+    try {
+      scene = saveToString(this.game);
+    } catch {
+      when = 'as it was before your last change';
+      try {
+        scene = this.controls.history.lastSave();
+      } catch {
+        scene = null;
+      }
+    }
+    const details = haltDetails(e);
+    // (in the desktop app, this goes in its log too)
+    console.error(`The physics engine broke; the game has stopped.\n${details}`);
+    this.dialogClose?.();
+    const overlay = el('div', 'overlay');
+    const box = el('div', 'panel dialog-panel halt-panel');
+    box.appendChild(el('div', 'panel-title')).textContent = 'The game stopped';
+    box.appendChild(el('div', 'panel-note')).textContent =
+      'The physics engine ran into an error, so everything has stopped. ' +
+      (scene ? `Carry on starts the game again with your scene ${when}. ` : 'Restart starts the game again. ') +
+      'The details below say what went wrong: sending them in helps get it fixed.' +
+      (desktop ? ` (They’re kept in log.txt too, in ${desktop.dataDir}.)` : '');
+    const text = el('textarea', 'halt-details');
+    text.readOnly = true;
+    text.value = details;
+    box.appendChild(text);
+    const btns = el('div', 'set-io');
+    const go = el('button', 'panel-btn', scene ? 'Carry on' : 'Restart');
+    go.onclick = () => {
+      try {
+        if (scene) sessionStorage.setItem(CARRY_ON, scene);
+      } catch {
+        // (too big to carry over: it starts again without it)
+      }
+      location.reload();
+    };
+    const copy = el('button', 'panel-btn', 'Copy details');
+    copy.onclick = () => {
+      text.select();
+      navigator.clipboard?.writeText(details).then(() => this.toast('Details copied'), () => document.execCommand('copy'));
+    };
+    btns.append(go, copy);
+    if (scene) {
+      const empty = el('button', 'panel-btn', 'Start empty');
+      empty.onclick = () => location.reload();
+      btns.appendChild(empty);
+    }
+    box.appendChild(btns);
+    overlay.appendChild(box);
+    overlay.onkeydown = (ev) => ev.stopPropagation();
+    this.root.appendChild(overlay);
+    go.focus();
+  }
+
+  /** As the game starts after the physics engine broke (see halted()): the scene it was playing, put back. */
+  carryOn(): void {
+    let text: string | null = null;
+    try {
+      text = sessionStorage.getItem(CARRY_ON);
+      sessionStorage.removeItem(CARRY_ON);
+    } catch {
+      return;
+    }
+    if (!text) return;
+    this.mainMenu.close();
+    try {
+      this.controls.loadScene(text, 'Carry on');
+      this.toast('Carried on from where it stopped');
+    } catch (e) {
+      this.toast('Couldn’t carry on: ' + (e as Error).message);
+    }
   }
 
   /**

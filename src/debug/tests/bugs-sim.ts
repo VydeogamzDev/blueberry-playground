@@ -2,8 +2,20 @@ import type { Test, TestCtx } from './types';
 import type { Entity } from '../../world/Entity';
 import type { Human } from '../../entities/Human';
 import type { Flask } from '../../entities/Flask';
-import { capture, instantiate } from '../../world/Snapshot';
+import type { Motor, Thruster } from '../../entities/Machines';
+import type { JetEngine } from '../../entities/JetEngine';
+import type { Car } from '../../entities/Car';
+import type { Prop } from '../../entities/Prop';
+import { PX } from '../../engine/constants';
+import { getItem } from '../../catalog/items';
+import type { Balloon } from '../../entities/Balloon';
+import type { Firearm } from '../../entities/Firearm';
+import type { Fan } from '../../entities/Air';
+import { capture, instantiate, type Snapshot } from '../../world/Snapshot';
 import { Liquid } from '../../systems/Liquids';
+
+/** A player's rocket, as saved as a contraption (see the test). */
+const ROCKET = {'entities':[{'def':'short-beam','flip':true,'parts':[{'x':0.396,'y':0.5341,'a':0.0001,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}]},{'def':'short-beam','flip':true,'parts':[{'x':0.0068,'y':1.4182,'a':1.2215,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'config':{'w':52,'h':6}},{'def':'short-beam','flip':false,'parts':[{'x':0.7851,'y':1.4182,'a':-1.2215,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'config':{'w':52,'h':6}},{'def':'concrete-block','flip':true,'parts':[{'x':0.4101,'y':2.4585,'a':0,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}]},{'def':'thruster','flip':true,'parts':[{'x':0.0351,'y':0.2201,'a':-1.558,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'extra':{'on':false,'off':false,'thrust':2}},{'def':'thruster','flip':true,'parts':[{'x':0.6575,'y':0.2239,'a':-1.558,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'extra':{'on':false,'off':false,'thrust':2}},{'def':'switch','flip':true,'parts':[{'x':0.3402,'y':0.7571,'a':0,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'extra':{'on':true}},{'def':'short-beam','flip':true,'parts':[{'x':2.5054,'y':0.534,'a':0,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'config':{'w':87,'h':6}},{'def':'short-beam','flip':true,'parts':[{'x':-1.8072,'y':0.5378,'a':0,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'config':{'w':93,'h':6}}],'connections':[{'kind':'weld','a':[3,0],'la':{'x':0.1719,'y':-0.1719},'b':[2,0],'lb':{'x':-0.8854,'y':0.1063},'rest':0.232},{'kind':'weld','a':[3,0],'la':{'x':-0.1719,'y':-0.1719},'b':[1,0],'lb':{'x':0.8951,'y':0.0797},'rest':0.2428},{'kind':'weld','a':[1,0],'la':{'x':-0.6406,'y':0.0469},'b':[0,0],'lb':{'x':-0.6524,'y':0.2983},'rest':0.3288},{'kind':'weld','a':[2,0],'la':{'x':0.6719,'y':0.0156},'b':[0,0],'lb':{'x':0.6338,'y':0.258},'rest':0.2981},{'kind':'weld','a':[0,0],'la':{'x':-0.3594,'y':0.0156},'b':[4,0],'lb':{'x':-0.3295,'y':0.0057},'rest':0.2212},{'kind':'weld','a':[0,0],'la':{'x':0.2656,'y':0.0156},'b':[5,0],'lb':{'x':-0.3258,'y':0.0082},'rest':0.2166},{'kind':'weld','a':[4,0],'la':{'x':0.0031,'y':0.0},'b':[5,0],'lb':{'x':-0.0011,'y':-0.6224},'rest':0.6224},{'kind':'weld','a':[6,0],'la':{'x':0,'y':-0.0829},'b':[0,0],'lb':{'x':-0.0557,'y':0.1401},'rest':0.1573},{'kind':'wire','a':[6,0],'la':{'x':0.1406,'y':-0.0469},'b':[5,0],'lb':{'x':0.0469,'y':0.0156},'rest':0.5668},{'kind':'wire','a':[6,0],'la':{'x':-0.1094,'y':-0.0781},'b':[4,0],'lb':{'x':0.0781,'y':-0.0156},'rest':0.5769},{'kind':'weld','a':[7,0],'la':{'x':-1.125,'y':-0.0156},'b':[0,0],'lb':{'x':0.9844,'y':-0.0159},'rest':0.3452},{'kind':'weld','a':[8,0],'la':{'x':1.3125,'y':-0.0156},'b':[0,0],'lb':{'x':-0.8906,'y':-0.0119},'rest':0.2188}]} as unknown as Snapshot;
 
 /** Regression tests for bugs found in the simulation (one per fix). */
 export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
@@ -11,8 +23,213 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
   const strands = (h: Human) => (h as unknown as { tendons: { count: number } | null }).tendons?.count ?? 0;
   /** Who they're fighting (read through this, the checks don't narrow it for the rest of the test). */
   const foeOf = (h: Human): Entity | null => h.foe;
+  const C = game.connections;
+  /** Half the height of a thing as it's spawned (m). */
+  const half = (id: string) => getItem(id)?.halfHeight ?? 0.5;
 
   return [
+    ['extra: bugs: a player’s rocket (beams welded round a light one, two thrusters) climbs on its thrusters without shaking itself apart and spinning off', () => {
+      kit.reset();
+      // the player's "Not Working Rocket": a short beam with a long one welded to either end, an
+      // A-frame and a concrete block on top, two thrusters under it, switched on by the switch
+      const made = instantiate(game, ROCKET, { dy: 0.02 });
+      const parts = made.map((e) => e.parts[0]);
+      const block = parts[3];
+      const y0 = block.y;
+      const welds = C.list.filter((c) => c.kind === 'weld').length;
+      if (!made.filter((e) => e.def.id === 'thruster').every((t) => (t as Thruster).running)) return 'the thrusters are not running';
+      // (it shook itself apart within 2 s, and spun off at 100 rad/s)
+      let most = 0;
+      for (let i = 0; i < 16; i++) {
+        kit.advance(0.25);
+        for (const p of parts) most = Math.max(most, Math.abs(p.av));
+      }
+      if (most > 1.5) return `it spun up to ${most.toFixed(1)} rad/s`;
+      if (C.list.filter((c) => c.kind === 'weld').length !== welds) return 'a weld broke';
+      if (block.y - y0 < 3) return `it rose only ${(block.y - y0).toFixed(1)} m in 4 s`;
+      return true;
+    }],
+    ['extra: bugs: a big balloon tied to someone who has stood still long enough to settle lifts them, its rope not snapping on them', () => {
+      kit.reset();
+      const h = human(0);
+      kit.advance(5);
+      if (!h.parts.every((p) => p.destroyed || p.body.isSleeping())) return 'they never settled, as the test needs';
+      const big = kit.spawn('big-balloon', 0.05, 3.2) as Balloon;
+      big.setFrozen(true);
+      big.tieBelow();
+      const rope = C.list.find((c) => c.kind === 'rope' && (c.a.entity === big || c.b?.entity === big));
+      if (!rope || (rope.a.entity !== h && rope.b?.entity !== h)) return 'it was not tied to them';
+      big.setFrozen(false);
+      // (put straight back to sleep each step, they hung where they stood and the rope snapped in 0.15 s)
+      kit.advance(3);
+      if (!C.list.includes(rope)) return 'the rope snapped';
+      const feet = Math.min(h.limbs.get('footF')!.part.y, h.limbs.get('footB')!.part.y);
+      if (feet < 1) return `in 3 s it lifted their feet to ${feet.toFixed(2)} m`;
+      return true;
+    }],
+    ['extra: bugs: an RPG or a grenade launcher spun round and swung fires along its barrel, not off to the side', () => {
+      for (const id of ['rpg', 'grenade-launcher']) {
+        kit.reset();
+        const g = kit.spawn(id, 0, 20, { angle: 0.5 }) as Firearm;
+        kit.advance(0.02);
+        // (it fired 20-36 degrees off with what it was doing sideways: the round turns to fly the way it goes)
+        g.main.body.setLinvel({ x: 2, y: 8 }, true);
+        g.main.body.setAngvel(11, true);
+        const fwd = g.forward();
+        const before = new Set(game.entities);
+        g.activate();
+        const round = game.entities.find((e) => !before.has(e) && e.parts[0].body.linvel().x ** 2 + e.parts[0].body.linvel().y ** 2 > 25);
+        if (!round) return `${id}: it fired nothing`;
+        const v = round.parts[0].body.linvel();
+        const off = (Math.abs(Math.atan2(fwd.x * v.y - fwd.y * v.x, fwd.x * v.x + fwd.y * v.y)) * 180) / Math.PI;
+        const allow = (g.gun.spread * 90) / Math.PI + 1;
+        if (off > allow) return `${id}: fired ${off.toFixed(1)} degrees off its barrel`;
+      }
+      return true;
+    }],
+    ['extra: bugs: a fan on the back of a cart, blowing backward, drives it forward (not back); one on the floor stays put', () => {
+      kit.reset();
+      // a beam on two free wheels, the fan welded on at its left end blowing left
+      const cart = kit.spawn('beam', 0, 0.8).parts[0];
+      for (const x of [-1.2, 1.2]) {
+        const tire = kit.spawn('tire', x, 0.34).parts[0];
+        C.create('pin', cart, { x, y: 0.34 }, tire, { x, y: 0.34 });
+      }
+      const fan = kit.spawn('fan', -1, 1.25, { flip: true }) as Fan;
+      kit.advance(0.5);
+      C.create('weld', fan.main, { x: -1, y: 0.9 }, cart, { x: -1, y: 0.9 });
+      const bat = kit.spawn('battery', -6, 0.4);
+      kit.advance(1);
+      const x0 = cart.x;
+      C.create('wire', bat.parts[0], { x: bat.parts[0].x, y: bat.parts[0].y }, fan.main, { x: fan.main.x, y: fan.main.y });
+      // (its draw behind it pulled the cart it was fixed to backward, the way the wind blows)
+      kit.advance(4);
+      if (!fan.running) return 'the fan is not running';
+      const moved = cart.x - x0;
+      if (moved < 0.5) return `in 4 s the cart went ${moved.toFixed(2)} m forward`;
+      // a fan standing on the floor at its top speed stays where it is, upright
+      kit.reset();
+      const floor = kit.spawn('fan', 0, 0.32) as Fan;
+      floor.speed = 2;
+      // (out of reach of its draw behind it)
+      const bat2 = kit.spawn('battery', -6, 0.4);
+      kit.advance(0.8);
+      const f0 = floor.main.x;
+      C.create('wire', bat2.parts[0], { x: bat2.parts[0].x, y: bat2.parts[0].y }, floor.main, { x: floor.main.x, y: floor.main.y });
+      kit.advance(3);
+      if (Math.abs(floor.main.x - f0) > 0.1) return `on the floor at full speed, the fan slid ${(floor.main.x - f0).toFixed(2)} m`;
+      if (Math.abs(floor.main.a) > 0.2) return 'on the floor at full speed, the fan tipped over';
+      return true;
+    }],
+    ['extra: bugs: a heavy weight breaks a glass tank, with water in it or not (a crate dropped on it doesn’t); a great slab dropped on someone presses them flat', () => {
+      for (const water of [false, true]) {
+        kit.reset();
+        const tank = kit.spawn('glass-tank', 0, 0.8) as Prop;
+        kit.advance(1);
+        const top = tank.main.y + (tank.main.h * PX) / 2;
+        if (water) {
+          kit.spawn('water', 0, top - 0.7, { config: { w: tank.main.w - 4, h: Math.round(tank.main.h * 0.6) } });
+          kit.advance(2);
+        }
+        // (a 1 t weight came down on it as a 100 kg one would, and sat in it, and it stood)
+        kit.spawn('weight', 0, top + half('weight') + 2);
+        kit.advance(3);
+        if (!tank.destroyed) return `${water ? 'with water in it, ' : ''}a 1 t weight dropped 2 m onto a glass tank left it standing`;
+      }
+      kit.reset();
+      const tank = kit.spawn('glass-tank', 0, 0.8) as Prop;
+      kit.advance(1);
+      kit.spawn('crate', 0, tank.main.y + (tank.main.h * PX) / 2 + half('crate') + 2);
+      kit.advance(2);
+      if (tank.destroyed) return 'a crate dropped 2 m into a glass tank broke it';
+      // a slab of 12 t from 3 m: nothing much is left of them (it left them standing 15-30 cm thick)
+      kit.reset();
+      const h = human(0);
+      kit.advance(1);
+      kit.spawn('brick', 0, 2 + 2 + 3, { config: { w: 512, h: 128 } });
+      kit.advance(3);
+      const gone = [...h.limbs.values()].filter((l) => l.gone).length;
+      if (gone < 10) return `under the slab, ${gone} of their ${h.limbs.size} limbs were pressed flat`;
+      // a heap of people isn't heavy enough to crush the ones at the bottom
+      kit.reset();
+      const heap = [0, 1, 2, 3, 4, 5].map((i) => kit.spawn('human', (i % 2) * 0.3, 1 + Math.floor(i / 2) * 1.6) as Human);
+      kit.advance(4);
+      const lost = heap.reduce((n, p) => n + [...p.limbs.values()].filter((l) => l.gone).length, 0);
+      if (lost) return `a heap of six people pressed ${lost} limbs flat`;
+      return true;
+    }],
+    ['extra: bugs: a car under a slab of tonnes is crushed, a fuel drum under a 1 t weight goes off, and a jet engine run into a wall goes up', () => {
+      kit.reset();
+      const car = kit.spawn('car', 0, 1) as Car;
+      kit.advance(1.5);
+      kit.spawn('brick', 0, car.body.y + 0.8 + 1.5 + 2, { config: { w: 512, h: 96 } });
+      kit.advance(3);
+      if (!car.wrecked) return `a 9 t slab dropped 2 m on a car left it with ${car.body.hp.toFixed(0)} hp`;
+      kit.reset();
+      const drum = kit.spawn('explosive-barrel', 0, 0.5) as Prop;
+      kit.advance(1);
+      kit.spawn('weight', 0, drum.main.y + 0.42 + half('weight') + 2);
+      kit.advance(3);
+      if (!drum.destroyed) return 'a 1 t weight dropped on a fuel drum didn’t set it off';
+      // (it hit the wall at 50 m/s and stopped there unhurt: it had no hit points)
+      kit.reset();
+      let jet = kit.spawn('jet-engine', 30, 0.6) as JetEngine;
+      if (jet.forward().x < 0) jet = game.flipEntity(jet) as JetEngine;
+      jet.activate();
+      let blasts = 0;
+      const ex = game.explosions;
+      const explode = ex.explode;
+      ex.explode = (x, y, o, d) => {
+        blasts++;
+        return explode.call(ex, x, y, o, d);
+      };
+      try {
+        kit.advance(6);
+      } finally {
+        delete (ex as { explode?: unknown }).explode;
+      }
+      if (!jet.destroyed) return `run into the wall, the jet engine stood with ${jet.main.hp.toFixed(0)} hp`;
+      if (!blasts) return 'wrecked while it ran, the jet engine didn’t go up';
+      // one switched off, dropped 2 m, is only dented
+      kit.reset();
+      const off = kit.spawn('jet-engine', 0, 2.6) as JetEngine;
+      kit.advance(2);
+      if (off.destroyed) return 'a jet engine dropped 2 m broke';
+      return true;
+    }],
+    ['extra: bugs: a car built of a beam and two motor wheels pinned on by their hubs drives; someone welded into a chair on it rides at top speed unhurt', () => {
+      kit.reset();
+      const chassis = kit.spawn('beam', 0, 0.6).parts[0];
+      const wheels: Motor[] = [];
+      for (const x of [-1.2, 1.2]) {
+        const w = kit.spawn('motor-wheel', x, 0.3125) as Motor;
+        // (pinned, its hub turned on the pin and the wheel hardly moved the car)
+        C.create('pin', chassis, { x, y: 0.3125 }, w.housing, { x, y: 0.3125 });
+        wheels.push(w);
+      }
+      const chair = kit.spawn('chair', 0, 0.694 + 0.45).parts[0];
+      kit.advance(0.8);
+      C.create('weld', chassis, { x: 0, y: 0.694 }, chair, { x: 0, y: 0.694 });
+      const h = kit.spawn('human', 0, 2.25) as Human;
+      kit.advance(1.5);
+      const hips = h.limbs.get('lowerTorso')!.part;
+      C.create('weld', hips, { x: hips.x, y: hips.y }, chair, { x: hips.x, y: hips.y });
+      kit.advance(0.3);
+      // (only what the ride does to them counts: not a knock getting into the chair)
+      const hp0 = new Map([...h.limbs.values()].map((l) => [l, l.part.hp]));
+      for (const w of wheels) {
+        w.speed = 4;
+        w.torque = 4;
+        w.activate();
+      }
+      // (riding along, their legs swung into the chair counted at the car's speed, not how fast they met it)
+      kit.advance(4);
+      if (Math.abs(chassis.vx) < 8) return `at top speed it went only ${Math.abs(chassis.vx).toFixed(1)} m/s`;
+      if (!h.alive || h.consciousness < 0.9) return `the rider was ${h.alive ? 'knocked out' : 'killed'}`;
+      const hurt = [...h.limbs.values()].filter((l) => l.gone || l.part.hp < hp0.get(l)! - l.spec.hp * 0.2).map((l) => l.spec.key);
+      if (hurt.length) return `the ride hurt the rider: ${hurt.join(', ')}`;
+      return true;
+    }],
     ['extra: bugs: a copy of someone whose arm was cut off with a torn-out forearm hanging from it has one strand, not two', () => {
       kit.reset();
       const h = human(0);

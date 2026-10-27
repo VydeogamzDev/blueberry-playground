@@ -113,6 +113,16 @@ function strengthOf(kind: ConnKind, rest: number, usual: number, opts?: ConnOpts
   return Number.isFinite(usual) ? usual / 4 : usual;
 }
 
+/**
+ * Whether a hinge or pin between these is held fast: one on a motor's or a servo's
+ * housing. The motor (or servo) does the turning: a motor wheel pinned on by its hub
+ * drives, where its housing turning free on the pin would only spin round itself.
+ */
+function holdsFast(a: Part, b: Part | null): boolean {
+  const housing = (p: Part | null) => !!p && (p.entity as { housing?: Part }).housing === p;
+  return housing(a) || housing(b);
+}
+
 /** Whatever a fuse cord burns down to may react (bombs go off; anything else just catches fire). */
 interface FuseTarget {
   onFuse?(): void;
@@ -276,6 +286,9 @@ export class Connections {
   private removals = 0;
   /** Goes up whenever a connection is made, taken away or re-made (what's joined to what may have changed). */
   version = 0;
+  /** Contraptions (see builtWith()), each shared by its things, as the connections were at `builtAt` (their version). */
+  private built = new Map<Entity, Set<Entity>>();
+  private builtAt = -1;
   /** Things an EMP has knocked out (see entities/Emp.ts): while in here they neither give nor take power, nor hear pulses. */
   readonly jammed = new Set<Entity>();
   /** Draw hidden connections too (while building: time paused, or a connection tool in hand). */
@@ -349,8 +362,7 @@ export class Connections {
       case 'hinge':
       case 'pin': {
         const lbw = b ? b.worldToLocal(wa.x, wa.y) : { x: wa.x, y: wa.y };
-        joint = world.createImpulseJoint(RAPIER.JointData.revolute(la, lbw), a.body, bodyB, true);
-        joint.setContactsEnabled(false);
+        joint = this.turnJoint(a, la, b, lbw);
         lb.x = lbw.x;
         lb.y = lbw.y;
         breakAt = 0.6;
@@ -382,7 +394,7 @@ export class Connections {
     if (opts && Object.keys(opts).length) c.opts = { ...opts };
     this.version++;
     if (kind === 'spring' && stiffness !== undefined && stiffness !== 1) c.stiffness = stiffness;
-    if (joint && (kind === 'hinge' || kind === 'pin') && swing?.limit !== undefined) {
+    if (joint && (kind === 'hinge' || kind === 'pin') && swing?.limit !== undefined && !holdsFast(a, b)) {
       c.limit = swing.limit;
       c.ref = swing.ref ?? this.relAngle(c);
       this.applyLimit(joint, c.ref, c.limit);
@@ -391,6 +403,9 @@ export class Connections {
     if (kind === 'wire') {
       this.recomputePower();
       if (!this.game.net?.guest) this.game.stats.add('wires');
+    } else {
+      // (a balloon tied to someone settled asleep must lift them, not snap its rope on them)
+      this.stirEnds(c);
     }
     return c;
   }
@@ -410,16 +425,28 @@ export class Connections {
     this.stirEnds(c);
     const world = this.game.physics.world;
     if (c.joint?.isValid()) world.removeImpulseJoint(c.joint, true);
-    const j = world.createImpulseJoint(RAPIER.JointData.revolute(c.la, c.lb), c.a.body, c.b ? c.b.body : this.game.env.body, true);
-    j.setContactsEnabled(false);
+    const j = this.turnJoint(c.a, c.la, c.b, c.lb);
     c.joint = j;
-    if (limit === null) {
+    if (limit === null || holdsFast(c.a, c.b)) {
       c.limit = c.ref = undefined;
       return;
     }
     c.limit = limit;
     c.ref = this.relAngle(c);
     this.applyLimit(j, c.ref, limit);
+  }
+
+  /**
+   * A hinge's or pin's joint, from `la` on `a` to `lb` on `b` (null: the background).
+   * One on a motor's or a servo's housing holds it fast, as a weld would (see holdsFast()).
+   */
+  private turnJoint(a: Part, la: V2, b: Part | null, lb: V2): RAPIER.ImpulseJoint {
+    const data = holdsFast(a, b)
+      ? RAPIER.JointData.fixed(la, 0, lb, a.body.rotation() - (b ? b.body.rotation() : 0))
+      : RAPIER.JointData.revolute(la, lb);
+    const j = this.game.physics.world.createImpulseJoint(data, a.body, b ? b.body : this.game.env.body, true);
+    j.setContactsEnabled(false);
+    return j;
   }
 
   private applyLimit(j: RAPIER.ImpulseJoint, ref: number, limit: number): void {
@@ -495,9 +522,8 @@ export class Connections {
         break;
       case 'hinge':
       case 'pin':
-        c.joint = world.createImpulseJoint(RAPIER.JointData.revolute(c.la, c.lb), c.a.body, bodyB, true);
-        c.joint.setContactsEnabled(false);
-        if (c.limit !== undefined && c.ref !== undefined) this.applyLimit(c.joint, c.ref, c.limit);
+        c.joint = this.turnJoint(c.a, c.la, c.b, c.lb);
+        if (c.limit !== undefined && c.ref !== undefined && !holdsFast(c.a, c.b)) this.applyLimit(c.joint, c.ref, c.limit);
         break;
       case 'wire':
         break;
@@ -812,6 +838,41 @@ export class Connections {
   private stirEnds(c: Connection): void {
     if (!c.a.entity.destroyed) stir(this.game, c.a.entity);
     if (c.b && !c.b.entity.destroyed && c.b.entity !== c.a.entity) stir(this.game, c.b.entity);
+  }
+
+  /**
+   * `e` and the things fixed to it by welds, hinges or pins, directly or through each
+   * other: the contraption it's built into (just `e`, if nothing is).
+   */
+  builtWith(e: Entity): Set<Entity> {
+    if (this.builtAt !== this.version) {
+      this.built.clear();
+      this.builtAt = this.version;
+    }
+    let set = this.built.get(e);
+    if (set) return set;
+    const next = new Map<Entity, Entity[]>();
+    const link = (a: Entity, b: Entity) => {
+      let l = next.get(a);
+      if (!l) next.set(a, (l = []));
+      l.push(b);
+    };
+    for (const k of this.list) {
+      if (!RIGID_KINDS.has(k.kind) || !k.b || !k.joint || k.a.entity === k.b.entity) continue;
+      link(k.a.entity, k.b.entity);
+      link(k.b.entity, k.a.entity);
+    }
+    set = new Set<Entity>([e]);
+    const queue: Entity[] = [e];
+    while (queue.length) {
+      for (const x of next.get(queue.pop()!) ?? []) {
+        if (set.has(x)) continue;
+        set.add(x);
+        queue.push(x);
+      }
+    }
+    for (const x of set) this.built.set(x, set);
+    return set;
   }
 
   connectionsOf(e: Entity): Connection[] {

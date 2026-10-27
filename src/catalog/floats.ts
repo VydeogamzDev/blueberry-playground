@@ -100,9 +100,9 @@ export function registerFloats(): void {
     ['float', 'lift', 'helium', 'fly', 'weather', 'pop', 'air']);
   const jet = lazyArt(() => F.jetEngineArt(0));
   item('jet-engine', 'Jet Engine', 'Machinery',
-    `Activate (or power) it and it spools up to a mighty push toward its intake: ${JET_FORCE} N, enough to fly a car. Its exhaust blows things far away and sets them alight; its intake sucks things in and tears them up. Weld it to something to fly it. Set its throttle in its menu.`,
+    `Activate (or power) it and it spools up to a mighty push toward its intake: ${JET_FORCE} N, enough to fly a car. Its exhaust blows things far away and sets them alight; its intake sucks things in and tears them up. Weld it to something to fly it. Set its throttle in its menu. Crashed hard, it breaks, and its fuel goes up if it was running.`,
     jet, (game, def, x, y, opts) => {
       const shapes = rects(F.JET_W, F.JET_H, [[5, 1, 39, 16], [0, 4, 6, 10]]);
-      return new JetEngine(game, def, { art: jet, material: MAT.metal, shapes, density: densityFor(80, shapes), angularDamping: 0.3 }, x, y, opts);
+      return new JetEngine(game, def, { art: jet, material: MAT.metal, shapes, density: densityFor(80, shapes), angularDamping: 0.3, hp: 400 }, x, y, opts);
     }, ['jet', 'turbine', 'plane', 'aircraft', 'engine', 'thrust', 'rocket', 'fly']);
 }

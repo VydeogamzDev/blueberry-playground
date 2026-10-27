@@ -1,5 +1,6 @@
 import type { Game } from './Game';
 import { capture, instantiate, type SavedConnection, type Snapshot } from './Snapshot';
+import { sceneToString } from './SaveLoad';
 import type { StainState } from '../systems/Particles';
 import type { PuddleState } from '../systems/Puddles';
 import type { FluidState } from '../systems/Fluid';
@@ -126,6 +127,12 @@ export class History {
 
   get redoLabel(): string | null {
     return this.future[this.future.length - 1]?.label ?? null;
+  }
+
+  /** The scene as it was before the last edit, as a save (for when the scene now can't be read: see UI.halted()); null: none. */
+  lastSave(): string | null {
+    const e = this.past[this.past.length - 1];
+    return e ? sceneToString(this.game, e) : null;
   }
 
   /** Puts the scene back as it was before the last edit; returns that edit's label. */

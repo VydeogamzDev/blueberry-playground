@@ -112,6 +112,13 @@ export abstract class Entity {
 
   onImpact(_info: ImpactInfo): void {}
 
+  /**
+   * Pressed on hard (`force` N, this step) by `other` too slowly for a knock (see
+   * Impacts): a weight resting on it, a press closing on it. `normal` points into
+   * `part`. Only loads over LOAD_MIN come here, and never the floor's or a wall's.
+   */
+  onLoad(_part: Part, _other: Part, _force: number, _point: V2, _normal: V2): void {}
+
   /** Called when a bullet hits one of this entity's parts. */
   onBullet(hit: BulletHit): void {
     hit.part.hp -= hit.damage * 0.2;
@@ -334,9 +341,11 @@ export abstract class Entity {
       flip: this.flipped,
       parts: this.parts.map((p) => {
         if (p.destroyed) return { x: 0, y: 0, a: 0, vx: 0, vy: 0, av: 0, frozen: false, hp: -1 };
-        const t = p.body.translation();
-        const v = p.body.linvel();
-        const s: PartState = { x: t.x, y: t.y, a: p.body.rotation(), vx: v.x, vy: v.y, av: p.body.angvel(), frozen: p.frozen, hp: p.hp };
+        // (the physics engine broken, it can't be asked: where it was as of the last step, kept on the part)
+        const live = !this.game.halted;
+        const t = live ? p.body.translation() : p;
+        const v = live ? p.body.linvel() : { x: p.vx, y: p.vy };
+        const s: PartState = { x: t.x, y: t.y, a: live ? p.body.rotation() : p.a, vx: v.x, vy: v.y, av: live ? p.body.angvel() : p.av, frozen: p.frozen, hp: p.hp };
         if (p.burning > 0) s.burn = p.burning;
         if (p.charred > 0) s.char = p.charred;
         if (p.oil > 0) s.oil = p.oil;

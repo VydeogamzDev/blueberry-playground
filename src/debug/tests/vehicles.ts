@@ -240,7 +240,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
         // parked, its brakes hold it against the recoil
         if (Math.abs(t.body.x - x0) > 0.5) return `two shots shoved it ${(t.body.x - x0).toFixed(2)} m`;
       } finally {
-        ex.explode = explode;
+        delete (ex as { explode?: unknown }).explode;
       }
       return true;
     }],

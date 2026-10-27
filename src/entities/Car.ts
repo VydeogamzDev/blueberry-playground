@@ -116,6 +116,13 @@ const CRASH = { from: 7, k: 0.4 };
 /** Hurt below this (hp) the engine smokes; below `burns` the leaking fuel catches (and burning down to nothing, it goes up). */
 const DAMAGE = { smokes: 60, burns: 25 };
 /**
+ * What its body bears pressed on by a weight (N: another car stacked on it, and more),
+ * and the harm a second per newton past that (times its armour): a slab of several
+ * tonnes set down on its roof crushes it in under a second (see onLoad()).
+ */
+const CRUSH_BEARS = 12000;
+const CRUSHING = 0.003;
+/**
  * What riders feel of a crash: the change of speed in a step (m/s) that starts to
  * hurt, harm per (m/s)² beyond it (a seat belt lets `belted` of it through), and
  * the sudden stop that sends anyone without a belt through the windscreen.
@@ -448,6 +455,12 @@ export class Car extends Entity implements HandSwitched {
       else this.harm(amount * 0.45 * a);
     } else if (kind === 'fire') this.harm(amount * 0.6 * Math.sqrt(a));
     else this.harm(amount * 0.1 * a);
+  }
+
+  /** Something heavy pressing on its body (a slab on its roof): past what it bears, crushed (see harm()). */
+  onLoad(part: Part, other: Part, force: number): void {
+    if (part !== this.body || this.wrecked || other.entity.canWalk || force <= CRUSH_BEARS) return;
+    this.harm((force - CRUSH_BEARS) * CRUSHING * this.game.stepDt * this.cfg.armour);
   }
 
   /** Shot: a dent; into a body that's badly hurt, the shot may light the leaking fuel or set it off. */

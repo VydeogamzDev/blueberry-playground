@@ -7,6 +7,10 @@ import type { PixelArt } from '../art/PixelArt';
 import type { V2 } from '../engine/math';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
 
+/** What a touchy explosive bears pressed on by a weight (N), and what it takes from each newton past that a second (see onLoad()). */
+const CRUSH_BEARS = 3000;
+const CRUSHING = 0.01;
+
 export interface BlastSpec {
   power: number;
   radius: number;
@@ -195,6 +199,11 @@ export class Explosive extends Item {
     const m = Math.min(info.otherMass, 200);
     const e = 0.5 * Math.min(m, this.main.mass * 4) * Math.max(0, info.speed - 6) ** 2;
     if (e > 0) this.hurt(e / 25);
+  }
+
+  /** Crushed under a weight (a tonne set down on it), what's touchy goes off, as from a knock. */
+  onLoad(_part: Part, _other: Part, force: number): void {
+    if (this.blast.sensitivity !== undefined && force > CRUSH_BEARS) this.hurt((force - CRUSH_BEARS) * CRUSHING * this.game.stepDt);
   }
 
   onBullet(hit: BulletHit): void {

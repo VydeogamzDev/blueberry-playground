@@ -166,9 +166,12 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       kit.advance(0.5);
       if (jet.spool > 0.4) return `half a second on, it is ${(jet.spool * 100).toFixed(0)}% spooled up`;
       const y0 = y(jet);
-      kit.advance(2.5);
+      kit.advance(1.5);
+      if (y(jet) < y0 + 5) return `pointing up and spooling up, it rose only ${(y(jet) - y0).toFixed(1)} m in 1.5 s`;
+      // (held where it got to: flying on, it hits the ceiling at 45 m/s and goes up)
+      jet.setFrozen(true);
+      kit.advance(1);
       if (jet.spool < 0.99) return `3 s on, it is only ${(jet.spool * 100).toFixed(0)}% spooled up`;
-      if (y(jet) < y0 + 5) return `pointing up and spooled up, it rose only ${(y(jet) - y0).toFixed(1)} m`;
       jet.activate();
       kit.advance(1);
       if (jet.spool > 0.85 || jet.spool < 0.5) return `a second after switching off it is at ${(jet.spool * 100).toFixed(0)}% (it winds down over 4 s)`;

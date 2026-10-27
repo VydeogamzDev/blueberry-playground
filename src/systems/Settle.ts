@@ -257,10 +257,10 @@ export function wakeSettled(game: Game): void {
 /**
  * Rapier itself wakes the odd member of a sleeping pile when it refreshes the
  * pile's contacts. Unless the member is touching something awake from outside
- * the group (a crate landing on it), nothing is disturbing it: it goes straight
- * back to sleep, rather than waking the whole pile (which would start it
- * buzzing again) or staying awake alone (see wakeSettled()). Called every step
- * after the physics step.
+ * the group (a crate landing on it) or tied to one, nothing is disturbing it:
+ * it goes straight back to sleep, rather than waking the whole pile (which
+ * would start it buzzing again) or staying awake alone (see wakeSettled()).
+ * Called every step after the physics step.
  */
 export function resleepSettled(game: Game): void {
   const world = game.physics.world;
@@ -283,6 +283,13 @@ export function resleepSettled(game: Game): void {
           });
         });
       }
+      // tied to something awake from outside (a balloon's rope pulling): as calmGroup() has it
+      world.impulseJoints.forEachJointHandleAttachedToRigidBody(p.body.handle, (h) => {
+        const j = world.impulseJoints.get(h);
+        if (disturbed || !j) return;
+        const o = j.body1().handle === p.body.handle ? j.body2() : j.body1();
+        if (!o.isFixed() && !o.isSleeping() && !members.has(o.handle)) disturbed = true;
+      });
     }
     if (disturbed) {
       groups.splice(i, 1);

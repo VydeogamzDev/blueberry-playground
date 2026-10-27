@@ -20,6 +20,7 @@ import { LiveWater } from '../systems/LiveWater';
 import { stats } from './Stats';
 import { Puddles } from '../systems/Puddles';
 import { ContactGroups } from '../systems/ContactGroups';
+import { WeldUnits } from '../systems/WeldUnits';
 import { liftOutOfGround } from '../systems/GroundLift';
 import type { Entity } from './Entity';
 import type { Part } from './Part';
@@ -61,6 +62,7 @@ export class Game {
   readonly explosions: Explosions;
   readonly connections: Connections;
   readonly contactGroups: ContactGroups;
+  readonly weldUnits: WeldUnits;
   readonly fire: Fire;
   /** A map's sea, and the void's drop (see systems/Water). */
   readonly water: Water;
@@ -186,6 +188,7 @@ export class Game {
     this.explosions = new Explosions(this);
     this.connections = new Connections(this);
     this.contactGroups = new ContactGroups(this);
+    this.weldUnits = new WeldUnits(this);
     this.fire = new Fire(this);
     // (the sea first: the weather's drops stop at its surface)
     this.water = new Water(this);
@@ -696,6 +699,8 @@ export class Game {
    * it fails from then on, so the frames stop rather than throw, every one of them.
    */
   halted = false;
+  /** Told as the frames stop (see halted), with what broke it: the interface says so, and offers to carry on. */
+  onHalt: ((error: unknown) => void) | null = null;
 
   private frameAt(now: number): void {
     if (this.halted) return;
@@ -704,7 +709,8 @@ export class Game {
     } catch (e) {
       if (!/unreachable|recursive use|memory access out of bounds/.test(String(e))) throw e;
       this.halted = true;
-      console.error('The physics engine broke; the game has stopped (reload to go on).', e);
+      if (this.onHalt) this.onHalt(e);
+      else console.error('The physics engine broke; the game has stopped (reload to go on).', e);
     }
   }
 
@@ -883,6 +889,7 @@ export class Game {
     this.contactGroups.update();
     lap?.('step: groups');
     this.physics.step();
+    this.weldUnits.step();
     this.physics.readPoses(this.entities);
     resleepSettled(this);
     lap?.('step: physics');

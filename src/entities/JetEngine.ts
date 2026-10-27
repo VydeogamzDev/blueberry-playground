@@ -8,6 +8,7 @@ import type { Part } from '../world/Part';
 import type { Entity } from '../world/Entity';
 import type { Game } from '../world/Game';
 import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
+import type { V2 } from '../engine/math';
 
 /** The throttle settings, as shares of its own push (the context menu's). */
 export const JET_THROTTLES = [0.25, 0.5, 1, 2];
@@ -35,6 +36,8 @@ const HOT = 5;
 const MAW = 0.35;
 /** How often it looks for what's in its blast and its draw, and what its fan has caught (s). */
 const LOOK_T = 0.1;
+/** Its fuel going up, wrecked while it runs (a fuel drum's blast, a little smaller). */
+const FIREBALL = { power: 160, radius: 6, damage: 240, incendiary: true };
 
 /** What acts on things: not the floor and walls. */
 const THINGS = groups(GROUP.DEBRIS, GROUP.DYNAMIC);
@@ -95,6 +98,15 @@ export class JetEngine extends Prop implements HandSwitched {
 
   canRest(): boolean {
     return this.spool === 0;
+  }
+
+  /** Wrecked (a crash into a wall, a blast) while it runs, its fuel goes up; switched off, it just breaks up. */
+  shatter(point?: V2): void {
+    if (this.shattered) return;
+    const c = this.main.body.translation();
+    const burning = this.spool > 0.05;
+    super.shatter(point);
+    if (burning) this.game.explosions.explode(c.x, c.y, { ...FIREBALL, source: this });
   }
 
   /** Its push along its facing (a unit vector): toward its intake. */

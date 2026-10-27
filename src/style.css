@@ -499,6 +499,26 @@ canvas.cat-icon,
   margin: 8px 0 0;
 }
 
+/* the physics engine broke (see UI.halted()): what went wrong, to copy */
+.halt-panel {
+  max-width: min(560px, 92vw);
+}
+
+.halt-details {
+  width: 100%;
+  box-sizing: border-box;
+  height: 9em;
+  margin: 8px 0 0;
+  resize: vertical;
+  background: #1c1e21;
+  color: #aeb4ba;
+  border: 1px solid #454a51;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre;
+}
+
 /* an object's numbers (Edit gun…): label, slider, box to type in */
 .edit-panel {
   min-width: 400px;

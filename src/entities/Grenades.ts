@@ -303,9 +303,11 @@ export class GrenadeLauncher extends Firearm {
     const a = (Math.random() - 0.5) * g.spread;
     const dx = fwd.x * Math.cos(a) - fwd.y * Math.sin(a);
     const dy = fwd.x * Math.sin(a) + fwd.y * Math.cos(a);
-    const v = p.body.linvel();
+    // along the barrel, as an RPG's rocket: only the launcher's speed forward adds on
+    const v = p.velocityAt(m.x, m.y);
+    const speed = g.speed + Math.max(0, v.x * dx + v.y * dy);
     const own = this.holder ? [...this.parts, ...this.holder.parts] : this.parts;
-    r.launch(own, v.x + dx * g.speed, v.y + dy * g.speed, this.mode, blastFor(g.damage));
+    r.launch(own, dx * speed, dy * speed, this.mode, blastFor(g.damage));
     if (!p.frozen) p.body.applyImpulseAtPoint({ x: -fwd.x * g.recoil, y: -fwd.y * g.recoil }, this.gripWorld() ?? m, true);
     const ps = game.particles;
     const mz = p.pixelToWorld(LAUNCHER_MUZZLE[0], LAUNCHER_MUZZLE[1]);

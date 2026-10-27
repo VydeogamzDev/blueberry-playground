@@ -215,7 +215,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
             const v = newestShell()?.parts[0].body.linvel();
             if (v) muzzle = Math.hypot(v.x - b.vx, v.y - b.vy);
           });
-          ex.explode = explode;
+          delete (ex as { explode?: unknown }).explode;
           if (!muzzle) return `${id}: fired no shell`;
           const ahead = booms.length ? Math.min(...booms) - xf : 0;
           if (ahead < 8) return `${id}: ${booms.length ? `its first shell went off ${ahead.toFixed(1)} m ahead` : 'no shell went off'}`;
@@ -234,7 +234,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
           got[id] = { pull, shots: t.shots - shots0, muzzle };
         }
       } finally {
-        ex.explode = explode;
+        delete (ex as { explode?: unknown }).explode;
       }
       const [a, z, l] = [got['tank-abrams'], got['tank-ztz99a'], got['tank-leopard']];
       const show = (k: 'pull' | 'shots' | 'muzzle') => `Abrams ${a[k].toFixed(1)}, ZTZ-99A ${z[k].toFixed(1)}, Leopard ${l[k].toFixed(1)}`;

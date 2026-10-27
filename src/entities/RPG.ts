@@ -125,10 +125,13 @@ export class RocketLauncher extends Firearm {
     this.shots++;
     p.setArt(rpgArt(false));
     const fwd = this.forward();
-    const v = p.body.linvel();
+    // it leaves along the barrel: the launcher swung or spun round doesn't send it off
+    // where it isn't pointed (it flies the way it faces), only its speed forward adds on
+    const v = p.velocityAt(at.x, at.y);
+    const speed = g.speed + Math.max(0, v.x * fwd.x + v.y * fwd.y);
     // it leaves through the launcher and past whoever holds it
     const own = this.holder ? [...this.parts, ...this.holder.parts] : this.parts;
-    rocket.launch(own, v.x + fwd.x * g.speed, v.y + fwd.y * g.speed, blastFor(g.damage));
+    rocket.launch(own, fwd.x * speed, fwd.y * speed, blastFor(g.damage));
     // nearly recoilless: the back-blast takes most of the kick, a light shove is left
     if (!p.frozen) p.body.applyImpulseAtPoint({ x: -fwd.x * g.recoil, y: -fwd.y * g.recoil }, this.gripWorld() ?? at, true);
     this.backBlast(fwd);

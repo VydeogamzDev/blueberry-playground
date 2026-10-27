@@ -3,6 +3,7 @@ import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
 import type { ItemDef, SpawnOptions, ImpactInfo, DamageKind, BulletHit } from '../world/types';
 import { GLASS, type PhysMaterial } from '../world/Materials';
+import { LOAD_MIN } from '../systems/Impacts';
 import type { PixelArt } from '../art/PixelArt';
 import type { V2 } from '../engine/math';
 
@@ -27,12 +28,20 @@ export interface PropConfig {
 /** Wooden things' hit points per kg: about three hard slams into the floor (10 m/s), or more long falls. */
 export const WOOD_HP = 8;
 
+/**
+ * What a breakable thing bears pressed on by a weight (see onLoad()): newtons per hit
+ * point (a glass tank, half a tonne), and past that, hit points a second per newton
+ * over (a tonne on a glass tank breaks it in about half a second).
+ */
+const BEARS_PER_HP = 150;
+const CRUSHING = 0.01;
+
 /** A single rigid object: crates, boxes, planks, furniture... */
 export class Prop extends Entity {
   readonly main: Part;
   protected cfg: PropConfig;
   /** Broken already: it's only taken away at the end of the step, and more hits may land meanwhile (a shotgun's pellets). */
-  private shattered = false;
+  protected shattered = false;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -74,8 +83,18 @@ export class Prop extends Entity {
       return;
     }
     const m = Math.min(info.otherMass, 400);
-    const e = 0.5 * Math.min(m, this.main.mass * 6) * Math.max(0, info.speed - 4) ** 2;
+    let e = 0.5 * Math.min(m, this.main.mass * 6) * Math.max(0, info.speed - 4) ** 2;
+    // glass is brittle: a heavy thing coming down on it shatters it, however light the glass
+    // (it can't get out of the way: its own fall onto the floor counts only as above)
+    if (this.main.mat === GLASS) e = Math.max(e, 0.5 * Math.min(info.otherMass, 2000) * Math.max(0, info.otherSpeed - 4) ** 2);
     if (e > 30) this.damage(info.part, e / 40, 'blunt', info.point, info.normal);
+  }
+
+  /** Pressed on by a weight past what it bears (a tonne set down on a glass tank): crushed till it breaks. */
+  onLoad(part: Part, _other: Part, force: number, point: V2, normal: V2): void {
+    if (!this.breakable) return;
+    const bears = Math.max(LOAD_MIN, this.main.maxHp * BEARS_PER_HP);
+    if (force > bears) this.damage(part, (force - bears) * CRUSHING * this.game.stepDt, 'crush', point, normal);
   }
 
   onBullet(hit: BulletHit): void {

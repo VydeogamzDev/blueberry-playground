@@ -149,6 +149,12 @@ const DRAW = 0.35;
 const DRAW_REACH = 4;
 /** Push (N) per metre of a thing's breadth per m/s of wind past it. */
 const PUSH = 45;
+/**
+ * How hard (N) it's pushed back as it blows, at full speed: far less than a propeller
+ * pulls, so one standing on the floor stays put, but one built onto a cart on wheels
+ * drives it along (blowing backward, it goes forward).
+ */
+const THRUST = 30;
 
 /** Something in a fan's wind (or its draw), and how much of it the wind catches. */
 interface Gust {
@@ -162,7 +168,10 @@ interface Gust {
 /**
  * A floor fan: while powered, it blows what's in front of it away (in a cone
  * that weakens with distance) and draws in what's behind it, light things more
- * than heavy ones. Its exposed blades cut and fling whatever touches them.
+ * than heavy ones, and is pushed back a little itself. What it's built into
+ * (welded, hinged or pinned to it) it leaves be: a cart it's fixed to the back
+ * of isn't drawn backward by it. Its exposed blades cut and fling whatever
+ * touches them.
  */
 export class Fan extends Airscrew {
   private gusts: Gust[] = [];
@@ -190,6 +199,7 @@ export class Fan extends Airscrew {
     const p = this.main;
     const phys = this.game.physics;
     const f = this.forward();
+    const own = this.game.connections.builtWith(this);
     this.gusts.length = 0;
     const found = new Map<Entity, Part[]>();
     for (const behind of [false, true]) {
@@ -200,7 +210,7 @@ export class Fan extends Airscrew {
       box.halfExtents = { x: reach * 0.5, y: Math.tan(SPREAD) * (reach + 0.4) };
       phys.world.intersectionsWithShape(c, Math.atan2(f.y, f.x), box, (col) => {
         const q = phys.partOf(col);
-        if (!q || q.destroyed || q.frozen || q.entity === this || p.noCollide?.has(q)) return true;
+        if (!q || q.destroyed || q.frozen || own.has(q.entity) || p.noCollide?.has(q)) return true;
         if (!this.windAt(q.x, q.y, behind)) return true;
         let list = found.get(q.entity);
         if (!list) found.set(q.entity, (list = []));
@@ -268,10 +278,16 @@ export class Fan extends Airscrew {
       const push = PUSH * g.breadth * rel * dt;
       q.body.applyImpulse({ x: f.x * push, y: f.y * push }, true);
     }
+    // the air it throws forward pushes it back, less the nearer it goes to the wind's own speed
+    const p = this.main;
+    if (!p.frozen) {
+      const v = p.body.linvel();
+      const back = THRUST * this.speed * Math.min(1, Math.max(0, 1 + (v.x * f.x + v.y * f.y) / (WIND * this.speed)));
+      p.body.applyImpulse({ x: -f.x * back * dt, y: -f.y * back * dt }, true);
+    }
     // a little dust carried along in the wind, to see it by
     if ((this.dustT -= dt) > 0) return;
     this.dustT = 0.08 / Math.max(0.25, this.speed);
-    const p = this.main;
     const o = p.pixelToWorld(17, 4 + Math.random() * 12);
     const sp = WIND * this.speed * (0.5 + Math.random() * 0.4);
     this.game.particles.emit(PK.Dust, o.x, o.y, {

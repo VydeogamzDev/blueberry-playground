@@ -305,6 +305,21 @@ const MIGHT = { muscle: 2.5, blow: 2.5, fling: 6 };
  */
 const DOUSE = { every: 0.3, sight: 6, rise: 1.5, reach: 2, self: 0.9 };
 
+/**
+ * Going faster than this (m/s) past a free hand, a thing isn't taken: flung or swung at
+ * them, it hits them; only what's brought to the hand and held there is taken.
+ */
+const TAKE_SPEED = 2.5;
+
+/**
+ * What a limb bears (N) pressed on by a thing (see onLoad()): more than a car's wheel
+ * standing on it. Past that, each newton crushes it by CRUSHING hit points a second,
+ * and one crushed well past its hit points is pressed flat (gone, in a mess): under a
+ * tonne it takes about half a second, under a slab of many tonnes at once.
+ */
+export const LIMB_BEARS = 3000;
+export const CRUSHING = 0.06;
+
 /** Poses picked from the menu (see setPose()). */
 export type PoseName = 'stumble' | 'cower' | 'sit' | 'flat';
 const POSE_NAMES: [PoseName, string][] = [['stumble', 'Stumble'], ['cower', 'Cower'], ['sit', 'Sit'], ['flat', 'Flat pose']];
@@ -3855,6 +3870,18 @@ export class Human extends Entity implements Holder {
     if ((frac > 0.2 || Eother > 400) && this.state === 'stand' && l.spec.cy > 24) this.setState('down');
   }
 
+  /**
+   * Pressed on by a thing past what a limb bears (a weight set down on them, a slab
+   * dropped on them): crushed, and in the end pressed flat. People in a heap don't
+   * count: they squash the ones at the bottom only as hard as a knock does.
+   */
+  onLoad(part: Part, other: Part, force: number, point: V2, normal: V2): void {
+    if (force <= LIMB_BEARS || other.entity.canWalk) return;
+    const l = this.limbOf(part);
+    if (!l || l.gone || this.heldItems().includes(other.entity as Item)) return;
+    this.damage(part, (force - LIMB_BEARS) * CRUSHING * this.game.stepDt, 'crush', point, { x: -normal.x, y: -normal.y });
+  }
+
   onBullet(hit: BulletHit): void {
     const l = this.limbOf(hit.part);
     if (!l || l.gone) return;
@@ -3951,6 +3978,19 @@ export class Human extends Entity implements Holder {
     if (kind === 'cut' || kind === 'stab') {
       if (point) this.addWound(l, point.x, point.y, -(dir?.x ?? 0), -(dir?.y ?? 0), 0.25 + amt * 0.03, false, kind === 'cut' ? dir : undefined);
       this.injure(l, amt, kind, point, dir);
+      return;
+    }
+    if (kind === 'crush') {
+      // pressed on by a weight: its bones give, and in the end it's pressed flat
+      this.injure(l, amt, kind, point, dir);
+      if (l.gone) return;
+      if (!l.broken && l.joint && l.spec.key !== 'head' && part.hp < l.spec.hp * 0.5) {
+        l.broken = true;
+        this.game.sound.bone(part.x);
+        this.updateMotors(true);
+      }
+      // (the upper torso holds the rest together: crushed, it stays, as with blasts)
+      if (part.hp < -l.spec.hp * 0.3 && l.spec.key !== 'upperTorso') this.gib(l, dir);
       return;
     }
     this.injure(l, amt, kind, point, dir);
@@ -4303,6 +4343,7 @@ export class Human extends Entity implements Holder {
     for (const k of ['handF', 'handB'] as LimbKey[]) {
       const l = this.L(k);
       if (!this.ok(k) || this.handBusy(l) || l.part.frozen) continue;
+      if (Math.hypot(item.main.vx - l.part.vx, item.main.vy - l.part.vy) > TAKE_SPEED) continue;
       // the hand must touch the item (long guns can't always get their grip right
       // onto the hand because the body is in the way)
       const touch = distToSprite(item.main, l.part.x, l.part.y);

@@ -86,6 +86,8 @@ async function boot(): Promise<void> {
   game.start();
   // the title screen, under the loading screen as that fades
   ui.mainMenu.show();
+  // (or straight back into the scene the physics engine broke in: see UI.halted())
+  ui.carryOn();
   // the bar fills as the screen fades out over the running game (letting clicks through at once)
   void loading('Ready', 1);
   const screen = document.getElementById('loading');

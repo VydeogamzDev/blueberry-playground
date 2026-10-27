@@ -5,6 +5,14 @@ import type { ImpactSound } from '../world/Materials';
 
 /** Speed below which contacts are considered resting (no damage, no sound). */
 const MIN_SPEED = 1.1;
+/**
+ * A resting contact pressing harder than this (N) is a load (see Entity.onLoad()):
+ * well over what anything ordinary puts on what it lies on (a person standing, 600 N;
+ * a car's wheel, 2 500 N), so heaps and parked cars don't come here.
+ */
+export const LOAD_MIN = 1500;
+/** The most (N per kg) a thing presses on what's under it: three times its weight (coming down on it, or rocked). */
+const HEFT = 9.81 * 3;
 
 /**
  * Converts Rapier contact-force events into gameplay impacts: approach speed is
@@ -15,8 +23,8 @@ export class Impacts {
   private game: Game;
   /** Impacts processed during the last step (for diagnostics). */
   lastCount = 0;
-  /** Collider pairs already counted this step: the higher handle of each, by the lower. */
-  private seen = new Map<number, number[]>();
+  /** Pairs already counted this step: what each part has met (a number: a collider of the floor or a wall). */
+  private seen = new Map<Part, (Part | number)[]>();
 
   constructor(game: Game) {
     this.game = game;
@@ -26,8 +34,7 @@ export class Impacts {
     const phys = this.game.physics;
     const world = phys.world;
     let count = 0;
-    const seen = this.seen;
-    seen.clear();
+    this.seen.clear();
     // all the events at once, as numbers (see drainContactForceEventsFlat): no object
     // made for each, and no call back into Rapier for its point
     const evs = phys.events.drainContactForceEventsFlat(world.bodies);
@@ -49,16 +56,10 @@ export class Impacts {
       // (Math.hypot() is a lot slower than this, thousands of times a step in a heap)
       const rx = v1x - v2x;
       const ry = v1y - v2y;
-      if (Math.sqrt(rx * rx + ry * ry) + maxAng * 0.6 < MIN_SPEED) continue;
-      // one impact per collider pair per step
-      // (handles are opaque f64 bit patterns: no one number holds two, and turning them into strings is slow)
-      const lo = h1 < h2 ? h1 : h2;
-      const hi = h1 < h2 ? h2 : h1;
-      const met = seen.get(lo);
-      if (!met) seen.set(lo, [hi]);
-      else if (met.includes(hi)) continue;
-      else met.push(hi);
       const force = evs[k + 2];
+      // (only things pressed on by things: not the floor, nor a heap of people)
+      const loaded = force > LOAD_MIN && !!p1 && !!p2;
+      if (!loaded && Math.sqrt(rx * rx + ry * ry) + maxAng * 0.6 < MIN_SPEED) continue;
       const dx = evs[k + 3];
       const dy = evs[k + 4];
       const dl = Math.sqrt(dx * dx + dy * dy);
@@ -67,7 +68,13 @@ export class Impacts {
       const ny = dy / dl;
       // ...then toward each other
       const quick = Math.abs(rx * nx + ry * ny);
-      if (quick + maxAng * 0.6 < MIN_SPEED) continue;
+      if (quick + maxAng * 0.6 < MIN_SPEED) {
+        if (loaded) this.press(p1!, p2!, force, nx, ny, evs, k);
+        continue;
+      }
+      // one impact per pair of things per step: a thing of several colliders (a glass
+      // tank's floor and walls) coming down on the floor on all of them is one knock
+      if (p1 ? this.met(p1, p2 ?? h2) : this.met(p2!, h1)) continue;
 
       // contact point (where they touch first, as Rapier has it; else the part's middle)
       let px = evs[k + 5];
@@ -88,22 +95,31 @@ export class Impacts {
       const sx = rvx - along * nx;
       const sy = rvy - along * ny;
       const slide = Math.sqrt(sx * sx + sy * sy);
-      if (speed < MIN_SPEED) continue;
+      if (speed < MIN_SPEED) {
+        if (loaded) this.press(p1!, p2!, force, nx, ny, evs, k);
+        continue;
+      }
       count++;
 
       const m1 = p1 && !p1.frozen ? p1.mass : Infinity;
       const m2 = p2 && !p2.frozen ? p2.mass : Infinity;
-      // orient the normal so it points into p1 (and out of p2): by p1, or against the
-      // ground (no part on that side, whichever side it is), by p2
-      let n1x = nx;
-      let n1y = ny;
-      if (p1 ? (p1.x - px) * nx + (p1.y - py) * ny < 0 : !!p2 && (p2.x - px) * nx + (p2.y - py) * ny > 0) {
-        n1x = -nx;
-        n1y = -ny;
+      // the normal into p1 (and out of p2): Rapier's points from the first collider to the
+      // second (not worked out from where their middles are: a car at 28 m/s sinks past a
+      // leg's middle in a step, and a weight in a glass tank lands below the tank's)
+      const n1x = -nx;
+      const n1y = -ny;
+      // split the approach into each body's own motion (n1 points into p1); one going
+      // away takes its speed off the other's (a rider's foot swung into the chair of a car
+      // going at 8 m/s closes on it at 3, not 9): only how fast they close counts
+      let s1 = -(va.x * n1x + va.y * n1y);
+      let s2 = vb.x * n1x + vb.y * n1y;
+      if (s2 < 0) {
+        s1 = Math.max(0, s1 + s2);
+        s2 = 0;
+      } else if (s1 < 0) {
+        s2 = Math.max(0, s2 + s1);
+        s1 = 0;
       }
-      // split the approach into each body's own motion (n1 points into p1)
-      const s1 = Math.max(0, -(va.x * n1x + va.y * n1y));
-      const s2 = Math.max(0, vb.x * n1x + vb.y * n1y);
       if (p1) {
         const info: ImpactInfo = {
           part: p1, other: p2, speed, force, point: { x: px, y: py }, normal: { x: n1x, y: n1y }, otherMass: m2, slide,
@@ -121,6 +137,39 @@ export class Impacts {
       this.playSound(p1, p2, speed, m1, m2, px, py, n1x, n1y);
     }
     this.lastCount = count;
+  }
+
+  /** Whether `a` has already met `b` this step (and if not, that it now has). */
+  private met(a: Part, b: Part | number): boolean {
+    const seen = this.seen;
+    const list = seen.get(a);
+    if (!list) seen.set(a, [b]);
+    else if (list.includes(b)) return true;
+    else list.push(b);
+    if (typeof b !== 'number') {
+      const back = seen.get(b);
+      if (!back) seen.set(b, [a]);
+      else back.push(a);
+    }
+    return false;
+  }
+
+  /**
+   * A resting contact pressing hard: a load on each of them (see Entity.onLoad()), as
+   * hard as what presses could: a few times its weight at most. What the solver puts
+   * through a jam (a frozen saw set down in an arm, pushing it out) is no weight, nor is
+   * anything frozen, which only pushes back. Nor are things built together: a rider
+   * welded into a car, their leg jammed against its chair as it pulls away.
+   */
+  private press(p1: Part, p2: Part, force: number, nx: number, ny: number, evs: Float64Array, k: number): void {
+    if (this.game.connections.builtWith(p1.entity).has(p2.entity)) return;
+    const point = evs[k + 7] === 0 ? { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 } : { x: evs[k + 5], y: evs[k + 6] };
+    const heft = (p: Part) => (p.frozen ? 0 : p.entity.totalMass() * HEFT);
+    // (the normal into p1, as for a knock)
+    const f1 = Math.min(force, heft(p2));
+    if (f1 > LOAD_MIN) p1.entity.onLoad(p1, p2, f1, point, { x: -nx, y: -ny });
+    const f2 = Math.min(force, heft(p1));
+    if (f2 > LOAD_MIN && !p2.destroyed && !p1.destroyed) p2.entity.onLoad(p2, p1, f2, point, { x: nx, y: ny });
   }
 
   private playSound(p1: Part | null, p2: Part | null, speed: number, m1: number, m2: number, x: number, y: number, nx: number, ny: number): void {

@@ -28,7 +28,8 @@ export default function tests({ game, kit }: TestCtx): Test[] {
       kit.spawn('battery', 1.75, 0.3);
       kit.advance(2);
       if (live() || game.liveWater.shocks) return `with a battery beside the tank, ${live()} particles are live and ${game.liveWater.shocks} shocks given`;
-      const bat = kit.spawn('battery', -0.6, 2.0);
+      // (into the water clear of them: dropped onto them, it may come to rest on top, out of it)
+      const bat = kit.spawn('battery', -1.0, 1.0);
       kit.advance(1.5);
       if (live() < f.n * 0.8) return `with a battery in it, only ${live()} of ${f.n} particles are live`;
       if (!game.liveWater.shocks) return 'nobody in the live water was shocked';

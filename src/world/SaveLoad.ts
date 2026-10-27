@@ -4,6 +4,9 @@ import { capture, instantiateIndexed, type Snapshot } from './Snapshot';
 import { arrayToBase64, fromBase64 } from '../engine/base64';
 import { LAB, sameMap, validateMap, type MapSpec } from './Maps';
 import type { WeatherState } from '../systems/Weather';
+import type { StainState } from '../systems/Particles';
+import type { PuddleState } from '../systems/Puddles';
+import type { FluidState } from '../systems/Fluid';
 
 /** Stains (see StainState), their arrays as base64. */
 interface SavedStains {
@@ -47,18 +50,31 @@ interface SaveData extends Snapshot {
 }
 
 export function saveToString(game: Game): string {
+  return sceneToString(game, { snap: capture(game, game.entities), stains: game.stains.capture(), puddles: game.puddles.capture(), fluid: game.fluid.capture(), map: game.map });
+}
+
+/** What a save is made of, captured now or earlier (an undo step's: see History.lastSave()). */
+export interface SceneParts {
+  snap: Snapshot;
+  stains: StainState;
+  puddles: PuddleState;
+  fluid: FluidState;
+  map: MapSpec;
+}
+
+/** A save of what was captured (the camera and the weather as they are now). */
+export function sceneToString(game: Game, { snap, stains: st, puddles: pu, fluid: fl, map }: SceneParts): string {
   const r = game.renderer;
-  const st = game.stains.capture();
-  const pu = game.puddles.capture();
-  const fl = game.fluid.capture();
   const data: SaveData = {
     version: 1,
-    ...capture(game, game.entities),
+    // (an undo step's say which entity each was: no use in a save)
+    entities: snap.entities.map(({ uid: _uid, ...e }) => e),
+    connections: snap.connections,
     camera: { x: r.camX, y: r.camY, zoom: r.zoom },
     stains: { n: st.n, head: st.head, xy: arrayToBase64(st.xy), ...(st.xy instanceof Int32Array ? { wide: true } : {}), rgba: arrayToBase64(st.rgba) },
     puddles: { lo: pu.lo, hi: pu.hi, h: arrayToBase64(pu.h), kind: arrayToBase64(pu.kind), burn: arrayToBase64(pu.burn), ...(pu.oil ? { oil: arrayToBase64(pu.oil) } : {}) },
     ...(fl.n ? { fluid: { n: fl.n, xv: arrayToBase64(fl.xv) } } : {}),
-    map: game.map,
+    map,
     weather: { ...game.weather.state },
   };
   return JSON.stringify(data);
