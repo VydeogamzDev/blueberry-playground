@@ -25,6 +25,15 @@ interface ContraptionFile {
 
 const KEY = 'blueberry-contraptions';
 
+/**
+ * The snapshot standing still. A contraption saved on the move (a car driven along,
+ * then saved) is spawned again at rest, its wheels not turning: it kept the speed it
+ * had, and drove off at 17 m/s the moment it was put down.
+ */
+function atRest(snap: Snapshot): Snapshot {
+  return { ...snap, entities: snap.entities.map((e) => ({ ...e, parts: e.parts.map((p) => ({ ...p, vx: 0, vy: 0, av: 0 })) })) };
+}
+
 /** The player's contraptions, kept in the browser's storage, as toybox items. */
 export class Contraptions {
   list: Contraption[] = [];
@@ -54,7 +63,7 @@ export class Contraptions {
 
   /** Saves it; returns false (and keeps nothing) when the browser's storage is full. */
   add(name: string, snap: Snapshot, thumb: string): Contraption | null {
-    const c: Contraption = { id: 'c' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36), name, snap, thumb };
+    const c: Contraption = { id: 'c' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36), name, snap: atRest(snap), thumb };
     this.list.push(c);
     if (!this.persist()) {
       this.list.pop();
@@ -104,7 +113,8 @@ export class Contraptions {
         description: `Your contraption: ${n} object${n === 1 ? '' : 's'}. Right-click it here to rename, export or delete it.`,
         tags: ['contraption', 'creation', 'saved'],
         preview: () => document.createElement('canvas'),
-        snapshot: c.snap, thumb: c.thumb,
+        // (at rest: those saved before they were kept so)
+        snapshot: atRest(c.snap), thumb: c.thumb,
       };
       this.defs.set(c.id, d);
     }

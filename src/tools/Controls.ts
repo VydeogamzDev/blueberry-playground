@@ -1515,8 +1515,9 @@ export class Controls {
    * they brake. (With time paused, nothing until it runs again.)
    */
   private steer(): void {
-    const x = this.axis('driveLeft', 'driveRight');
-    const aim = this.axis('aimDown', 'aimUp');
+    // (something dragged: A and D turn it, as ever)
+    const x = this.grab ? 0 : this.axis('driveLeft', 'driveRight');
+    const aim = this.grab ? 0 : this.axis('aimDown', 'aimUp');
     const now = x || aim ? this.vehicles() : [];
     for (const v of this.driven) if (!now.includes(v) && !v.destroyed) v.steer(0, 0);
     this.driven.clear();
@@ -1524,6 +1525,23 @@ export class Controls {
       v.steer(x, aim);
       this.driven.add(v);
     }
+  }
+
+  /**
+   * The commands a key gives up to driving (see Bindings' drive keys): with vehicles
+   * selected and nothing dragged, A and D drive them rather than turning them, and with
+   * a tank, S lowers its gun rather than showing the detail view.
+   */
+  private drives(code: string): Set<ActionId> {
+    const out = new Set<ActionId>();
+    const cars = this.grab ? [] : this.vehicles();
+    if (!cars.length) return out;
+    const tanks = cars.some((c) => c instanceof Tank);
+    for (const a of ACTIONS) {
+      if (!a.shares || !this.bindings.keys(a.id).includes(code)) continue;
+      if (a.id === 'driveLeft' || a.id === 'driveRight' || tanks) out.add(a.shares);
+    }
+    return out;
   }
 
   /** Is a command held by a key (or a touch button) that isn't also `other`'s? */
@@ -2679,8 +2697,9 @@ export class Controls {
       return;
     }
     if (!ids.length) return;
+    const driving = this.drives(code);
     for (const id of ids) {
-      if (this.tutorialBlocks?.(id)) continue;
+      if (this.tutorialBlocks?.(id) || driving.has(id)) continue;
       if (first && this.defers(id)) this.deferred.add(id);
       // Q, E and V: held, a ghost shows where it will go; let go, it's placed (see Placer)
       else if (id === 'spawnLeft' || id === 'spawnRight' || id === 'paste') {
@@ -2836,8 +2855,8 @@ export class Controls {
 
   private frame(dt: number): void {
     const r = this.game.renderer;
-    // keyboard panning (with vehicles selected, keys the drive keys share drive them instead, and with tanks, the aim keys' aim them;
-    // with Alt, time paused and something selected, the arrows nudge it instead)
+    // keyboard panning (were the drive keys bound to the camera's, with vehicles selected those would drive them instead, and
+    // with tanks, the aim keys' aim them; with Alt, time paused and something selected, the arrows nudge it instead)
     const speed = (900 / r.zoom) * dt * (this.isHeld('fast') ? 2.5 : 1);
     const cars = this.selection.size ? this.vehicles() : [];
     const tanks = cars.some((c) => c instanceof Tank);

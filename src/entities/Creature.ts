@@ -9,7 +9,7 @@ import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOp
 import { creatureArt, creatureFigure, CREATURE_EYE, type CreatureKind } from '../art/creatures';
 import { adrenalineRush, type Drug } from './Syringe';
 import { washBlood } from './Medical';
-import { Human, CRUSHING, LIMB_BEARS } from './Human';
+import { Human, CRUSHING, LIMB_BEARS, meeting } from './Human';
 import { getItem } from '../catalog/items';
 import { ACID_SCAR, Liquid, LIQUID_COLORS, liquidSound, paintWound, seep, woundSpot } from '../systems/Liquids';
 import { PK } from '../systems/Particles';
@@ -23,6 +23,8 @@ import { Breath, HEAD_SINKS, shoreward, tread, type Lungful } from '../systems/B
 const LUNGFUL: Lungful = { hold: 15, holdOut: 8, last: 6, tread: 60, full: LUNGS, empty: 1.5 };
 /** Swimming for the shore (m/s). */
 const SWIM = 0.7;
+/** The limbs of the trunk: a knock to one has the whole body behind it (see Creature.backing()). */
+const TRUNK = new Set<string>(['chest', 'hips']);
 
 interface CLimbSpec {
   key: string;
@@ -2371,12 +2373,15 @@ export class Creature extends Entity {
     // (a leg or a tail flung about counts no harder than the body's own fall: see Human.onImpact())
     const own = l.attached ? Math.min(info.selfSpeed, this.bodySpeed() * 1.5) : info.selfSpeed;
     const Eself = 0.5 * Math.min(mEff, info.otherMass) * own * own;
-    const backing = l.attached ? Math.max(mEff, this.totalMass() * 0.8) : mEff;
+    // (what's behind the limb: a leg, the tail or the head swings away from a knock, as a person's arm does: see Human.backing())
     const blunt = (info.other?.entity as { blunt?: number } | undefined)?.blunt ?? 1;
-    const Eother = 0.5 * Math.min(info.otherMass, backing) * info.otherSpeed * info.otherSpeed * blunt;
-    const E = Eself + Eother;
+    const whole = l.attached ? Math.max(mEff, this.totalMass() * 0.8) : mEff;
+    const v2 = info.otherSpeed * info.otherSpeed * blunt;
     const frag = l.spec.fragility / this.species.toughness;
     const E0 = (24 * mEff) / frag;
+    if (Eself + 0.5 * meeting(info.otherMass, whole) * v2 <= E0) return;
+    const Eother = 0.5 * meeting(info.otherMass, this.backing(l, info.normal, mEff, whole)) * v2;
+    const E = Eself + Eother;
     if (E <= E0) return;
     // above that, the harm climbs fast (as for people: see Human.onImpact())
     const frac = (E - E0) / ((55 * mEff) / frag);
@@ -2385,6 +2390,19 @@ export class Creature extends Entity {
     // a hard hit knocks it off its feet
     // (a lesser knock just shoves it: four legs keep it up if they can)
     if ((frac > 0.2 || Eother > 6 * this.totalMass()) && this.state === 'stand') this.setState('down');
+  }
+
+  /** What's behind a limb knocked along `push` (kg): as for a person (see Human.backing()), the chest and hindquarters being the trunk. */
+  private backing(l: Limb, push: V2, mEff: number, whole: number): number {
+    if (!l.attached || TRUNK.has(l.spec.key)) return whole;
+    let chain = 0;
+    for (let k: Limb | null = l; k && !TRUNK.has(k.spec.key); k = k.parent) chain += k.part.mass;
+    const c = this.center();
+    const dx = c.x - l.part.x;
+    const dy = c.y - l.part.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    const into = d > 1e-6 ? Math.max(0, (push.x * dx + push.y * dy) / d) : 1;
+    return Math.max(mEff, chain + (whole - chain) * into * into);
   }
 
   /** Pressed on by a weight: as a person's limbs, crushed and in the end pressed flat (see Human.onLoad()). */

@@ -261,13 +261,13 @@ export function registerVehicles(): void {
     (game, def, x, y, opts) => new Car(game, def, SUV, x, y, opts), ['vehicle', 'jeep', '4x4', 'drive', 'seats']);
   const shell = registerShell();
   const gun: CannonSpec = { ...CANNON, shell };
-  vehicle('tank', 'Tank', 'A heavy armoured tank: slow, but nothing stops it, and it crushes what it drives over. Fire its cannon with Use, from its menu or with a button wired to it. Select it to drive it with ← → and raise or lower the barrel with ↑ ↓ (or pick an elevation in its menu). Drop someone on the turret to put them in its hatch.', TANK,
+  vehicle('tank', 'Tank', 'A heavy armoured tank: slow, but nothing stops it, and it crushes what it drives over. Fire its cannon with Use, from its menu or with a button wired to it. Select it to drive it with A and D and raise or lower the barrel with W and S (or pick an elevation in its menu). Drop someone on the turret to put them in its hatch.', TANK,
     standing(TANK, { art: CANNON.barrel, x: CANNON.trunnion[0] - CANNON.pivot[0], y: CANNON.trunnion[1] - CANNON.pivot[1] }),
     (game, def, x, y, opts) => new Tank(game, def, TANK, gun, x, y, opts), ['vehicle', 'army', 'military', 'cannon', 'tracks']);
   const tank = (id: string, name: string, description: string, m: { cfg: CarConfig; cannon: Omit<CannonSpec, 'shell'> }, tags: string[]) => {
     const { cfg, cannon } = m;
     const spec: CannonSpec = { ...cannon, shell };
-    vehicle(id, name, `${description} Select it to drive it with ← → and lay the gun with ↑ ↓; Use fires.`, cfg,
+    vehicle(id, name, `${description} Select it to drive it with A and D and lay the gun with W and S; Use fires.`, cfg,
       standing(cfg, { art: cannon.barrel, x: cannon.trunnion[0] - cannon.pivot[0], y: cannon.trunnion[1] - cannon.pivot[1] }),
       (game, def, x, y, opts) => new Tank(game, def, cfg, spec, x, y, opts), ['vehicle', 'tank', 'army', 'military', 'cannon', 'tracks', ...tags]);
   };

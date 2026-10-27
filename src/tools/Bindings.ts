@@ -76,11 +76,13 @@ export const ACTIONS: ActionSpec[] = [
   { id: 'zoomIn', label: 'Zoom in', group: 'Camera', keys: ['NumpadAdd', 'Equal'] },
   { id: 'zoomOut', label: 'Zoom out', group: 'Camera', keys: ['NumpadSubtract', 'Minus'] },
   { id: 'recenter', label: 'Recenter camera', group: 'Camera', keys: ['Home'] },
-  // (not People Playground's: its vehicles drive themselves; here the arrows drive what's selected)
-  { id: 'driveLeft', label: 'Drive the selected vehicles left (forward or in reverse)', group: 'Vehicles', keys: ['ArrowLeft'], shares: 'panLeft' },
-  { id: 'driveRight', label: 'Drive the selected vehicles right (forward or in reverse)', group: 'Vehicles', keys: ['ArrowRight'], shares: 'panRight' },
-  { id: 'aimUp', label: 'Aim the selected tanks up (raise their barrels)', group: 'Vehicles', keys: ['ArrowUp'], shares: 'panUp' },
-  { id: 'aimDown', label: 'Aim the selected tanks down (lower their barrels)', group: 'Vehicles', keys: ['ArrowDown'], shares: 'panDown' },
+  // (not People Playground's: its vehicles drive themselves; here W A S D drive what's selected, the arrows
+  // being the camera's. While a vehicle is selected, and nothing's dragged, A and D drive it rather than turn
+  // it, and S lowers a tank's gun rather than showing the detail view: see Controls.drives())
+  { id: 'driveLeft', label: 'Drive the selected vehicles left (forward or in reverse)', group: 'Vehicles', keys: ['KeyA'], shares: 'rotateLeft' },
+  { id: 'driveRight', label: 'Drive the selected vehicles right (forward or in reverse)', group: 'Vehicles', keys: ['KeyD'], shares: 'rotateRight' },
+  { id: 'aimUp', label: 'Aim the selected tanks up (raise their barrels)', group: 'Vehicles', keys: ['KeyW'] },
+  { id: 'aimDown', label: 'Aim the selected tanks down (lower their barrels)', group: 'Vehicles', keys: ['KeyS'], shares: 'detail' },
   // building (not People Playground's keys: it has no layers, grids or checkpoints to reach)
   { id: 'com', label: 'Hold: connection ends go at the centre of mass', group: 'Building', keys: ['KeyM'] },
   { id: 'rewind', label: 'Back to build (the scene as it was before Play; also Shift + Toggle time)', group: 'Building', keys: [] },

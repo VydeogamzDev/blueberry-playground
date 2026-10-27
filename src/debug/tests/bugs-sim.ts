@@ -12,10 +12,14 @@ import type { Balloon } from '../../entities/Balloon';
 import type { Firearm } from '../../entities/Firearm';
 import type { Fan } from '../../entities/Air';
 import { capture, instantiate, type Snapshot } from '../../world/Snapshot';
+import type { Contraptions } from '../../world/Contraptions';
 import { Liquid } from '../../systems/Liquids';
 
 /** A player's rocket, as saved as a contraption (see the test). */
 const ROCKET = {'entities':[{'def':'short-beam','flip':true,'parts':[{'x':0.396,'y':0.5341,'a':0.0001,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}]},{'def':'short-beam','flip':true,'parts':[{'x':0.0068,'y':1.4182,'a':1.2215,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'config':{'w':52,'h':6}},{'def':'short-beam','flip':false,'parts':[{'x':0.7851,'y':1.4182,'a':-1.2215,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'config':{'w':52,'h':6}},{'def':'concrete-block','flip':true,'parts':[{'x':0.4101,'y':2.4585,'a':0,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}]},{'def':'thruster','flip':true,'parts':[{'x':0.0351,'y':0.2201,'a':-1.558,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'extra':{'on':false,'off':false,'thrust':2}},{'def':'thruster','flip':true,'parts':[{'x':0.6575,'y':0.2239,'a':-1.558,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'extra':{'on':false,'off':false,'thrust':2}},{'def':'switch','flip':true,'parts':[{'x':0.3402,'y':0.7571,'a':0,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'extra':{'on':true}},{'def':'short-beam','flip':true,'parts':[{'x':2.5054,'y':0.534,'a':0,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'config':{'w':87,'h':6}},{'def':'short-beam','flip':true,'parts':[{'x':-1.8072,'y':0.5378,'a':0,'vx':0,'vy':0,'av':0,'frozen':false,'hp':null}],'config':{'w':93,'h':6}}],'connections':[{'kind':'weld','a':[3,0],'la':{'x':0.1719,'y':-0.1719},'b':[2,0],'lb':{'x':-0.8854,'y':0.1063},'rest':0.232},{'kind':'weld','a':[3,0],'la':{'x':-0.1719,'y':-0.1719},'b':[1,0],'lb':{'x':0.8951,'y':0.0797},'rest':0.2428},{'kind':'weld','a':[1,0],'la':{'x':-0.6406,'y':0.0469},'b':[0,0],'lb':{'x':-0.6524,'y':0.2983},'rest':0.3288},{'kind':'weld','a':[2,0],'la':{'x':0.6719,'y':0.0156},'b':[0,0],'lb':{'x':0.6338,'y':0.258},'rest':0.2981},{'kind':'weld','a':[0,0],'la':{'x':-0.3594,'y':0.0156},'b':[4,0],'lb':{'x':-0.3295,'y':0.0057},'rest':0.2212},{'kind':'weld','a':[0,0],'la':{'x':0.2656,'y':0.0156},'b':[5,0],'lb':{'x':-0.3258,'y':0.0082},'rest':0.2166},{'kind':'weld','a':[4,0],'la':{'x':0.0031,'y':0.0},'b':[5,0],'lb':{'x':-0.0011,'y':-0.6224},'rest':0.6224},{'kind':'weld','a':[6,0],'la':{'x':0,'y':-0.0829},'b':[0,0],'lb':{'x':-0.0557,'y':0.1401},'rest':0.1573},{'kind':'wire','a':[6,0],'la':{'x':0.1406,'y':-0.0469},'b':[5,0],'lb':{'x':0.0469,'y':0.0156},'rest':0.5668},{'kind':'wire','a':[6,0],'la':{'x':-0.1094,'y':-0.0781},'b':[4,0],'lb':{'x':0.0781,'y':-0.0156},'rest':0.5769},{'kind':'weld','a':[7,0],'la':{'x':-1.125,'y':-0.0156},'b':[0,0],'lb':{'x':0.9844,'y':-0.0159},'rest':0.3452},{'kind':'weld','a':[8,0],'la':{'x':1.3125,'y':-0.0156},'b':[0,0],'lb':{'x':-0.8906,'y':-0.0119},'rest':0.2188}]} as unknown as Snapshot;
+
+/** A player's car (four motor wheels at 400% welded under a beam, two posts, a box, a switch), as saved: driving along at 17 m/s. */
+const CAR = {'entities':[{'def':'motor-wheel','flip':true,'parts':[{'x':-1.2059,'y':0.308,'a':0.0,'vx':16.97,'vy':-0.04,'av':0.0,'frozen':false,'hp':100},{'x':-1.2059,'y':0.308,'a':2.5741,'vx':16.97,'vy':-0.04,'av':-55.5,'frozen':false,'hp':100}],'extra':{'on':false,'off':false,'dir':-1,'speed':4,'torque':4}},{'def':'motor-wheel','flip':true,'parts':[{'x':-0.3743,'y':0.3081,'a':0.0,'vx':16.97,'vy':-0.04,'av':0.0,'frozen':false,'hp':100},{'x':-0.3743,'y':0.3081,'a':2.8825,'vx':16.97,'vy':-0.03,'av':-55.46,'frozen':false,'hp':100}],'extra':{'on':false,'off':false,'dir':-1,'speed':4,'torque':4}},{'def':'motor-wheel','flip':true,'parts':[{'x':0.5129,'y':0.3081,'a':0.0,'vx':16.97,'vy':-0.03,'av':0.0,'frozen':false,'hp':100},{'x':0.5129,'y':0.3081,'a':-0.1267,'vx':16.97,'vy':-0.03,'av':-55.49,'frozen':false,'hp':100}],'extra':{'on':false,'off':false,'dir':-1,'speed':4,'torque':4}},{'def':'motor-wheel','flip':true,'parts':[{'x':1.2653,'y':0.3081,'a':0.0,'vx':16.97,'vy':-0.03,'av':0.0,'frozen':false,'hp':100},{'x':1.2653,'y':0.3081,'a':-1.3282,'vx':16.97,'vy':-0.03,'av':-53.5,'frozen':false,'hp':100}],'extra':{'on':false,'off':false,'dir':-1,'speed':0.5,'torque':4}},{'def':'beam','flip':true,'parts':[{'x':-0.016,'y':0.7143,'a':0.0,'vx':16.97,'vy':-0.03,'av':0.0,'frozen':false,'hp':null,'paint':'lQAAWBYX/5cAAGIMDP+YAAB5EhL/9gAAckRG//gAAH4aGv/5AACDKiv/+gAAYhMT//sAAH4XF//9AABiICH/WAEAWgoL/1oBAHATE/9bAQBYCAj/XAEAfBIS/7sBAHUVFv+9AQB7ExP/vgEAYwsL/78BAHcREv8dAgBwMzf/HwIAdhsc/yACAHAzN/8='}]},{'def':'short-beam','flip':true,'parts':[{'x':-0.5931,'y':1.5597,'a':1.545,'vx':16.97,'vy':-0.04,'av':0.0,'frozen':false,'hp':null}]},{'def':'short-beam','flip':true,'parts':[{'x':0.0966,'y':1.5597,'a':1.545,'vx':16.97,'vy':-0.03,'av':0.0,'frozen':false,'hp':null,'paint':'XAAAeR8g/10AAFoKC/9eAAB7EhL/XwAAbAwM/2AAAF0KCv9hAAB9ExP/YgAAfBMT/48AAIlAQv+RAACMT1L/kgAAjE9S/5QAAGAhI//FAABgISP/xgAAcxgZ/w=='}]},{'def':'metal-box','flip':true,'parts':[{'x':1.1403,'y':1.216,'a':0.0,'vx':16.97,'vy':-0.03,'av':0.0,'frozen':false,'hp':null}]},{'def':'switch','flip':true,'parts':[{'x':-0.9871,'y':1.0597,'a':0.0,'vx':16.97,'vy':-0.04,'av':0.0,'frozen':false,'hp':null}],'extra':{'on':true}}],'connections':[{'kind':'weld','a':[4,0],'la':{'x':1.2656,'y':0.0156},'b':[3,0],'lb':{'x':-0.0156,'y':0.4219},'rest':0.4222,'end':{'x':0,'y':0}},{'kind':'weld','a':[4,0],'la':{'x':0.4844,'y':0.0469},'b':[2,0],'lb':{'x':-0.0445,'y':0.4531},'rest':0.4553,'end':{'x':0,'y':0}},{'kind':'weld','a':[4,0],'la':{'x':-0.3594,'y':0.0781},'b':[1,0],'lb':{'x':-0.0011,'y':0.4844},'rest':0.4844,'end':{'x':0,'y':0}},{'kind':'weld','a':[4,0],'la':{'x':-1.2031,'y':0.0156},'b':[0,0],'lb':{'x':-0.0132,'y':0.4219},'rest':0.4221,'end':{'x':0,'y':0}},{'kind':'weld','a':[5,0],'la':{'x':-0.6406,'y':-0.0156},'b':[4,0],'lb':{'x':-0.5779,'y':0.2046},'rest':0.189,'end':{'x':-0.5781,'y':0.0156}},{'kind':'weld','a':[6,0],'la':{'x':-0.6406,'y':-0.0469},'b':[4,0],'lb':{'x':0.1429,'y':0.2038},'rest':0.222,'end':{'x':0.1094,'y':-0.0156}},{'kind':'weld','a':[7,0],'la':{'x':-0.2031,'y':-0.2656},'b':[4,0],'lb':{'x':0.9531,'y':0.2361},'rest':0.2226,'end':{'x':0.9844,'y':0.0156}},{'kind':'weld','a':[8,0],'la':{'x':0.0,'y':-0.0829},'b':[4,0],'lb':{'x':-0.9711,'y':0.2626},'rest':0.2476,'end':{'x':-0.9531,'y':0.0156}},{'kind':'wire','a':[8,0],'la':{'x':-0.1406,'y':-0.0469},'b':[0,0],'lb':{'x':0,'y':0},'rest':0.7091},{'kind':'wire','a':[8,0],'la':{'x':0.1406,'y':-0.0781},'b':[1,0],'lb':{'x':0,'y':0},'rest':0.8226},{'kind':'wire','a':[8,0],'la':{'x':0.1406,'y':-0.0781},'b':[2,0],'lb':{'x':0,'y':0},'rest':1.5171},{'kind':'wire','a':[8,0],'la':{'x':0.1406,'y':-0.0781},'b':[3,0],'lb':{'x':0,'y':0},'rest':2.2166}]} as unknown as Snapshot;
 
 /** Regression tests for bugs found in the simulation (one per fix). */
 export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
@@ -195,6 +199,33 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       const off = kit.spawn('jet-engine', 0, 2.6) as JetEngine;
       kit.advance(2);
       if (off.destroyed) return 'a jet engine dropped 2 m broke';
+      return true;
+    }],
+    ['extra: bugs: a player’s car saved on the move spawns still; someone standing between its posts, in front of them or lying on it rides off unhurt as it pulls away at full power', () => {
+      const store = (controls.ui as unknown as { contraptions: Contraptions }).contraptions;
+      const saved = store.add('test: car saved on the move', CAR, '');
+      if (!saved) return 'it couldn’t be saved';
+      const snap = store.defOf(saved).snapshot!;
+      store.remove(saved.id);
+      if (snap.entities.some((e) => e.parts.some((p) => p.vx || p.vy || p.av))) return 'saved at 17 m/s, it spawns moving';
+      // (they used to step as if on the ground, left behind as it went, and walk back into its posts; a knock
+      // nudging a hand or a foot counted as if the whole body were behind it: a hand came off at 3 m/s)
+      for (const [where, x, y] of [['standing between its posts', -0.25, 2.2], ['standing in front of its posts', 0.62, 2.2], ['lying on it', 0.3, 1.4]] as const) {
+        kit.reset();
+        const made = instantiate(game, snap);
+        const sw = made.find((e) => e.def.id === 'switch') as Entity & { on: boolean };
+        if (sw.on) sw.activate();
+        kit.advance(0.5);
+        const h = kit.spawn('human', x, y, where === 'lying on it' ? { angle: Math.PI / 2 } : undefined) as Human;
+        kit.advance(2);
+        sw.activate();
+        kit.advance(3);
+        const chassis = made.find((e) => e.def.id === 'beam')!.parts[0];
+        if (chassis.vx < 5) return `${where}: it got to only ${chassis.vx.toFixed(1)} m/s`;
+        if (!h.alive || h.consciousness < 0.9) return `${where}: they were ${h.alive ? 'knocked out' : 'killed'}`;
+        const hurt = [...h.limbs.values()].filter((l) => l.gone || l.broken || l.part.hp < l.spec.hp * 0.5).map((l) => l.spec.key);
+        if (hurt.length) return `${where}: they were hurt: ${hurt.join(', ')}`;
+      }
       return true;
     }],
     ['extra: bugs: a car built of a beam and two motor wheels pinned on by their hubs drives; someone welded into a chair on it rides at top speed unhurt', () => {

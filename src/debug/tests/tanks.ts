@@ -82,24 +82,33 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       if (c.flipped || Math.abs(c.body.a) > 0.2) return `backing up, it turned round (facing ${c.flipped ? 'left' : 'right'}, tilted ${c.body.a.toFixed(2)} rad)`;
       return true;
     })],
-    ['extra: tanks: with nothing selected the arrows pan the camera and drive nothing; a selected car leaves the aim keys to the camera', () => tidy(() => {
+    ['extra: tanks: the arrows pan the camera and drive nothing, a car selected or not; selected, A and D drive it rather than turning it, and with nothing selected drive nothing', () => tidy(() => {
       kit.reset();
+      if (key('driveRight') !== 'KeyD' || key('driveLeft') !== 'KeyA' || key('aimUp') !== 'KeyW' || key('aimDown') !== 'KeyS') return `the drive keys are ${key('driveLeft')} ${key('driveRight')} ${key('aimUp')} ${key('aimDown')}, not A D W S`;
       const c = kit.spawn('car', -20, 0.6) as Car;
       kit.advance(1);
+      controls.selection = new Set([c]);
       kit.view(0, 4);
       const x0 = c.body.x;
+      const a0 = c.body.a;
       const cam0 = { x: r.camX, y: r.camY };
+      kit.key(key('panRight'), true);
+      frames(20);
+      kit.key(key('panRight'), false);
+      if (r.camX - cam0.x < 2) return `20 frames of ${key('panRight')} with a car selected panned the camera ${(r.camX - cam0.x).toFixed(2)} m (the pan: 4.7 m)`;
+      if (Math.abs(c.body.x - x0) > 0.05 || c.driving) return `${key('panRight')} drove the selected car ${(c.body.x - x0).toFixed(2)} m`;
+      kit.key(key('driveLeft'), true);
+      frames(20);
+      kit.key(key('driveLeft'), false);
+      if (Math.abs(c.body.a - a0) > 0.05) return `${key('driveLeft')} with the car selected turned it ${(c.body.a - a0).toFixed(2)} rad`;
+      if (c.body.x > x0 - 0.1) return `20 frames of ${key('driveLeft')} with the car selected: it went ${(c.body.x - x0).toFixed(2)} m (not left)`;
+      kit.advance(2);
+      controls.selection = new Set();
+      const x1 = c.body.x;
       kit.key(key('driveRight'), true);
       frames(20);
       kit.key(key('driveRight'), false);
-      if (r.camX - cam0.x < 2) return `20 frames of ${key('driveRight')} with nothing selected panned the camera ${(r.camX - cam0.x).toFixed(2)} m (the pan: 4.7 m)`;
-      if (Math.abs(c.body.x - x0) > 0.05 || c.driving) return `the car, not selected, moved ${(c.body.x - x0).toFixed(2)} m`;
-      // (no tank among the selection: the aim keys are the camera's)
-      controls.selection = new Set([c]);
-      kit.key(key('aimUp'), true);
-      frames(10);
-      kit.key(key('aimUp'), false);
-      if (r.camY - cam0.y < 1) return `10 frames of ${key('aimUp')} with a car selected panned the camera up ${(r.camY - cam0.y).toFixed(2)} m`;
+      if (Math.abs(c.body.x - x1) > 0.05 || c.driving) return `the car, not selected, moved ${(c.body.x - x1).toFixed(2)} m on ${key('driveRight')}`;
       return true;
     })],
     ['extra: tanks: with time paused the drive key does nothing (not even pan) until time runs again', () => tidy(() => {
@@ -111,10 +120,12 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       const cam0 = r.camX;
       const x0 = c.body.x;
       game.paused = true;
+      const a0 = c.body.a;
       kit.key(key('driveRight'), true);
       // (paused, the game draws frames and takes no steps)
       for (let i = 0; i < 30; i++) game.renderFrame(1 / 60, 1);
       if (c.driving || Math.abs(c.body.x - x0) > 0.01) return `paused, the car moved ${(c.body.x - x0).toFixed(3)} m (driving: ${c.driving})`;
+      if (Math.abs(c.body.a - a0) > 0.01) return `paused, ${key('driveRight')} turned the selected car ${(c.body.a - a0).toFixed(2)} rad`;
       if (Math.abs(r.camX - cam0) > 0.01) return `paused, the drive key panned the camera ${(r.camX - cam0).toFixed(2)} m`;
       game.paused = false;
       kit.advance(0.6);
@@ -248,9 +259,11 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       const t = kit.spawn('tank-leopard', 0, 0.8) as Tank;
       kit.advance(1);
       controls.selection = new Set([t]);
+      const detail = controls.detail;
       kit.key(key('aimDown'), true);
       kit.advance(0.6);
       kit.key(key('aimDown'), false);
+      if (controls.detail !== detail) return `${key('aimDown')} with a tank selected toggled the detail view too`;
       const laid = t.elevation;
       if (laid > 0) return `0.6 s of ${key('aimDown')} from 5°: laid at ${laid.toFixed(1)}° (not below level)`;
       kit.advance(0.3);

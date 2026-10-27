@@ -4,6 +4,28 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.2.3 — 2026-10-26
+
+### Vehicles
+- Cars and tanks drive with W A S D: with one selected, A and D drive it left and right, and a tank's
+  gun goes up and down with W and S. The arrow keys are left to the camera, as ever. While a vehicle is
+  selected, A and D drive it rather than turn it, and S lays a tank's gun rather than showing the
+  detail view; dragging something, A and D turn it as usual.
+
+### Fixes
+- Riding in a car you built, someone standing in it rides off with it unhurt. They kept their balance
+  by the ground, not by what they stood on: on a deck going at 6 m/s they felt they were toppling over
+  at 6 m/s, stepped as if on the ground (their feet left behind as it went on) and walked back into its
+  posts, which broke their feet and hands. People now keep their feet by what's under them.
+- A knock on an arm, a leg or a head counts what's behind it: the limb and those joining it to the body,
+  and the rest of the body only as far as the knock drives the limb into it (a crate dropped on a head,
+  all of it; a post knocking a hand sideways, just the arm, which swings away). A post nudging a hand at
+  3 m/s took it off, where the hand flung into a wall at 3 m/s isn't hurt. Something about as heavy as
+  the body shoves the two along together, and puts half as much into the limb as something far heavier.
+  The same goes for animals.
+- A contraption saved while it was moving (a car driven along, then saved) is put down again at rest.
+  It used to keep the speed it had, and drove off at 17 m/s the moment it was spawned.
+
 ## 0.2.2 — 2026-10-26
 
 ### Fixes

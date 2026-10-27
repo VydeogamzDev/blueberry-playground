@@ -800,7 +800,7 @@ export class UI implements UIBridge {
       c.openMenuForSelection(r.left, r.top - 8);
     });
     this.root.appendChild(this.touchBar);
-    // driving: the arrow keys with a vehicle selected, as buttons held at the screen's sides (a tank's aim with them)
+    // driving: the drive keys (A, D) with a vehicle selected, as buttons held at the screen's sides (a tank's aim, W and S, with them)
     this.drivePad = el('div', 'drivepad hidden');
     const pad = (label: string, title: string, id: 'driveLeft' | 'driveRight' | 'aimUp' | 'aimDown', cls: string) => {
       const b = btn(label, title, () => c.holdDrive(id, true), () => c.holdDrive(id, false), this.drivePad);
@@ -1070,7 +1070,7 @@ export class UI implements UIBridge {
       ['Remove tool', 'Click a connection to cut it · Shift+click a thing: all of its · drag a box across several'],
       [`Shift + ${k('time')}`, 'Back to build: the scene as it was before you pressed Play'],
     ]));
-    // which keys more than one command uses (not counting a pair that shares them on purpose: the arrows drive or pan)
+    // which keys more than one command uses (not counting a pair that shares them on purpose: A and D drive or turn)
     const uses = new Map<string, number>();
     for (const a of ACTIONS) for (const code of b.keys(a.id)) if (!(a.shares && b.keys(a.shares).includes(code))) uses.set(code, (uses.get(code) ?? 0) + 1);
     for (const group of GROUPS) {

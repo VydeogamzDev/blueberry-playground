@@ -2300,7 +2300,7 @@ export const WEAPONS: TutorialStep[] = [
 
 // ---- vehicles ---------------------------------------------------------------------------
 
-/** Vehicles: spawn one, get in, drive, stop, gears, the arrow keys, get out, crash; then a tank. */
+/** Vehicles: spawn one, get in, drive, stop, gears, the drive keys, get out, crash; then a tank. */
 export const VEHICLES: TutorialStep[] = [
   {
     id: 'v-hello',
@@ -2397,7 +2397,7 @@ export const VEHICLES: TutorialStep[] = [
       `Or drive it yourself: ${t.controls.selection.has(ride(t) as Entity) ? 'with the car selected' : `select the car (${t.touch ? 'tap' : 'click'} it)`}, ` +
       (t.touch
         ? 'hold <b>▶</b> or <b>◀</b>, at the sides of the screen. Let go and it brakes.'
-        : `hold ${t.key('driveRight', '<kbd>→</kbd>')} or ${t.key('driveLeft', '<kbd>←</kbd>')}. Let go and it brakes.`),
+        : `hold ${t.key('driveRight', '<kbd>D</kbd>')} or ${t.key('driveLeft', '<kbd>A</kbd>')}. Let go and it brakes.`),
     setup: (t) => {
       const c = rideOut(t);
       // (stopped first: the keys are what moves it)
@@ -2458,7 +2458,7 @@ export const VEHICLES: TutorialStep[] = [
       'Four tanks in Vehicles: the Tank, the M1 Abrams, the ZTZ-99A and the Leopard 2A7. ' +
       (t.touch
         ? 'Tap this one and hold <b>▲</b> or <b>▼</b> to raise or lower its gun (its long-press menu has set angles too).'
-        : `Select this one and hold ${t.key('aimUp', '<kbd>↑</kbd>')} or ${t.key('aimDown', '<kbd>↓</kbd>')} to raise or lower its gun (its menu has set angles too).`),
+        : `Select this one and hold ${t.key('aimUp', '<kbd>W</kbd>')} or ${t.key('aimDown', '<kbd>S</kbd>')} to raise or lower its gun (its menu has set angles too).`),
     setup: (t) => {
       t.clean();
       const k = tankOut(t);
@@ -2493,7 +2493,7 @@ export const VEHICLES: TutorialStep[] = [
     text: (t) =>
       t.touch
         ? `Tanks drive like cars: ${menu(t)} it and choose <b>Drive</b> (and <b>Stop</b> after). Nothing much stops a tank.`
-        : `Tanks drive like cars: with it selected, hold ${t.key('driveRight', '<kbd>→</kbd>')} (or its menu’s <b>Drive</b>). Nothing much stops a tank.`,
+        : `Tanks drive like cars: with it selected, hold ${t.key('driveRight', '<kbd>D</kbd>')} (or its menu’s <b>Drive</b>). Nothing much stops a tank.`,
     setup: (t) => {
       t.memo.x = tank(t)?.body.x ?? 0;
     },

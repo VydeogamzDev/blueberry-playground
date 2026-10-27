@@ -66,6 +66,17 @@ const SPECS: LimbSpec[] = [
 /** Live-tunable balance parameters (exposed for debugging). */
 export const BALANCE = { kp: 42, kd: 4, dead: 0.05, amax: 7.5, torqueOnly: true, standDamping: 20, limpDamping: 0.7, stumble: 1.6 };
 
+/**
+ * The mass (kg) that counts when a thing of mass `m` meets a limb with `behind` behind
+ * it: the two masses' reduced mass, m*behind/(m + behind). A post as heavy as the body
+ * it catches a hand against shoves the two along together, putting half as much into
+ * the hand as something far heavier would; something immovable, all of it.
+ */
+export const meeting = (m: number, behind: number): number => (m === Infinity ? behind : (m * behind) / (m + behind));
+
+/** The limbs of the trunk: a knock to one has the whole body behind it (see Human.backing()). */
+const TRUNK = new Set<string>(['upperTorso', 'midTorso', 'lowerTorso']);
+
 /** Failed attempts to stand before lying still until something changes. */
 const GIVE_UP = 4;
 /** Below this pain someone lying down stops writhing and goes still. */
@@ -1881,7 +1892,7 @@ export class Human extends Entity implements Holder {
       this.pacing = 0;
     }
     // walked into something that the eyes missed: give up and try elsewhere later
-    this.stuckT = speed && this.trunkVx() < Math.abs(speed) * 0.25 ? this.stuckT + dt : 0;
+    this.stuckT = speed && this.walkVx() < Math.abs(speed) * 0.25 ? this.stuckT + dt : 0;
     if (this.stuckT > 2) {
       this.stuckT = 0;
       this.blocked = Math.sign(speed);
@@ -3335,6 +3346,45 @@ export class Human extends Entity implements Holder {
     return m ? (p / m) * this.f : 0;
   }
 
+  /** How fast they're walking (m/s, as trunkVx()): over what they stand on, not the ground (see footing()). */
+  private walkVx(): number {
+    return this.trunkVx() - this.footing().x * this.f;
+  }
+
+  private footingAt = -1;
+  private footingNow: V2 = { x: 0, y: 0 };
+
+  /**
+   * How fast what's under their feet is going (m/s): a car's deck, someone they stand
+   * on; the floor, or nothing, still. Balance and walking go by it, as anyone on a
+   * moving deck keeps their feet by the deck: going by the ground, someone stood on a
+   * car doing 6 m/s felt they were toppling over at 6 m/s, stepped as if on the
+   * ground (their feet left behind as it went on) and walked back into its rear posts.
+   */
+  private footing(): V2 {
+    if (this.footingAt === this.game.time) return this.footingNow;
+    this.footingAt = this.game.time;
+    const phys = this.game.physics;
+    let x = 0;
+    let y = 0;
+    let n = 0;
+    for (const k of ['footF', 'footB'] as LimbKey[]) {
+      const l = this.L(k);
+      if (l.gone || !l.attached) continue;
+      const f = l.part;
+      const hit = phys.world.castRay(new RAPIER.Ray({ x: f.x, y: f.y }, { x: 0, y: -1 }), 0.16, true, undefined, undefined, undefined, undefined, (c) => phys.partOf(c)?.entity !== this);
+      if (!hit) continue;
+      n++;
+      const p = phys.partOf(hit.collider);
+      if (!p || p.frozen) continue;
+      // (its speed where the foot is: a deck tipping or turning moves at its edge as it turns)
+      x += p.vx - p.av * (f.y - hit.timeOfImpact - p.y);
+      y += p.vy + p.av * (f.x - p.x);
+    }
+    this.footingNow = n ? { x: x / n, y: y / n } : { x: 0, y: 0 };
+    return this.footingNow;
+  }
+
   /**
    * Off balance: the speed (m/s, signed, world x) to step at to get the feet back
    * under the body, or 0. Where the body would come to rest over (its capture point:
@@ -3394,14 +3444,14 @@ export class Human extends Entity implements Holder {
   private walk(dt: number, grounded: boolean): void {
     // (below 0: stepping back, still facing the same way, as from a foe)
     const want = this.state === 'stand' ? clamp(this.speed, -GAIT.top, GAIT.top) : 0;
-    const back = want < 0 || (want === 0 && this.trunkVx() < -0.05) ? -1 : 1;
+    const back = want < 0 || (want === 0 && this.walkVx() < -0.05) ? -1 : 1;
     // (a stumble can't wait for the legs to get going)
     this.gaitAmt = want !== 0 ? Math.min(1, this.gaitAmt + dt * (this.stumbling ? 6 : 3)) : Math.max(0, this.gaitAmt - dt * 3);
     if (!this.gaitAmt) return;
     // step for the speed the body is going (setting off, a little ahead of it), so the
     // feet keep up with it rather than flailing at a run from a standing start
     const w = Math.abs(want);
-    const v = this.trunkVx() * back;
+    const v = this.walkVx() * back;
     this.pace = w ? clamp(v + 0.4, 0.5 * Math.min(w, GAIT.walk), w) : Math.max(0, v);
     const run = clamp((this.pace - GAIT.walk) / (GAIT.run - GAIT.walk), 0, 1);
     // each leg carries the body one sweep per half stride (stepping back, the stride runs backwards)
@@ -3412,7 +3462,7 @@ export class Human extends Entity implements Holder {
     // speed up toward the wanted speed (or slow to a stop), gently while the legs
     // are still getting into their stride: a body shoved ahead of its feet falls on its face
     const up = (GAIT.accel + (GAIT.runAccel - GAIT.accel) * run) * (0.3 + 0.7 * this.gaitAmt);
-    const a = back < 0 && want < 0 ? clamp((want - this.trunkVx()) * GAIT.drive, -up, 4) : clamp((want - this.trunkVx()) * GAIT.drive, -4, up);
+    const a = back < 0 && want < 0 ? clamp((want - this.walkVx()) * GAIT.drive, -up, 4) : clamp((want - this.walkVx()) * GAIT.drive, -4, up);
     let m = 0;
     for (const l of this.order) if (!l.gone && l.attached) m += l.part.mass;
     const trunk = (['upperTorso', 'midTorso', 'lowerTorso'] as LimbKey[]).map((k) => this.L(k)).filter((l) => !l.gone && l.attached && !l.part.frozen);
@@ -3534,8 +3584,10 @@ export class Human extends Entity implements Holder {
     }
     mx /= m;
     my /= m;
-    vx /= m;
-    vy /= m;
+    // (how fast it tips over the feet: on a moving deck, over the deck)
+    const g = grounded ? this.footing() : { x: 0, y: 0 };
+    vx = vx / m - g.x;
+    vy = vy / m - g.y;
     const rx = mx - sx;
     const ry = my - sy;
     const h2 = Math.max(0.05, rx * rx + ry * ry);
@@ -3850,14 +3902,18 @@ export class Human extends Entity implements Holder {
     // a body coming down: that's a fall, a slam or a throw)...
     const own = l.attached ? Math.min(info.selfSpeed, this.bodySpeed() * 1.5) : info.selfSpeed;
     const Eself = this.climbing || this.throwing(l) ? 0 : 0.5 * Math.min(mEff, info.otherMass) * own * own;
-    // ...plus energy delivered by the other object, which the rest of the body
-    // backs up (a crate dropped on a head crushes it against the body)
-    const backing = l.attached ? Math.max(mEff, this.totalMass() * 0.8) : mEff;
+    // ...plus energy delivered by the other object, as much as what's behind the limb
+    // takes (see backing(): a crate dropped on a head crushes it against the body, a
+    // post nudging a hand only swings the arm)
     const blunt = (info.other?.entity as { blunt?: number } | undefined)?.blunt ?? 1;
-    const Eother = 0.5 * Math.min(info.otherMass, backing) * info.otherSpeed * info.otherSpeed * blunt;
-    const E = Eself + Eother;
+    const whole = l.attached ? Math.max(mEff, this.totalMass() * 0.8) : mEff;
+    const v2 = info.otherSpeed * info.otherSpeed * blunt;
     const frag = l.spec.fragility / this.variant.toughness;
     const E0 = (24 * mEff) / frag;
+    // (most knocks in a heap don't come near, backed by the whole body or not)
+    if (Eself + 0.5 * meeting(info.otherMass, whole) * v2 <= E0) return;
+    const Eother = 0.5 * meeting(info.otherMass, this.backing(l, info.normal, mEff, whole)) * v2;
+    const E = Eself + Eother;
     if (E <= E0) return;
     // above that, the harm climbs fast: a head slammed into the floor at 10 m/s is
     // done for, a leg at 10 m/s breaks (falling over or landing a jump stays below E0)
@@ -3868,6 +3924,26 @@ export class Human extends Entity implements Holder {
     // a hard hit knocks a standing person over
     // (a lesser knock just shoves them: their balance decides whether they go over)
     if ((frac > 0.2 || Eother > 400) && this.state === 'stand' && l.spec.cy > 24) this.setState('down');
+  }
+
+  /**
+   * What's behind a limb knocked along `push` (kg, see onImpact()). The trunk has the
+   * whole body behind it. A head, an arm or a leg has itself and what joins it to the
+   * trunk, and the rest of the body as far as the knock drives it toward the body's
+   * middle: a crate dropped on a head, all of it; a post knocking a hand sideways, the
+   * arm alone, which swings away. (Counted as backed by the whole body, a hand nudged
+   * by a heavy post at 3 m/s came off, where flung into a wall at 3 m/s it isn't hurt.)
+   */
+  private backing(l: Limb, push: V2, mEff: number, whole: number): number {
+    if (!l.attached || TRUNK.has(l.spec.key)) return whole;
+    let chain = 0;
+    for (let k: Limb | null = l; k && !TRUNK.has(k.spec.key); k = k.parent) chain += k.part.mass;
+    const c = this.center();
+    const dx = c.x - l.part.x;
+    const dy = c.y - l.part.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    const into = d > 1e-6 ? Math.max(0, (push.x * dx + push.y * dy) / d) : 1;
+    return Math.max(mEff, chain + (whole - chain) * into * into);
   }
 
   /**
