@@ -58,15 +58,16 @@ const TURN_AFTER = 1.2;
 const LAID = 0.6;
 /** Driven or laid by hand, its crew leave it to whoever does for this long (s). */
 const HANDS_OFF = 4;
-/**
- * It holds its fire with anyone of its side under the shell's path with less
- * than this (m) over their heads, or within this of where it would land (its
- * blast's reach and a little).
- */
-const CLEAR_OVER = 0.4;
+/** It holds its fire with anyone of its side within this (m) of where the shell would land (its blast's reach and a little). */
 const CLEAR_BLAST = 5;
 /** Nor does it drive on with one of its own side this near (m) in front of it (or behind, backing up). */
 const GIVE_WAY = 3;
+
+/** Its own side a shell (or a missile) is fired past (see Tank.clear()): their parts, and how far on (m, across) it has gone by them. */
+export interface Passing {
+  parts: Part[];
+  d: number;
+}
 
 /**
  * A tank: a heavy hull on driven road wheels inside its track, with a cannon on
@@ -79,7 +80,8 @@ const GIVE_WAY = 3;
  *
  * Put on a side (Team: in its menu), its crew fight for it: they drive at the
  * nearest enemy they can see to within range, lay the gun on them and fire,
- * holding fire while their own side is in the way (see command()).
+ * past their own side, but holding fire while their own side is near where
+ * it would land (see command(), clear()).
  */
 export class Tank extends Car {
   readonly barrel: Part;
@@ -163,8 +165,8 @@ export class Tank extends Car {
     }
   }
 
-  /** Fires a shell, once it has reloaded. */
-  fire(): void {
+  /** Fires a shell, once it has reloaded (past its own side in the way: see clear()). */
+  fire(past?: Passing): void {
     const b = this.barrel;
     // (a burnt-out wreck's gun is as dead as its engine)
     if (this.cooldown > 0 || this.destroyed || this.wrecked || b.destroyed) return;
@@ -177,7 +179,7 @@ export class Tank extends Car {
     this.cooldown = g.reload;
     this.shots++;
     const v = b.body.linvel();
-    shell.launch(this, v.x + fwd.x * g.speed, v.y + fwd.y * g.speed);
+    shell.launch(this, v.x + fwd.x * g.speed, v.y + fwd.y * g.speed, past);
     // the kick goes into the hull through the trunnion
     const hull = this.body;
     if (!hull.frozen) {
@@ -209,7 +211,7 @@ export class Tank extends Car {
    * for a few times a second), driven at to within FAR m or backed off from to
    * NEAR, turned round for if they're behind it; the gun laid to land a shell on
    * them where they'll be by then, and fired once it's laid, reloaded, and none
-   * of its side is in the way.
+   * of its side is near where it lands.
    */
   private command(dt: number): void {
     if (this.handsOff > 0) this.handsOff -= dt;
@@ -254,8 +256,9 @@ export class Tank extends Car {
     if (el < lo - LAID || el > hi + LAID || this.cooldown > 0 || Math.abs(this.aim - this.elevation) > 0.3) return;
     // (the barrel itself there: not still swinging from the hull rocking)
     const laid = ((this.barrel.a - b.a) * 180) / Math.PI * dir;
-    if (Math.abs(laid - el) > LAID || !this.clear(at)) return;
-    this.fire();
+    if (Math.abs(laid - el) > LAID) return;
+    const past = this.clear(at);
+    if (past) this.fire(past);
   }
 
   /** Still worth a shell: on another side, up and about (a machine: not a wreck). */
@@ -322,32 +325,30 @@ export class Tank extends Car {
   }
 
   /**
-   * None of its side (but its own riders) in the way of a shell fired as the
-   * barrel's laid at `at`: under its path without CLEAR_OVER m over their heads
-   * (it goes over its own infantry a few metres on), nor within a blast's reach
-   * of where it lands.
+   * Whether a shell fired as the barrel's laid at `at` would hurt none of its
+   * side (but its own riders): none within a blast's reach of where it lands
+   * (null: it holds its fire). Those of its side between it and there it's
+   * fired past (beside them, as a side-on view can't show: in a line of battle
+   * they're all in its way, its own infantry and the tanks ahead of it): what
+   * of them it goes through, and for how long.
    */
-  private clear(at: V2): boolean {
+  private clear(at: V2): Passing | null {
     const b = this.barrel;
     const m = b.pixelToWorld(this.gun.muzzle[0], this.gun.muzzle[1]);
     const dir = this.body.flip;
-    const f = b.localDir(b.flip, 0);
-    const v = this.gun.speed;
-    const grav = Math.max(0, -this.game.gravity);
     const reach = (at.x - m.x) * dir;
     const own = this.attachedEntities();
+    const past: Passing = { parts: [], d: 0 };
     for (const a of onSide(this.game, this.team!)) {
       if (a.e === this || own.includes(a.e)) continue;
-      if (Math.hypot(a.x - at.x, a.y - at.y) < CLEAR_BLAST) return false;
-      // the shell's height where they are, and how tall they stand round their middle
+      if (Math.hypot(a.x - at.x, a.y - at.y) < CLEAR_BLAST) return null;
       const s = (a.x - m.x) * dir;
       if (s < -1 || s > reach + 1) continue;
-      const t = Math.max(0, s) / Math.max(0.1, Math.abs(f.x) * v);
-      const y = m.y + f.y * v * t - 0.5 * grav * t * t;
-      const tall = isTeamMachine(a.e) ? 2 : 1;
-      if (y > a.y - tall - 0.3 && y < a.y + tall + CLEAR_OVER) return false;
+      // (a tank ahead is long: by its middle and as far again)
+      past.d = Math.max(past.d, s + 4);
+      for (const e of [a.e, ...a.e.attachedEntities()]) for (const p of e.parts) if (!p.destroyed) past.parts.push(p);
     }
-    return true;
+    return past;
   }
 
   /** Turns round where it stands (made again mirrored, once the step is over), riders, side and all. */
@@ -437,6 +438,8 @@ export class Shell extends Entity {
   private blast: ExplosionOpts;
   private age = 0;
   private spent = false;
+  /** How long (s) it goes through what it's launched past (see launch()). */
+  private passT = 0.4;
 
   constructor(game: Game, def: ItemDef, art: PixelArt, shapes: ShapeSpec[], density: number, blast: ExplosionOpts, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -447,9 +450,13 @@ export class Shell extends Entity {
     });
   }
 
-  /** Sends it off at (vx, vy), passing through whatever fired it. */
-  launch(from: Entity, vx: number, vy: number): void {
-    this.main.setNoCollide(from.parts);
+  /**
+   * Sends it off at (vx, vy), passing through whatever fired it, and through
+   * `past` (its crew's own side it's fired past) till it has gone by them.
+   */
+  launch(from: Entity, vx: number, vy: number, past?: Passing): void {
+    this.main.setNoCollide(past?.parts.length ? [...from.parts, ...past.parts] : from.parts);
+    this.passT = Math.max(0.4, past ? past.d / Math.max(1, Math.abs(vx)) : 0);
     this.main.body.setLinvel({ x: vx, y: vy }, true);
   }
 
@@ -460,8 +467,8 @@ export class Shell extends Entity {
   preStep(dt: number): void {
     const p = this.main;
     this.age += dt;
-    // well clear of the barrel, it can come down on its own tank (fired straight up)
-    if (this.age > 0.4 && p.noCollide) p.setNoCollide(null);
+    // well clear of the barrel (and of its own side it was fired past), it can come down on its own tank (fired straight up)
+    if (this.age > this.passT && p.noCollide) p.setNoCollide(null);
     if (this.age > 10) {
       this.detonate();
       return;

@@ -1428,10 +1428,30 @@ input[type='checkbox']:disabled {
   min-width: 0;
 }
 
+/* a side: its colour, how many and armed with what; under that, the tanks it brings (in the same columns) */
+.army-side {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 4px 8px;
+}
+
+.army-side.army-drop {
+  grid-template-columns: 1fr auto auto auto;
+}
+
 .army-side-name {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.army-tanks-name {
+  color: var(--dim);
+  padding-left: 20px;
+}
+
+.army-side .army-off {
+  opacity: 0.5;
 }
 
 .army-swatch {

@@ -15,6 +15,7 @@ import type { ShapeMaterialId } from '../art/props';
 import type { ShapeForm } from '../entities/Shape';
 import { Car } from '../entities/Car';
 import { Tank } from '../entities/Tank';
+import { Firearm } from '../entities/Firearm';
 import { cleanOutline, segmentsCross, selfCrossing, signedArea, type Pt } from '../engine/geometry';
 import { ACTIONS, Bindings, isModifier, type ActionId } from './Bindings';
 import { isLiving } from '../ui/VitalsPanel';
@@ -287,6 +288,10 @@ export function beginGrab(game: Game, part: Part, wx: number, wy: number): Grab 
     part, local, anchor: null, joint: null, frozenMove: part.frozen,
     offset: { x: part.x - wx, y: part.y - wy }, savedDamping: part.body.angularDamping(), at: { x: wx, y: wy }, turn: 0,
     hold: limp ? null : part.body.rotation(),
+    // a gun keeps to its angle from the moment it's taken, as if A/D had turned it: dragged
+    // about and fired, it shoots where it was left pointing. (Swinging in the hand, an RPG
+    // carried a little way swung ±50° for a few seconds, and fired wherever it was then.)
+    locked: part.entity instanceof Firearm || undefined,
   };
   if (!part.frozen) {
     const world = game.physics.world;
@@ -1944,10 +1949,13 @@ export class Controls {
    * someone selected, pointing at a grenade and pressing F pulls its pin), else
    * the selection. Pointing at one of the selection works all of it, and pointing
    * at something F does nothing to (a crate, a body: say, what a gunner is aimed
-   * at) still works the selection.
+   * at) still works the selection. `aiming` (F itself): with something aimed
+   * with the cursor selected (a guided missile's launcher), F works the
+   * selection whatever the cursor is on (a car it's aimed at isn't driven off).
    */
-  private activationTargets(): Entity[] {
+  private activationTargets(aiming = false): Entity[] {
     if (this.grab && !this.grab.part.entity.destroyed) return [this.grab.part.entity];
+    if (aiming && [...this.selection].some((e) => !e.destroyed && (e as { cursorAimed?: boolean }).cursorAimed)) return this.targets();
     const over = this.hover && !this.hover.entity.destroyed ? this.hover.entity : null;
     if (over && !this.selection.has(over) && (over.activatable || !this.selection.size)) return [over];
     return this.targets();
@@ -2270,6 +2278,8 @@ export class Controls {
     if (!part) {
       const k = (id: ActionId) => this.bindings.label(id) || undefined;
       const acts: ContextAction[] = [];
+      const armed = this.armed;
+      if (armed) acts.push({ label: `Stop spawning ${armed.name}`, hint: k('disarm'), action: () => this.arm(null) });
       if (this.clipboard) acts.push({ label: 'Paste', hint: k('paste'), action: () => this.paste() });
       acts.push({ label: 'Select all', hint: 'Ctrl+A', action: () => this.selectAll() });
       if (this.selection.size) acts.push({ label: 'Deselect', action: () => this.clearSelection() });
@@ -2715,7 +2725,7 @@ export class Controls {
     if (this.tutorialBlocks?.(id)) return;
     switch (id) {
       case 'activate':
-        this.activate(this.activationTargets(), true);
+        this.activate(this.activationTargets(true), true);
         break;
       case 'delete':
         // (drawing an outline, it takes back the last corner; on a connection, nothing selected, that goes)
@@ -2821,7 +2831,15 @@ export class Controls {
           this.placer.cancel();
           break;
         }
+        // (an item picked in the toybox is put back first: Esc stops spawning it)
+        if (this.armed) {
+          this.arm(null);
+          break;
+        }
         this.ui.togglePauseMenu();
+        break;
+      case 'disarm':
+        if (this.armed) this.arm(null);
         break;
       case 'toybox':
         this.ui.toggleToybox();
@@ -2897,6 +2915,8 @@ export class Controls {
     const w = r.screenToWorld(this.sx, this.sy);
     this.wx = w.x;
     this.wy = w.y;
+    // (for what's aimed with it: a mouse-guided missile, a seeker)
+    this.game.cursor = { x: w.x, y: w.y };
     // how fast the cursor moves on screen (flicks for the powers)
     const fdt = Math.max(dt, 1e-3);
     this.flick = {

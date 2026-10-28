@@ -4,6 +4,61 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.2.4 — 2026-10-27
+
+### Missiles
+- A Guided Missile Launcher (Weapons): a squat launcher on a bipod like a mortar, its missile dark green.
+  F fires it, and the missile steers for the mouse pointer all the way.
+- The Spike LR-II (Weapons), its missile white. Hold F and its seeker comes on, with a War Thunder style
+  reticle: the corners of a square round the pointer and a small gate square in the middle that locks on
+  to what it's over (amber, blinking, as it locks; red once it has). Let go of F with a lock and the missile
+  flies itself to the target, climbing over walls and round what's in its way; let go without one and
+  nothing fires.
+- Right-click either launcher for Normal launch or Vertical launch. Vertical, it's a low launch box (as
+  tall as a landmine, as wide as two missiles), and fires as a TOR-M1 does: the missile is thrown straight
+  up with its motor off, gas jets at its nose turn it over, and its motor lights about 8 m up.
+- The M113A1 Missile Carrier (Vehicles): an M113 with a missile launcher raised on its roof. It drives as
+  a tank does, with W A S D. Off a side, F fires a missile steered with the mouse; on a side (its menu, or
+  the Battle panel), its crew fire missiles that guide themselves onto the enemy they've picked.
+
+### Battles
+- The Battle panel arms a side with one gun each: "One weapon" lists every gun a soldier can fight with
+  (rifles, pistols, shotguns, the sniper, the RPG, the grenade launcher, the crossbow, the flamethrower,
+  the stun gun…), and each soldier of the side gets that gun.
+- A side can bring up to 4 tanks (Tank, M1 Abrams, ZTZ-99A, Leopard 2A7, or the M113A1 missile
+  carrier), lined up in a column behind its soldiers, on its side and facing the enemy; a side can be
+  tanks alone. Too many for the room, the soldiers stand closer and then tanks are left out (a message
+  says how many). A battle started by a wall is moved in so all of it is inside the world.
+- A tank on a side fires past its own soldiers and the tanks in front of it (as if beside them, as a
+  side-on view can't show), and holds its fire while any of its side are near where its shell would
+  land. It used to hold its fire while anyone of its side was in front of it, so in a battle it never
+  fired at all.
+- Soldiers with guns go for the other side's tanks once there's nobody of that side left to shoot (an RPG
+  is the thing to bring). They used to stand there being shelled.
+
+### Medicine
+- A Regeneration syringe: lost arms, legs, hands and feet grow back one at a time from the stump over
+  10 to 30 seconds, small and pale at first and growing to full size, while wounds close, bones knit and
+  blood comes back. It works on people and animals; it doesn't bring back the dead or grow a new head.
+- Splash potions of every drug (Healing, Adrenaline, Knockout, Regeneration… 16 in all), in small round
+  bottles the colour of the drug. A bottle breaks when it's knocked or dropped hard, thrown, or shot, and
+  splashes everyone within about 2 m: a full dose close by, less further off, none behind a wall. Use
+  throws it held, and smashes it where it is otherwise; its menu also has Throw, Smash and Drop.
+
+### Sandbox
+- Water can be Infinite (Settings, Physics: Water). All the water you pour stays water, past the usual
+  3200 drops (1600 on a phone); the more there is, the slower the game runs. Back on Limited, what's
+  there stays till it dries up or is cleared, and no more pours till it's under the limit. A save or an
+  undo with more water than the limit brings all of it back.
+- B puts back the item picked in the toybox (it stops spawning it); Esc does too, before it opens the
+  pause menu, and right-clicking empty space while spawning offers "Stop spawning …". The key can be
+  changed in Controls.
+
+### Fixes
+- A gun dragged about (an RPG, a rifle, a pistol…) keeps the angle it was picked up at, and A and D
+  still turn it. It used to swing round by its grip as it was carried, up to 50 degrees either way, so a
+  rocket aimed by dragging the launcher went off well away from where it had been pointed.
+
 ## 0.2.3 — 2026-10-26
 
 ### Vehicles

@@ -14,10 +14,11 @@ import { washBlood } from './Medical';
 import { Tendons } from '../systems/Tendons';
 import { FLESH, PLATING, breakUp, blastEnergy, gibNow, sliceLimb, takeChunk } from '../systems/Chunks';
 import { isFighter, isLiving, land, onFeet, stillUp, strikePoint, type Fighter } from '../systems/Fighting';
-import { allies, bombNear, dress, dye, enemies, isTeamId, lyingNear, nearestEnemy, TEAMS, undead, type TeamId } from '../systems/Teams';
+import { allies, bombNear, dress, dye, enemies, isTeamId, isTeamMachine, lyingNear, nearestEnemy, nearestFoe, TEAMS, undead, type TeamId } from '../systems/Teams';
 import type { PixelArt } from '../art/PixelArt';
 import { ACID_SCAR, Liquid, liquidSound, paintWound, seep, woundSpot } from '../systems/Liquids';
 import { Breath, HEAD_SINKS, shoreward, tread, type Lungful } from '../systems/Breath';
+import { castOff, closeStump, growth, keepApart, likeBody, nextMend, placeOf, REGEN, sprout, swapIn } from '../systems/Regrowth';
 
 interface LimbSpec {
   key: LimbKey;
@@ -303,7 +304,7 @@ const ZOMBIE_MOUTH = 0x3a1414;
 /** Standing as a zombie: arms held out in front, head hung, a little hunched. */
 const POSE_ZOMBIE: Pose = { ...POSE_STAND, head: -0.25, midTorso: 0.1, upperArmF: 1.35, upperArmB: 1.15, lowerArmF: 0.12, lowerArmB: 0.3, handF: -0.2, handB: -0.2 };
 /** What still works on a zombie, whose heart doesn't beat: what acts on the flesh itself, Life and the Cure. */
-const UNDEAD_DRUGS = new Set<Drug>(['healing', 'life', 'cure', 'freeze', 'bone', 'acid', 'strength']);
+const UNDEAD_DRUGS = new Set<Drug>(['healing', 'life', 'cure', 'freeze', 'bone', 'acid', 'strength', 'regen']);
 
 /** On Ultra Strength: how much stronger the muscles are and how much harder blows land, and how hard (m/s) whoever's hit is flung. */
 const MIGHT = { muscle: 2.5, blow: 2.5, fling: 6 };
@@ -653,59 +654,84 @@ export class Human extends Entity implements Holder {
     this.f = this.flipped ? -1 : 1;
     const f = this.f;
     const ang = opts.angle ?? 0;
-    const tough = 1 / variant.toughness;
     for (const s of SPECS) {
       const off = rotate(s.cx * f * PX, (s.cy - MID_Y) * PX, ang);
-      const part = this.addPart({
-        name: s.name,
-        art: limbArt(variant.kind, s.key, variant.skin, variant.skinKey),
-        material: variant.material,
-        x: x + off.x,
-        y: y + off.y,
-        angle: ang,
-        shapes: [s.shape],
-        density: s.density,
-        layer: s.layer,
-        ccd: true,
-        linearDamping: 0.04,
-        angularDamping: 0.7,
-        maxHp: s.hp * tough,
-        friction: s.key.startsWith('foot') ? 1.0 : undefined,
-        forceThreshold: 30,
-        textureKey: `${variant.kind}:${variant.skinKey}:${s.key}`,
-      });
-      if (s.key === 'upperTorso' && variant.material === MAT.flesh) part.buoyancy = LUNGFUL.full;
-      if (s.key === 'head' && variant.material === MAT.flesh) part.buoyancy = HEAD_SINKS;
+      const part = this.makePart(s, x + off.x, y + off.y, ang);
       const limb: Limb = {
         spec: s, part, joint: null, parent: null, children: [], a1: { x: 0, y: 0 }, a2: { x: 0, y: 0 },
         severed: false, gone: false, broken: false, loose: false, attached: true, wounds: [], stress: 0, phase: Math.random() * 10, extraI: 0,
       };
-      // Hands, feet and forearms are tiny and get squeezed between heavy bodies in
-      // piles, where their minute inertia makes the contact solve buzz. Tripling it
-      // is invisible in normal motion but lets them settle.
-      const small = /^(hand|foot|lowerArm)/.test(s.key);
-      if (small) {
-        limb.extraI = part.body.principalInertia() * 2;
-        part.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, limb.extraI, true);
-      }
+      this.steady(limb);
       if (s.parent) {
         const parent = this.limbs.get(s.parent)!;
         limb.parent = parent;
         parent.children.push(limb);
-        const ps = parent.spec;
-        limb.a1 = { x: (s.jx! - ps.cx) * f * PX, y: (s.jy! - ps.cy) * PX };
-        limb.a2 = { x: (s.jx! - s.cx) * f * PX, y: (s.jy! - s.cy) * PX };
-        const j = this.addJoint(RAPIER.JointData.revolute(limb.a1, limb.a2), parent.part, part) as RAPIER.RevoluteImpulseJoint;
-        j.configureMotorModel(RAPIER.MotorModel.ForceBased);
-        if (f === 1) j.setLimits(s.lo!, s.hi!);
-        else j.setLimits(-s.hi!, -s.lo!);
-        limb.joint = j;
+        this.joinLimb(limb);
       }
       this.limbs.set(s.key, limb);
       this.order.push(limb);
     }
     this.state = 'down';
     this.setState('stand');
+  }
+
+  /** Makes a limb's part, its middle at (x, y) turned `ang`: as they're made, and as it grows back (see regrow()). */
+  private makePart(s: LimbSpec, x: number, y: number, ang: number): Part {
+    const variant = this.variant;
+    const part = this.addPart({
+      name: s.name,
+      art: limbArt(variant.kind, s.key, variant.skin, variant.skinKey),
+      material: variant.material,
+      x,
+      y,
+      angle: ang,
+      shapes: [s.shape],
+      density: s.density,
+      layer: s.layer,
+      ccd: true,
+      linearDamping: 0.04,
+      angularDamping: 0.7,
+      maxHp: s.hp * (1 / variant.toughness),
+      friction: s.key.startsWith('foot') ? 1.0 : undefined,
+      forceThreshold: 30,
+      textureKey: `${variant.kind}:${variant.skinKey}:${s.key}`,
+    });
+    if (s.key === 'upperTorso' && variant.material === MAT.flesh) part.buoyancy = LUNGFUL.full;
+    if (s.key === 'head' && variant.material === MAT.flesh) part.buoyancy = HEAD_SINKS;
+    return part;
+  }
+
+  /**
+   * Hands, feet and forearms are tiny and get squeezed between heavy bodies in
+   * piles, where their minute inertia makes the contact solve buzz. Tripling it
+   * is invisible in normal motion but lets them settle.
+   */
+  private steady(limb: Limb): void {
+    if (!/^(hand|foot|lowerArm)/.test(limb.spec.key)) return;
+    const part = limb.part;
+    limb.extraI = part.body.principalInertia() * 2;
+    part.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, limb.extraI, true);
+  }
+
+  /** Where a limb's joint to its parent is (see `a1`, `a2`), for the way they face. */
+  private anchor(limb: Limb): void {
+    const s = limb.spec;
+    const ps = limb.parent!.spec;
+    const f = this.f;
+    limb.a1 = { x: (s.jx! - ps.cx) * f * PX, y: (s.jy! - ps.cy) * PX };
+    limb.a2 = { x: (s.jx! - s.cx) * f * PX, y: (s.jy! - s.cy) * PX };
+  }
+
+  /** Joins a limb to its parent at its joint (its muscles are set by updateMotors()). */
+  private joinLimb(limb: Limb): void {
+    const s = limb.spec;
+    const f = this.f;
+    this.anchor(limb);
+    const j = this.addJoint(RAPIER.JointData.revolute(limb.a1, limb.a2), limb.parent!.part, limb.part) as RAPIER.RevoluteImpulseJoint;
+    j.configureMotorModel(RAPIER.MotorModel.ForceBased);
+    if (f === 1) j.setLimits(s.lo!, s.hi!);
+    else j.setLimits(-s.hi!, -s.lo!);
+    limb.joint = j;
   }
 
   get label(): string {
@@ -800,9 +826,12 @@ export class Human extends Entity implements Holder {
   // ---------------------------------------------------------------- drugs
 
   /** Seconds left of each drug's effect. */
-  readonly drugs = { adrenaline: 0, knockout: 0, poison: 0, painkiller: 0, strength: 0, freeze: 0, bone: 0, acid: 0, coagulation: 0 };
+  readonly drugs = { adrenaline: 0, knockout: 0, poison: 0, painkiller: 0, strength: 0, freeze: 0, bone: 0, acid: 0, coagulation: 0, regen: 0 };
   private mendDose = 0;
   private lifeDose = 0;
+  /** Regen (see regenerate()): until the next thing mended, and the next wash of the blood off them (s). */
+  private regrowT = 0;
+  private washT = 0;
   /** Seconds left out cold from a jolt (see stun()). */
   stunned = 0;
   /** Their breath, in water (see breathe()). */
@@ -906,7 +935,91 @@ export class Human extends Entity implements Holder {
       case 'poison':
         this.drugs.poison = Math.min(120, this.drugs.poison + dose * 40);
         break;
+      case 'regen':
+        // half a minute of growing back what's lost (see regenerate()), a moment after it goes in
+        if (d.regen <= 0) this.regrowT = REGEN.idle * 2;
+        d.regen = Math.min(90, d.regen + dose * 30);
+        break;
     }
+  }
+
+  /**
+   * Regen at work, every step there's some in them (alive: it raises nobody): the
+   * blood comes back, pain and shock ease, the flesh heals and wounds close, and
+   * every REGEN.every s one more thing is mended, nearest the middle of the body
+   * first (see Regrowth.nextMend()): a chunk shot out fills in, a broken bone knits,
+   * or a limb that's missing grows back (see regrow()).
+   */
+  private regenerate(dt: number): void {
+    this.blood = Math.min(100, this.blood + dt * REGEN.blood);
+    this.pain = Math.max(0, this.pain - dt * REGEN.calm);
+    this.shock = Math.max(0, this.shock - dt * REGEN.calm);
+    const wash = (this.washT -= dt) <= 0;
+    if (wash) this.washT = REGEN.wash;
+    let face = false;
+    for (const l of this.order) {
+      if (l.gone || !l.attached) continue;
+      const p = l.part;
+      p.hp = Math.min(p.maxHp, p.hp + p.maxHp * dt * REGEN.flesh);
+      p.charred = Math.max(0, p.charred - dt * REGEN.flesh);
+      for (let k = l.wounds.length - 1; k >= 0; k--) {
+        const w = l.wounds[k];
+        w.rate *= Math.exp(-dt * REGEN.close);
+        if (w.rate < REGEN.shut) l.wounds.splice(k, 1);
+      }
+      if (wash && washBlood(p, REGEN.washShare) && l.spec.key === 'head') face = true;
+    }
+    if (face) this.setFace();
+    if ((this.regrowT -= dt) > 0) return;
+    const next = nextMend(this.order);
+    this.regrowT = next ? REGEN.every : REGEN.idle;
+    if (!next) return;
+    const l = next.limb;
+    if (next.what === 'regrow') this.regrow(l);
+    else if (next.what === 'knit') {
+      this.setBroken(l, false);
+      sprout(this.game, l.part, false);
+    } else {
+      // (whole again, and clean: see Part.repair())
+      l.part.repair();
+      if (l.spec.key === 'head') this.setFace();
+      sprout(this.game, l.part, true);
+    }
+  }
+
+  /**
+   * A limb grows back (Regen): what's left of the old one, cut off and lying about,
+   * is cast off (see Regrowth.castOff()), and a new one, whole, grows out of the
+   * stump on a joint of its own, in the body's place for it (see Regrowth.swapIn()),
+   * drawn growing out of it (see Regrowth.Growth). What hung from it grows back after.
+   */
+  private regrow(l: Limb): void {
+    const parent = l.parent!;
+    const pieces = l.part.destroyed ? [] : castOff(this, l, this.variant.bleeds ? 'flesh' : 'plating');
+    this.anchor(l);
+    const at = placeOf(l);
+    const old = l.part;
+    l.part = this.makePart(l.spec, at.x, at.y, at.a);
+    swapIn(this, old, l.part);
+    this.steady(l);
+    l.gone = l.severed = l.broken = l.loose = false;
+    l.attached = true;
+    l.wounds = [];
+    l.stress = 0;
+    this.joinLimb(l);
+    // (in their own colours, or a zombie's skin, and their side's)
+    dress(l.part, this.teamArt(l.spec.key, this.team));
+    likeBody(l.part, parent.part);
+    keepApart(pieces, this);
+    closeStump(parent.part, l.a1, parent.wounds);
+    l.part.body.setLinvel(parent.part.body.linvel(), true);
+    this.setLimits(l);
+    this.applyDamping();
+    this.updateMotors(true);
+    // (with a leg back, they try to get up again)
+    this.rouse();
+    growth(this.game).add(l);
+    sprout(this.game, parent.part.localToWorld(l.a1.x, l.a1.y), true);
   }
 
   /**
@@ -1187,6 +1300,10 @@ export class Human extends Entity implements Holder {
     if (d.acid > 0) {
       d.acid = Math.max(0, d.acid - dt);
       this.melt(dt);
+    }
+    if (d.regen > 0) {
+      d.regen = Math.max(0, d.regen - dt);
+      if (this.alive) this.regenerate(dt);
     }
     // the infection takes hold (in the dead too: they rise), and turns them once it has
     if (this.infection > 0 && this.infection < 1) {
@@ -1974,8 +2091,8 @@ export class Human extends Entity implements Holder {
    * out cold (waiting while it's down). `back`: the foe fights back.
    */
   fight(foe: Entity, back = true): boolean {
-    // (never one of their own side: see Teams)
-    if (foe === this || !this.alive || !isLiving(foe) || !foe.alive || allies(this, foe)) return false;
+    // (never one of their own side: see Teams; a machine, only with a gun to shoot it with)
+    if (foe === this || !this.alive || allies(this, foe) || !(isLiving(foe) ? foe.alive : this.canShootAt(foe))) return false;
     this.foe = foe;
     this.goal = 'fight';
     // (a win in an earlier fight doesn't count towards this one)
@@ -1991,6 +2108,11 @@ export class Human extends Entity implements Holder {
     this.noWayT = this.detourT = this.wayT = 0;
     if (back && isFighter(foe) && !foe.foe) foe.fight(this, false);
     return true;
+  }
+
+  /** An enemy machine (a tank) still in the fight, and a gun in hand to shoot it with (fists do nothing to armour). */
+  private canShootAt(e: Entity): boolean {
+    return !this.zombie && isTeamMachine(e) && !e.destroyed && !e.wrecked && enemies(this, e) && this.grips.some((g) => isGun(g.item));
   }
 
   /** Leaves off fighting. */
@@ -2031,6 +2153,11 @@ export class Human extends Entity implements Holder {
       const swap = !foe || !up || (stuck !== null && enemies(this, foe)) || (enemies(this, foe) && ((!onFeet(foe as Fighter) && onFeet(e)) || Math.abs(e.center().x - c.x) + SCAN.switch < Math.abs(foe.center().x - c.x)));
       if (swap) this.fight(e, false);
     }
+    // nobody of the other side about but their machines (a tank): shot at, with a gun to shoot them with
+    if (!e && !this.foe && this.grips.some((g) => isGun(g.item))) {
+      const m = nearestFoe(this, c.x, c.y, SCAN.sight, this.f);
+      if (m && isTeamMachine(m)) this.fight(m, false);
+    }
     const now = this.foe;
     if (now instanceof Human && now.grips.length && !this.grips.length && !this.fetch && !this.zombie && Math.abs(now.center().x - c.x) > 2.5) {
       this.fetch = lyingNear(this.game, c.x, c.y, SCAN.fetch, isWeapon);
@@ -2070,7 +2197,7 @@ export class Human extends Entity implements Holder {
     // (knocked down and staying down: beaten)
     this.foeDownT = foe && isLiving(foe) && !onFeet(foe) ? this.foeDownT + dt : 0;
     // (a zombie goes on at them, down or out cold, until they're dead or bitten)
-    if (!foe || !stillUp(this) || (this.zombie ? foe.destroyed || !isLiving(foe) || !foe.alive || undead(foe) : !stillUp(foe) || this.foeDownT > FIGHT.beaten)) {
+    if (!foe || !stillUp(this) || (this.zombie ? foe.destroyed || !isLiving(foe) || !foe.alive || undead(foe) : !(isLiving(foe) ? stillUp(foe) : this.canShootAt(foe)) || this.foeDownT > FIGHT.beaten)) {
       this.stopFighting();
       return 0;
     }

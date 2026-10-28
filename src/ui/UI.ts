@@ -1312,6 +1312,12 @@ export class UI implements UIBridge {
     num.onchange = () => iterate(parseInt(num.value));
     row('Iterations', quality, 'More hold stacks, joints and contraptions stiffer, for more time a step');
     row('Steps', sel.step, 'Short steps are smoother; a scene too heavy for them takes long ones anyway');
+    const fluid = this.game.fluid;
+    row(
+      'Water',
+      choice('set-water', [[0, 'Limited'], [1, 'Infinite']], fluid.infinite ? 1 : 0, (v) => (fluid.infinite = v === 1)),
+      'Infinite: all the water you pour stays water (past the usual limit, the more there is, the slower the game runs)',
+    );
     this.syncIterations = () => {
       // a guest's game shows the host's world: the host's setting is the one that counts
       const host = this.session.guest?.hostIterations || 0;

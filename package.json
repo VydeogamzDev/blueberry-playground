@@ -2,7 +2,7 @@
   "name": "blueberry-playground",
   "private": true,
   "license": "PolyForm-Noncommercial-1.0.0",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "type": "module",
   "scripts": {
     "dev": "vite",

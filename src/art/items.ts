@@ -427,6 +427,7 @@ export const DRUG_RAMPS = {
   pink: ramp('#ff8fd0'),
   zombie: ramp('#6b7d52'),
   cure: ramp('#3fb8a8'),
+  regen: ramp('#ee7650'),
 } as const;
 
 /**

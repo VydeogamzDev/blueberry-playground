@@ -298,7 +298,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       if (gap < 10) return `it drove right up to the enemy (${gap.toFixed(1)} m off)`;
       return true;
     })],
-    ['extra: tanks: a tank on a side holds its fire while one of its own side is in the line of fire, and fires once they\'re out of it', () => tidy(() => {
+    ['extra: tanks: a tank on a side fires past one of its own side in the line of fire without hurting them, and holds its fire while one is near where it would land', () => tidy(() => {
       kit.reset();
       const t = kit.spawn('tank-leopard', -20, 0.8) as Tank;
       const foe = human(12, { flip: true });
@@ -309,13 +309,30 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       friend.setFrozen(true);
       foe.setTeam('blue');
       friend.setTeam('red');
+      let hurt = 0;
+      const d = friend.damage.bind(friend);
+      friend.damage = (...x) => {
+        hurt += x[1];
+        return d(...x);
+      };
       t.setTeam('red');
       kit.advance(4);
-      if (t.foe !== foe) return `it went for ${t.foe ? 'someone else' : 'nobody'}`;
-      if (t.shots) return `it fired ${t.shots} shells through its own side`;
-      game.remove(friend);
+      if (!t.shots) return `with one of its own in the line of fire, it never fired (going for ${t.foe ? (t.foe === foe ? 'the enemy' : 'someone else') : 'nobody'})`;
+      if (hurt > 1 || !friend.alive) return `its shells hurt the one of its own side they went past (${hurt.toFixed(0)})`;
+      // one of its own by the enemy: it holds its fire
+      kit.reset();
+      const t2 = kit.spawn('tank-leopard', -20, 0.8) as Tank;
+      const foe2 = human(12, { flip: true });
+      const near = human(9);
+      kit.advance(1);
+      foe2.setFrozen(true);
+      near.setFrozen(true);
+      foe2.setTeam('blue');
+      near.setTeam('red');
+      t2.setTeam('red');
       kit.advance(4);
-      if (!t.shots) return 'the line of fire clear, it never fired';
+      if (t2.foe !== foe2) return `with one of its own by the enemy, it went for ${t2.foe ? 'someone else' : 'nobody'}`;
+      if (t2.shots) return `it fired ${t2.shots} shells at an enemy 3 m from one of its own`;
       return true;
     })],
     ['extra: tanks: a tank on a side driving in on an enemy stops short of one of its own side in its way, rather than run them over', () => tidy(() => {

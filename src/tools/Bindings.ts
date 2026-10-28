@@ -8,7 +8,7 @@ import { store } from '../engine/Store';
 export type ActionId =
   | 'activate' | 'delete' | 'slowmo' | 'detail' | 'xray' | 'vitals' | 'time' | 'step'
   | 'spawnLeft' | 'spawnRight' | 'rotateLeft' | 'rotateRight' | 'fast' | 'undo' | 'snap' | 'copy' | 'paste'
-  | 'freeze' | 'ignite' | 'noCollide' | 'flip' | 'jump' | 'eyedrop' | 'hoverHighlights'
+  | 'freeze' | 'ignite' | 'noCollide' | 'flip' | 'jump' | 'eyedrop' | 'hoverHighlights' | 'disarm'
   | 'tool1' | 'tool2' | 'tool3' | 'tool4' | 'tool5' | 'tool6' | 'tool7' | 'tool8' | 'tool9' | 'toolPower'
   | 'menu' | 'toybox' | 'toggleUi' | 'help' | 'layout'
   | 'panLeft' | 'panRight' | 'panUp' | 'panDown' | 'zoomIn' | 'zoomOut' | 'recenter'
@@ -60,6 +60,8 @@ export const ACTIONS: ActionSpec[] = [
   { id: 'flip', label: 'Flip', group: 'General', keys: ['KeyR'] },
   { id: 'jump', label: 'Jump (people and animals)', group: 'General', keys: ['KeyJ'] },
   { id: 'eyedrop', label: 'Pick the object under the cursor to spawn', group: 'General', keys: [] },
+  // (not People Playground's: there, a click on the picked item again puts it back, as here too; Esc does it as well)
+  { id: 'disarm', label: 'Deselect the item picked in the toybox (stop spawning it)', group: 'General', keys: ['KeyB'] },
   { id: 'hoverHighlights', label: 'Toggle hovering highlights', group: 'General', keys: [] },
   ...Array.from({ length: 9 }, (_, i): ActionSpec => ({ id: `tool${i + 1}` as ActionId, label: `Switch to tool ${i + 1}${TOOL_NAMES[i] ? ` (${TOOL_NAMES[i]})` : ''} / power ${i + 1}`, group: 'Tools', keys: [`Digit${i + 1}`] })),
   { id: 'toolPower', label: 'Switch between tools and powers', group: 'Tools', keys: ['ControlLeft'] },

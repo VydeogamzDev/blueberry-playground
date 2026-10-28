@@ -2,8 +2,10 @@ import { register, registerProps } from './items';
 import { registerWeapons, registerMelee, registerExplosives, registerMedical, registerLiquids, registerMachinery, registerDevices, registerTools } from './weapons';
 import { registerVehicles } from './vehicles';
 import { registerArsenal } from './arsenal';
+import { registerMissiles } from './missiles';
 import { registerMachines2 } from './machines2';
 import { registerFloats } from './floats';
+import { registerPotions } from './potions';
 import { Human, VARIANTS, HUMAN_HALF_HEIGHT } from '../entities/Human';
 import { figurePreview } from '../art/human';
 import { Creature, SPECIES, creaturePreview, creatureHalfHeight } from '../entities/Creature';
@@ -63,12 +65,14 @@ export function registerAll(): void {
   registerMelee();
   registerExplosives();
   registerMedical();
+  registerPotions();
   registerLiquids();
   registerMachinery();
   registerDevices();
   registerVehicles();
   registerTools();
   registerArsenal();
+  registerMissiles();
   registerMachines2();
   registerFloats();
 }

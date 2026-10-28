@@ -40,8 +40,12 @@ import drowning from './drowning';
 import livewater from './livewater';
 import repair from './repair';
 import drawing from './drawing';
+import battle from './battle';
+import wishlist from './wishlist';
+import potions from './potions';
+import missiles from './missiles';
 
 /** Tests kept in their own files (one per area), run after the ones in selftest.ts. */
 export function areaTests(t: TestCtx): Test[] {
-  return [...vehicles(t), ...explosives(t), ...tweaks(t), ...creatures(t), ...fire(t), ...overlays(t), ...fighting(t), ...armies(t), ...maps(t), ...infinite(t), ...multiplayer(t), ...friends(t), ...music(t), ...menu(t), ...fixes(t), ...machines(t), ...tutorial(t), ...medical(t), ...weapons2(t), ...crossbow(t), ...tanks(t), ...items2(t), ...logicItems(t), ...logicMachines(t), ...bugsSim(t), ...bugsUi(t), ...systemsFixes(t), ...building2(t), ...sync(t), ...layout(t), ...world2(t), ...machines2(t), ...medical2(t), ...machinery3(t), ...chunks(t), ...blades(t), ...floats(t), ...drowning(t), ...livewater(t), ...repair(t), ...drawing(t)];
+  return [...vehicles(t), ...explosives(t), ...tweaks(t), ...creatures(t), ...fire(t), ...overlays(t), ...fighting(t), ...armies(t), ...maps(t), ...infinite(t), ...multiplayer(t), ...friends(t), ...music(t), ...menu(t), ...fixes(t), ...machines(t), ...tutorial(t), ...medical(t), ...weapons2(t), ...crossbow(t), ...tanks(t), ...items2(t), ...logicItems(t), ...logicMachines(t), ...bugsSim(t), ...bugsUi(t), ...systemsFixes(t), ...building2(t), ...sync(t), ...layout(t), ...world2(t), ...machines2(t), ...medical2(t), ...machinery3(t), ...chunks(t), ...blades(t), ...floats(t), ...drowning(t), ...livewater(t), ...repair(t), ...drawing(t), ...wishlist(t), ...battle(t), ...potions(t), ...missiles(t)];
 }

@@ -52,7 +52,7 @@ const BASE: Record<string, { bpm: number; breaths: number; temp: number }> = {
 
 const DRUG_NAMES: Record<string, string> = {
   adrenaline: 'Adrenaline', knockout: 'Sedated', poison: 'Poisoned', painkiller: 'Painkiller', strength: 'Ultra Strength',
-  freeze: 'Frozen stiff', bone: 'Bone eating', acid: 'Acid', coagulation: 'Coagulant',
+  freeze: 'Frozen stiff', bone: 'Bone eating', acid: 'Acid', coagulation: 'Coagulant', regen: 'Regenerating',
 };
 
 /** Seconds of each drug left in the blood (read loosely: the syringes may gain more). */

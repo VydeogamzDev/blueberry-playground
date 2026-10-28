@@ -340,8 +340,8 @@ export function suvBodyArt(): PixelArt {
 /** The tank's sprocket (rear), road wheels and idler (front): centers in hull art pixels. */
 export const TANK_AXLES: [number, number][] = [[8, 29], [24, 35], [41, 35], [58, 35], [75, 35], [92, 35], [110, 29]];
 
-/** Fills the outline a belt makes stretched round circles of radius `r` at `centers`. */
-function beltAround(a: PixelArt, centers: [number, number][], r: number, c: Color): void {
+/** Fills the outline a belt makes stretched round circles of radius `r` at `centers` (a track: the M113's too, see art/missiles). */
+export function beltAround(a: PixelArt, centers: [number, number][], r: number, c: Color): void {
   const pts: [number, number][] = [];
   for (const [x, y] of centers) {
     for (let i = 0; i < 24; i++) {

@@ -111,6 +111,13 @@ export class Game {
   stepRequests = 0;
   /** Simulated time in seconds. */
   time = 0;
+  /**
+   * Where the player's pointer is in the sandbox (world metres), as of the last
+   * frame (Controls sets it): what a mouse-guided missile steers for and a
+   * seeker looks through. Null until there's a pointer. In a multiplayer game
+   * it's the host's own (guests simulate nothing).
+   */
+  cursor: V2 | null = null;
   /** Length of a physics step (s): FIXED_DT, or COARSE_DT while the scene is too heavy for real time (see pickStep()). */
   stepDt = FIXED_DT;
   /** Always the long step (Settings > Graphics' lightest physics), rather than the short one while the scene allows. */

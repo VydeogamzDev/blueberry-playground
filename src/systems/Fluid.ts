@@ -7,6 +7,7 @@ import type { Game } from '../world/Game';
 import type { Part } from '../world/Part';
 import type { Entity } from '../world/Entity';
 import type { Ground } from '../world/Environment';
+import { store } from '../engine/Store';
 
 /**
  * Water that flows: a few thousand particles that keep their distance from each
@@ -41,8 +42,10 @@ const DENSITY = 85;
 const MASS = DENSITY * SPACING * SPACING;
 /** Drops (see Particles.liquid(), Puddles.DROP) to a particle: a flask's 270 or so make 20. */
 export const DROPS_PER = (SPACING / PX) ** 2 / DROP;
-/** The most there can be (fewer on a phone: it's the heaviest thing the game does with them). */
+/** The most there can be (fewer on a phone: it's the heaviest thing the game does with them), unless the player lifts the limit (see Fluid.infinite). */
 const MAX = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 1600 : 3200;
+/** Where the player's choice of no limit is kept. */
+const INFINITE_KEY = 'blueberry-water-infinite';
 /** How fast it slows what moves in it (1/s, all of it under), and its turning. */
 const DRAG = 2.2;
 const SPIN_DRAG = 2;
@@ -171,13 +174,18 @@ interface Sampled {
 }
 
 export class Fluid {
-  readonly max = MAX;
+  /**
+   * Whether there's no limit to the water (Settings: Water): past MAX particles the
+   * arrays grow, twice as big at a time, and the game slows the more there is.
+   */
+  private unlimited = store.getItem(INFINITE_KEY) === '1';
   /** How many particles there are. */
   n = 0;
-  readonly x = new Float32Array(MAX);
-  readonly y = new Float32Array(MAX);
-  readonly vx = new Float32Array(MAX);
-  readonly vy = new Float32Array(MAX);
+  // (not readonly: they grow, with no limit; see grow())
+  x = new Float32Array(MAX);
+  y = new Float32Array(MAX);
+  vx = new Float32Array(MAX);
+  vy = new Float32Array(MAX);
   /** Where each was before the step, how crowded it was (see relax()), and how long it has lain alone. */
   private ox = new Float32Array(MAX);
   private oy = new Float32Array(MAX);
@@ -196,7 +204,7 @@ export class Fluid {
   private held = new Float32Array(MAX);
   private vy0 = new Float32Array(MAX);
   /** Which have a current through them (see LiveWater, markLive()); and whether any do. */
-  readonly live = new Uint8Array(MAX);
+  live = new Uint8Array(MAX);
   private anyLive = false;
   private queue = new Int32Array(MAX);
   /** Spatial hash: first particle in each cell, the next in the same cell. */
@@ -251,9 +259,58 @@ export class Fluid {
 
   // ---- adding and taking away -------------------------------------------------
 
+  /** The most particles there can be (Infinity with no limit). */
+  get max(): number {
+    return this.unlimited ? Infinity : MAX;
+  }
+
+  get infinite(): boolean {
+    return this.unlimited;
+  }
+
+  /** Lifts the limit on water, or puts it back (what's over it stays till it dries up or is cleared), and remembers the choice. */
+  set infinite(on: boolean) {
+    this.unlimited = on;
+    store.setItem(INFINITE_KEY, on ? '1' : '0');
+  }
+
+  /** Room in the arrays for `n` particles: twice as many at a time, those there kept. */
+  private grow(n: number): void {
+    let size = this.x.length;
+    if (n <= size) return;
+    while (size < n) size *= 2;
+    const more = <A extends Float32Array | Int32Array | Uint8Array>(a: A): A => {
+      const b = new (a.constructor as new (n: number) => A)(size);
+      b.set(a as ArrayLike<number>);
+      return b;
+    };
+    this.x = more(this.x);
+    this.y = more(this.y);
+    this.vx = more(this.vx);
+    this.vy = more(this.vy);
+    this.ox = more(this.ox);
+    this.oy = more(this.oy);
+    this.rho = more(this.rho);
+    this.lone = more(this.lone);
+    this.rest = more(this.rest);
+    this.seen = more(this.seen);
+    this.pool = more(this.pool);
+    this.held = more(this.held);
+    this.vy0 = more(this.vy0);
+    this.live = more(this.live);
+    this.queue = more(this.queue);
+    this.next = more(this.next);
+  }
+
   /** A particle of water at (x, y) going (vx, vy); false if there's no room for more. */
   add(x: number, y: number, vx = 0, vy = 0): boolean {
-    if (this.n >= MAX || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+    return this.n < this.max && this.put(x, y, vx, vy);
+  }
+
+  /** As add(), past any limit (water saved, or the host's, comes back all of it). */
+  private put(x: number, y: number, vx: number, vy: number): boolean {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+    if (this.n >= this.x.length) this.grow(this.n + 1);
     const i = this.n++;
     this.x[i] = x;
     this.y[i] = y;
@@ -1135,7 +1192,7 @@ export class Fluid {
   restore(s: FluidState): void {
     this.clear();
     const n = Math.min(s.n, Math.floor(s.xv.length / 4));
-    for (let i = 0; i < n; i++) this.add(s.xv[i * 4], s.xv[i * 4 + 1], s.xv[i * 4 + 2], s.xv[i * 4 + 3]);
+    for (let i = 0; i < n; i++) this.put(s.xv[i * 4], s.xv[i * 4 + 1], s.xv[i * 4 + 2], s.xv[i * 4 + 3]);
     this.held.fill(1, 0, this.n);
     this.bounds();
   }
@@ -1157,7 +1214,7 @@ export class Fluid {
   unpack(n: number, xy: Float32Array, v: Int16Array): void {
     this.clear();
     const m = Math.min(n, xy.length >> 1, v.length >> 1);
-    for (let i = 0; i < m; i++) this.add(xy[i * 2], xy[i * 2 + 1], v[i * 2] / VQ, v[i * 2 + 1] / VQ);
+    for (let i = 0; i < m; i++) this.put(xy[i * 2], xy[i * 2 + 1], v[i * 2] / VQ, v[i * 2 + 1] / VQ);
     this.held.fill(1, 0, this.n);
     this.bounds();
   }

@@ -259,9 +259,10 @@ export function nearestEnemy(me: TeamMember, x: number, y: number, sight: number
  * The enemy a machine at (x, y) facing `dir` (1: right) should go for: someone
  * of another side up and about, or another side's machine, within `sight` m
  * (and 15 m up or down) and in sight; the nearest, one behind it counting for
- * as far again (it has to turn round for them). Null: there's none.
+ * as far again (it has to turn round for them). Null: there's none. (Soldiers
+ * with guns look this way too, once there's nobody left to shoot but machines.)
  */
-export function nearestFoe(me: TeamMachine, x: number, y: number, sight: number, dir: number): Entity | null {
+export function nearestFoe(me: Entity, x: number, y: number, sight: number, dir: number): Entity | null {
   const r = roster(me.game);
   const near: { e: Entity; d: number; x: number; y: number }[] = [];
   const consider = (e: Entity, ex: number, ey: number) => {

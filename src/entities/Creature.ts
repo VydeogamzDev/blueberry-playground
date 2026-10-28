@@ -18,6 +18,7 @@ import { isFighter, isLiving, land, onFeet, stillUp, type Fighter } from '../sys
 import { allies, dress, dye, enemies, isTeamId, nearestEnemy, undead, type TeamId } from '../systems/Teams';
 import { LUNGS } from '../systems/Fluid';
 import { Breath, HEAD_SINKS, shoreward, tread, type Lungful } from '../systems/Breath';
+import { castOff, closeStump, growth, keepApart, likeBody, nextMend, placeOf, REGEN, sprout, swapIn } from '../systems/Regrowth';
 
 /** Under water (see Breath): a breath held lasts 15 s, out cold 8, and 6 s after it's out it drowns; it can paddle a minute. */
 const LUNGFUL: Lungful = { hold: 15, holdOut: 8, last: 6, tread: 60, full: LUNGS, empty: 1.5 };
@@ -317,7 +318,7 @@ const SPIT = { sight: 9, far: 5.5, near: 2.5, speed: 7, drops: 14, pause: 1.6, j
 /** Zombie animals (see Human's zombies): how fast they get about, of their own pace, and how much worse a mauling it takes to stop one. */
 const UNDEAD = { pace: 0.6, trauma: 8, incubate: 10 };
 /** What still works on a zombie animal (see Human's UNDEAD_DRUGS). */
-const UNDEAD_DRUGS = new Set<Drug>(['healing', 'life', 'cure', 'freeze', 'bone', 'acid', 'strength']);
+const UNDEAD_DRUGS = new Set<Drug>(['healing', 'life', 'cure', 'freeze', 'bone', 'acid', 'strength', 'regen']);
 
 interface Wound {
   ix: number;
@@ -395,9 +396,12 @@ export class Creature extends Entity {
   private idleT = 8 + Math.random() * 20;
   private voiceT = 0;
   private faceState = 2;
-  readonly drugs = { adrenaline: 0, knockout: 0, poison: 0, painkiller: 0, strength: 0, freeze: 0, bone: 0, acid: 0, coagulation: 0 };
+  readonly drugs = { adrenaline: 0, knockout: 0, poison: 0, painkiller: 0, strength: 0, freeze: 0, bone: 0, acid: 0, coagulation: 0, regen: 0 };
   private mendDose = 0;
   private lifeDose = 0;
+  /** Regen (see regenerate()): until the next thing mended, and the next wash of the blood off it (s). */
+  private regrowT = 0;
+  private washT = 0;
   /** Seconds left out cold from a jolt (see stun()). */
   stunned = 0;
   /** Its breath, in water (see breathe()). */
@@ -510,36 +514,9 @@ export class Creature extends Entity {
     this.f = this.flipped ? -1 : 1;
     const f = this.f;
     const ang = opts.angle ?? 0;
-    const tough = 1 / species.toughness;
     for (const s of species.specs) {
       const off = rotate(s.cx * f * PX, (s.cy - species.midY) * PX, ang);
-      const part = this.addPart({
-        name: s.name,
-        art: creatureArt(species.kind, s.key),
-        material: MAT.flesh,
-        x: x + off.x,
-        y: y + off.y,
-        angle: ang,
-        shapes: [s.shape],
-        density: s.density,
-        layer: s.layer,
-        ccd: true,
-        linearDamping: 0.04,
-        angularDamping: 0.7,
-        maxHp: s.hp * tough,
-        friction: s.key.startsWith('lower') ? 1.0 : undefined,
-        forceThreshold: 20,
-        textureKey: `${species.kind}:${s.key}`,
-      });
-      if (s.key === 'chest') part.buoyancy = LUNGFUL.full;
-      if (s.key === 'head') part.buoyancy = HEAD_SINKS;
-      // light links get extra inertia so they don't buzz when squeezed in a pile
-      if (s.key.startsWith('lower') || s.key === 'tail' || species.kind === 'cat') {
-        part.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, part.body.principalInertia() * 2, true);
-      }
-      // a tail rests on the floor but passes over everything else: it would drag
-      // on whatever the animal climbs over (a body, a crate) and hold it back
-      if (s.key === 'tail') part.setOnlyStatic();
+      const part = this.makePart(s, x + off.x, y + off.y, ang);
       const limb: Limb = {
         spec: s, part, joint: null, parent: null, children: [], a1: { x: 0, y: 0 }, a2: { x: 0, y: 0 },
         severed: false, gone: false, broken: false, attached: true, wounds: [], stress: 0,
@@ -548,19 +525,66 @@ export class Creature extends Entity {
         const parent = this.limbs.get(s.parent)!;
         limb.parent = parent;
         parent.children.push(limb);
-        const ps = parent.spec;
-        limb.a1 = { x: (s.jx! - ps.cx) * f * PX, y: (s.jy! - ps.cy) * PX };
-        limb.a2 = { x: (s.jx! - s.cx) * f * PX, y: (s.jy! - s.cy) * PX };
-        const j = this.addJoint(RAPIER.JointData.revolute(limb.a1, limb.a2), parent.part, part) as RAPIER.RevoluteImpulseJoint;
-        j.configureMotorModel(RAPIER.MotorModel.ForceBased);
-        if (f === 1) j.setLimits(s.lo!, s.hi!);
-        else j.setLimits(-s.hi!, -s.lo!);
-        limb.joint = j;
+        this.joinLimb(limb);
       }
       this.limbs.set(s.key, limb);
       this.order.push(limb);
     }
     this.setState('stand');
+  }
+
+  /** Makes a limb's part, its middle at (x, y) turned `ang`: as it's made, and as it grows back (see regrow()). */
+  private makePart(s: CLimbSpec, x: number, y: number, ang: number): Part {
+    const species = this.species;
+    const part = this.addPart({
+      name: s.name,
+      art: creatureArt(species.kind, s.key),
+      material: MAT.flesh,
+      x,
+      y,
+      angle: ang,
+      shapes: [s.shape],
+      density: s.density,
+      layer: s.layer,
+      ccd: true,
+      linearDamping: 0.04,
+      angularDamping: 0.7,
+      maxHp: s.hp * (1 / species.toughness),
+      friction: s.key.startsWith('lower') ? 1.0 : undefined,
+      forceThreshold: 20,
+      textureKey: `${species.kind}:${s.key}`,
+    });
+    if (s.key === 'chest') part.buoyancy = LUNGFUL.full;
+    if (s.key === 'head') part.buoyancy = HEAD_SINKS;
+    // light links get extra inertia so they don't buzz when squeezed in a pile
+    if (s.key.startsWith('lower') || s.key === 'tail' || species.kind === 'cat') {
+      part.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, part.body.principalInertia() * 2, true);
+    }
+    // a tail rests on the floor but passes over everything else: it would drag
+    // on whatever the animal climbs over (a body, a crate) and hold it back
+    if (s.key === 'tail') part.setOnlyStatic();
+    return part;
+  }
+
+  /** Where a limb's joint to its parent is (see `a1`, `a2`), for the way it faces now. */
+  private anchor(limb: Limb): void {
+    const s = limb.spec;
+    const ps = limb.parent!.spec;
+    const f = this.f;
+    limb.a1 = { x: (s.jx! - ps.cx) * f * PX, y: (s.jy! - ps.cy) * PX };
+    limb.a2 = { x: (s.jx! - s.cx) * f * PX, y: (s.jy! - s.cy) * PX };
+  }
+
+  /** Joins a limb to its parent at its joint (its muscles are set by updateMotors()). */
+  private joinLimb(limb: Limb): void {
+    const s = limb.spec;
+    const f = this.f;
+    this.anchor(limb);
+    const j = this.addJoint(RAPIER.JointData.revolute(limb.a1, limb.a2), limb.parent!.part, limb.part) as RAPIER.RevoluteImpulseJoint;
+    j.configureMotorModel(RAPIER.MotorModel.ForceBased);
+    if (f === 1) j.setLimits(s.lo!, s.hi!);
+    else j.setLimits(-s.hi!, -s.lo!);
+    limb.joint = j;
   }
 
   get label(): string {
@@ -2208,6 +2232,10 @@ export class Creature extends Entity {
       d.acid = Math.max(0, d.acid - dt);
       this.melt(dt);
     }
+    if (d.regen > 0) {
+      d.regen = Math.max(0, d.regen - dt);
+      if (this.alive) this.regenerate(dt);
+    }
     if (this.infection > 0 && this.infection < 1) {
       this.infection = Math.min(1, this.infection + dt / UNDEAD.incubate);
       if (this.infection >= 1) this.rise();
@@ -2296,7 +2324,76 @@ export class Creature extends Entity {
       case 'poison':
         this.drugs.poison = Math.min(120, this.drugs.poison + dose * 40);
         break;
+      case 'regen':
+        // (see Human.inject(): half a minute of growing back what's lost, a moment after it goes in)
+        if (d.regen <= 0) this.regrowT = REGEN.idle * 2;
+        d.regen = Math.min(90, d.regen + dose * 30);
+        break;
     }
+  }
+
+  /** Regen at work (see Human.regenerate()): it heals, and grows back what it's lost, one thing at a time. */
+  private regenerate(dt: number): void {
+    this.blood = Math.min(100, this.blood + dt * REGEN.blood);
+    this.pain = Math.max(0, this.pain - dt * REGEN.calm);
+    this.shock = Math.max(0, this.shock - dt * REGEN.calm);
+    const wash = (this.washT -= dt) <= 0;
+    if (wash) this.washT = REGEN.wash;
+    let face = false;
+    for (const l of this.order) {
+      if (l.gone || !l.attached) continue;
+      const p = l.part;
+      p.hp = Math.min(p.maxHp, p.hp + p.maxHp * dt * REGEN.flesh);
+      p.charred = Math.max(0, p.charred - dt * REGEN.flesh);
+      for (let k = l.wounds.length - 1; k >= 0; k--) {
+        const w = l.wounds[k];
+        w.rate *= Math.exp(-dt * REGEN.close);
+        if (w.rate < REGEN.shut) l.wounds.splice(k, 1);
+      }
+      if (wash && washBlood(p, REGEN.washShare) && l.spec.key === 'head') face = true;
+    }
+    if (face) this.setFace();
+    if ((this.regrowT -= dt) > 0) return;
+    const next = nextMend(this.order);
+    this.regrowT = next ? REGEN.every : REGEN.idle;
+    if (!next) return;
+    const l = next.limb;
+    if (next.what === 'regrow') this.regrow(l);
+    else if (next.what === 'knit') {
+      this.setBroken(l, false);
+      sprout(this.game, l.part, false);
+    } else {
+      l.part.repair();
+      if (l.spec.key === 'head') this.setFace();
+      sprout(this.game, l.part, true);
+    }
+  }
+
+  /** A leg, paw, tail (anything but the head) grows back out of its stump (see Human.regrow()). */
+  private regrow(l: Limb): void {
+    const parent = l.parent!;
+    const pieces = l.part.destroyed ? [] : castOff(this, l, 'flesh');
+    this.anchor(l);
+    const at = placeOf(l);
+    const old = l.part;
+    l.part = this.makePart(l.spec, at.x, at.y, at.a);
+    swapIn(this, old, l.part);
+    l.gone = l.severed = l.broken = false;
+    l.attached = true;
+    l.wounds = [];
+    l.stress = 0;
+    this.joinLimb(l);
+    // (frozen stiff, its new joint is as locked as the rest)
+    if (this.stiff) l.joint!.setLimits(-0.01, 0.01);
+    likeBody(l.part, parent.part);
+    keepApart(pieces, this);
+    closeStump(parent.part, l.a1, parent.wounds);
+    l.part.body.setLinvel(parent.part.body.linvel(), true);
+    l.part.body.setAngularDamping(this.state === 'stand' ? 14 : 0.7);
+    this.updateMotors(true);
+    this.rouse();
+    growth(this.game).add(l);
+    sprout(this.game, parent.part.localToWorld(l.a1.x, l.a1.y), true);
   }
 
   /** Healing (see Human.mend): it comes round and gets up again, the blood washed off it. */

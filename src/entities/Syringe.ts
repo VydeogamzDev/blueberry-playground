@@ -12,10 +12,10 @@ import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
 
 export type Drug =
   | 'healing' | 'adrenaline' | 'knockout' | 'life' | 'poison'
-  | 'death' | 'coagulation' | 'painkiller' | 'strength' | 'freeze' | 'bone' | 'acid' | 'pink' | 'zombie' | 'cure';
+  | 'death' | 'coagulation' | 'painkiller' | 'strength' | 'freeze' | 'bone' | 'acid' | 'pink' | 'zombie' | 'cure' | 'regen';
 
 /** What a Pink syringe may turn out to hold: any of the others (one, chosen as the needle first goes in). */
-export const PINK_DRUGS: Drug[] = ['healing', 'adrenaline', 'knockout', 'life', 'poison', 'death', 'coagulation', 'painkiller', 'strength', 'freeze', 'bone', 'acid', 'zombie', 'cure'];
+export const PINK_DRUGS: Drug[] = ['healing', 'adrenaline', 'knockout', 'life', 'poison', 'death', 'coagulation', 'painkiller', 'strength', 'freeze', 'bone', 'acid', 'zombie', 'cure', 'regen'];
 
 /** Anything a syringe can inject into (people and animals). */
 export interface Injectable {

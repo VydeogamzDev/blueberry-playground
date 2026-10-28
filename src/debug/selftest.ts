@@ -1776,14 +1776,21 @@ export function makeSelfTest(game: Game, controls: Controls) {
         return { spin, trail, wander, turns: Math.abs(turns), back, still };
       };
       kit.reset();
+      const bat = kit.spawn('bat', 0, 0.3).parts[0];
+      kit.advance(1);
+      const r = whirl(bat, 0.35);
+      // (it swings round as it's whirled, but the swing dies away: it isn't left spinning)
+      if (r.spin < 0.5) return `the bat turned only ${r.spin.toFixed(2)} rad while whirled: held rigidly`;
+      if (r.back > 0.15 || r.still > 0.5) return `3 s after the whirl the bat is ${r.back.toFixed(2)} rad off its angle, turning at ${r.still.toFixed(2)} rad/s`;
+      if (r.wander > 0.06) return `the bat still swung ${r.wander.toFixed(2)} m about the cursor after it stopped`;
+      if (r.trail > 0.5) return `the bat trailed ${r.trail.toFixed(2)} m behind the cursor`;
+      // a gun keeps to its angle from the moment it's taken (dragged about, it fires where it was pointed)
+      kit.reset();
       const gun = kit.spawn('rifle', 0, 0.3).parts[0];
       kit.advance(1);
-      const r = whirl(gun, 0.35);
-      // (it swings round as it's whirled, but the swing dies away: it isn't left spinning)
-      if (r.spin < 0.5) return `the rifle turned only ${r.spin.toFixed(2)} rad while whirled: held rigidly`;
-      if (r.back > 0.15 || r.still > 0.5) return `3 s after the whirl the rifle is ${r.back.toFixed(2)} rad off its angle, turning at ${r.still.toFixed(2)} rad/s`;
-      if (r.wander > 0.06) return `the rifle still swung ${r.wander.toFixed(2)} m about the cursor after it stopped`;
-      if (r.trail > 0.5) return `the rifle trailed ${r.trail.toFixed(2)} m behind the cursor`;
+      const rg = whirl(gun, 0.35);
+      if (rg.spin > 0.15) return `the rifle swung ${rg.spin.toFixed(2)} rad while whirled: a gun should keep to its angle`;
+      if (rg.trail > 0.5) return `the rifle trailed ${rg.trail.toFixed(2)} m behind the cursor`;
       kit.reset();
       const locked = kit.spawn('rifle', 0, 0.3).parts[0];
       kit.advance(1);

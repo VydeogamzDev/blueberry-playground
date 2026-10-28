@@ -311,6 +311,7 @@ const SYRINGES: { drug: Drug; name: string; desc: string; tags: string[] }[] = [
   { drug: 'pink', name: 'Pink Syringe', desc: 'Nobody knows what is in it: it does what one of the other syringes does, a different one each time.', tags: ['random', 'mystery', 'surprise'] },
   { drug: 'zombie', name: 'Zombie Syringe', desc: 'Infects them: a few seconds later they turn, greying and shambling, and go for the living. A bite passes it on. Only destroying the head stops one for good.', tags: ['undead', 'virus', 'infect', 'infection'] },
   { drug: 'cure', name: 'Zombie Cure Syringe', desc: 'Clears the zombie infection, before or after they turn (as long as the head is whole): they are themselves again.', tags: ['antidote', 'undead', 'vaccine', 'infection'] },
+  { drug: 'regen', name: 'Regeneration Syringe', desc: 'Over the next half a minute the body grows back what it has lost, one limb at a time from the stump out, and mends what is hurt: wounds close, bones knit, blood comes back. It does not raise the dead.', tags: ['regenerate', 'regrow', 'limbs', 'heal', 'restore'] },
 ];
 
 export function registerMedical(): void {
