@@ -15,6 +15,7 @@ import type { Game } from '../world/Game';
 import type { ExplosionOpts } from '../systems/Explosions';
 import type { ValueEditor } from '../tools/Controls';
 import type { ContextAction, DamageKind, ItemDef, SpawnOptions } from '../world/types';
+import type { Passing } from './Tank';
 
 /** Stuck on, it touches nothing (it would only snag on what's round it). */
 const NO_CONTACTS = groups(GROUP.NOCOLLIDE, 0);
@@ -197,8 +198,9 @@ const TIME_FUZE = 2.5;
 const ARM_DIST = 1.5;
 const ARM_TIME = 0.12;
 const MAX_FLIGHT = 8;
-/** How far (m) a round goes before it can hit the launcher, or whoever holds that. */
+/** How far (m) a round goes before it can hit the launcher, or whoever holds that; and the longest (s) it goes through the side of the soldier who fired it. */
 const CLEAR = 1.2;
+const PASS_MOST = 2;
 /** When in the reload the launcher is broken open (the empty case flies out), the next round goes in, and it's snapped shut (shares of it). */
 const OPEN_AT = 0.15;
 const LOAD_AT = 0.55;
@@ -307,7 +309,7 @@ export class GrenadeLauncher extends Firearm {
     const v = p.velocityAt(m.x, m.y);
     const speed = g.speed + Math.max(0, v.x * dx + v.y * dy);
     const own = this.holder ? [...this.parts, ...this.holder.parts] : this.parts;
-    r.launch(own, dx * speed, dy * speed, this.mode, blastFor(g.damage));
+    r.launch(own, dx * speed, dy * speed, this.mode, blastFor(g.damage), this.passing()?.pass);
     if (!p.frozen) p.body.applyImpulseAtPoint({ x: -fwd.x * g.recoil, y: -fwd.y * g.recoil }, this.gripWorld() ?? m, true);
     const ps = game.particles;
     const mz = p.pixelToWorld(LAUNCHER_MUZZLE[0], LAUNCHER_MUZZLE[1]);
@@ -383,6 +385,10 @@ export class LauncherRound extends Entity {
   private flying = false;
   private spent = false;
   private start: V2 | null = null;
+  /** How far on (m, across) it goes through the side of the soldier who fired it (see launch()). */
+  private passD = 0;
+  /** That side, whose soldiers' bullets don't meet it (see Passing). */
+  firedFor: string | null = null;
 
   constructor(game: Game, def: ItemDef, art: PixelArt, shapes: ShapeSpec[], density: number, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -392,9 +398,12 @@ export class LauncherRound extends Entity {
     });
   }
 
-  launch(own: Part[], vx: number, vy: number, mode: LauncherMode, blast: ExplosionOpts): void {
+  /** Sends it off at (vx, vy), passing through `own` (the launcher and its holder), and a soldier's `past` their own side in the way (see Firearm.firePast()). */
+  launch(own: Part[], vx: number, vy: number, mode: LauncherMode, blast: ExplosionOpts, past?: Passing): void {
     const p = this.main;
-    p.setNoCollide(own);
+    p.setNoCollide(past?.parts.length ? [...own, ...past.parts] : own);
+    this.passD = past?.d ?? 0;
+    this.firedFor = past?.side ?? null;
     p.body.setLinvel({ x: vx, y: vy }, true);
     this.mode = mode;
     this.blast = blast;
@@ -411,7 +420,8 @@ export class LauncherRound extends Entity {
     this.age += dt;
     const travelled = this.start ? Math.hypot(p.x - this.start.x, p.y - this.start.y) : Infinity;
     if (!this.armed && this.age > ARM_TIME && travelled > ARM_DIST) this.armed = true;
-    if (p.noCollide && (this.age > 1 || travelled > CLEAR)) p.setNoCollide(null);
+    const passing = !!this.start && this.age < PASS_MOST && Math.abs(p.x - this.start.x) < this.passD;
+    if (p.noCollide && !passing && (this.age > 1 || travelled > CLEAR)) p.setNoCollide(null);
     if ((this.mode === 'timed' && this.age > TIME_FUZE) || this.age > MAX_FLIGHT) {
       this.detonate();
       return;

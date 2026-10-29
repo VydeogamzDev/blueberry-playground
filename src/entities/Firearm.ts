@@ -3,9 +3,12 @@ import type { PropConfig } from './Prop';
 import { PK } from '../systems/Particles';
 import type { CaseLook } from '../systems/Casings';
 import type { Game } from '../world/Game';
+import type { Entity } from '../world/Entity';
 import type { GunSound } from '../engine/Sound';
+import type { PastOwn } from '../systems/Projectiles';
 import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
 import type { EditField, ValueEditor } from '../tools/Controls';
+import type { Passing } from './Tank';
 
 export interface GunSpec {
   sound: GunSound;
@@ -59,6 +62,8 @@ const TUNING: (Omit<EditField, 'get' | 'set'> & { key: Tunable })[] = [
 
 /** Seconds a gun that spins up fires for, once spun up, on a single activation. */
 const BURST = 0.5;
+/** Seconds what a soldier fires goes past their own side, once they've set it to (a burst's later rounds, a flintlock's hang fire: see Firearm.firePast()). */
+const PAST_FOR = 0.5;
 
 /** Each kind of gun's spent case (sprite pixels long and wide), unless its spec says. */
 const CASE_SIZE: Partial<Record<GunSound, NonNullable<GunSpec['case']>>> = {
@@ -77,6 +82,8 @@ export class Firearm extends Item {
   /** Seconds of firing left from a single activation (see activate()). */
   private burst = 0;
   shots = 0;
+  /** Its holder's own side what it fires goes past (as Passing, and for bullets: see PastOwn), set by them just before, and when (game time; see firePast()). */
+  private past: { by: Entity; pass: Passing; own: PastOwn; t: number } | null = null;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, hold: HoldSpec, gun: GunSpec, x: number, y: number, opts: SpawnOptions) {
     super(game, def, { ...cfg, ccd: true }, hold, x, y, opts);
@@ -92,6 +99,28 @@ export class Firearm extends Item {
    */
   get automatic(): boolean {
     return this.gun.auto || this.gun.laser !== undefined;
+  }
+
+  /** Its shots fly (bullets, a beam, a rocket, a bolt), so a soldier can fire them past their own side (see firePast()); a flame or a jolt can't be. */
+  get flies(): boolean {
+    return this.gun.speed > 0 || this.gun.laser !== undefined;
+  }
+
+  /**
+   * A soldier on a side about to fire it (see Human.shoot()): what it fires
+   * next goes through `pass`, those of their own side in the way, as if fired
+   * from beside them (see Tank.clear()). It holds a moment (a burst's later
+   * rounds, a flintlock's hang fire), and only while `by` holds it: anyone
+   * else's shots hit whoever is in the way.
+   */
+  firePast(by: Entity, pass: Passing): void {
+    this.past = { by, pass, own: { parts: new Set(pass.parts), d: pass.d, side: pass.side ?? null }, t: this.game.time };
+  }
+
+  /** What of its holder's own side a shot fired now goes past (see firePast()), or null: not a soldier's shot. */
+  protected passing(): { pass: Passing; own: PastOwn } | null {
+    const p = this.past;
+    return p && p.by === this.holder && this.game.time - p.t <= PAST_FOR ? p : null;
   }
 
   /**
@@ -132,8 +161,10 @@ export class Firearm extends Item {
     const fwd = this.forward();
     game.alarm(m.x, m.y, g.laser !== undefined ? 5 : 16);
     const up = { x: -fwd.y * p.flip, y: fwd.x * p.flip };
+    const own = this.passing()?.own;
+    const past = own && (own.parts.size || own.side) ? own : null;
     if (g.laser !== undefined) {
-      game.projectiles.laser(m.x, m.y, fwd.x, fwd.y, { damage: g.damage, color: g.laser, ignore: p.body });
+      game.projectiles.laser(m.x, m.y, fwd.x, fwd.y, { damage: g.damage, color: g.laser, ignore: p.body, past });
       if (!p.frozen) p.body.applyImpulseAtPoint({ x: -fwd.x * g.recoil, y: -fwd.y * g.recoil }, m, true);
       game.particles.flash(m.x, m.y, g.flash, g.laser, 0.06);
       game.renderer.addLight(m.x, m.y, 1.5, 0.5, g.laser, 0.08);
@@ -149,7 +180,7 @@ export class Firearm extends Item {
       const dy = fwd.x * s + fwd.y * c;
       const sp = g.speed * (n > 1 ? 0.85 + Math.random() * 0.3 : 1);
       game.projectiles.fire(m.x, m.y, dx, dy, sp, {
-        energy: g.energy, damage: g.damage, push: g.push ?? 0.004, ignore: p.body, tracer: true,
+        energy: g.energy, damage: g.damage, push: g.push ?? 0.004, ignore: p.body, tracer: true, past,
       });
     }
     // recoil: straight back plus a little muzzle climb

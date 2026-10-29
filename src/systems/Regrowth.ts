@@ -17,6 +17,8 @@ import type { Part } from '../world/Part';
  * own (see entities/Gore); the new one takes its place in the body (its part in
  * the same place in the body's list: saves, undo and copies go by place) on a
  * new joint, and is drawn growing out of the stump, pale at first (see Growth).
+ * A guest's copy of the body grows it back as the host's did (regrowPart() on
+ * a person or an animal: see net/Guest).
  */
 
 /**
@@ -189,6 +191,8 @@ export function closeStump(p: Part, at: V2, wounds: { ix: number; iy: number }[]
 
 /** A limb starting to grow back at `at` (world), or a bone knitting: a puff of the drug's sparkles and a soft wet sound. */
 export function sprout(game: Game, at: V2, big: boolean): void {
+  // (a guest growing a limb back as the host's did is sent the host's sparkles and sound)
+  if (game.net?.guest) return;
   sparkle(game, at.x, at.y, DRUG_GLOW.regen, big ? 14 : 6, PX * (big ? 5 : 3));
   if (big) game.sound.squish(0.3, at.x, 0.6);
 }

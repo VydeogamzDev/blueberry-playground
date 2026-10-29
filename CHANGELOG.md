@@ -4,6 +4,46 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.2.5 — 2026-10-29
+
+### Battles
+- A side can be made of squads: "+ Add squad" under a side's line adds another count and weapon (up to
+  5 squads and 30 people a side), each with a × to take it away. They line up front to back by how they
+  fight: dogs, then melee, pistols and shotguns, rifles and crossbows, and snipers and launchers at the
+  back, the tanks behind them all.
+- A battle started from the panel ends with a banner saying who won: "Red wins: 4 of 11 left standing,
+  1 of 2 tanks, in 0:42", or "Draw: nobody left standing". Guests see it too.
+- The whole line fights. Soldiers on a side fire past their own (bullets, rockets, grenade rounds and bolts
+  go by them, as tank shells have since 0.2.4); a line of 6 riflemen all fire, where only the front one or
+  two used to. Their bullets don't set off their own side's rockets either.
+- Soldiers don't blow up their own side. With a rocket or a grenade round they hold their fire while what
+  it would hit first is near one of their own (or near them), or while anything is flying past close to
+  the muzzle. Mixed battles used to lose 3 to 10 people a side to their own rockets.
+- Soldiers keep a little room between them on the march, instead of walking into each other in a heap.
+- Against a tank, a rifleman picks up an RPG or another launcher lying within 10 m; riflemen go for the
+  enemy's people and launchers for its tanks. A soldier knocked down takes up the gun they dropped.
+- Tanks go for the enemy's tanks first (unless its infantry are much nearer), so the tanks fight each
+  other while the infantry do; they hold their fire with their own side within 6 m of where it lands.
+- An RPG is fired from 5.5 to 16 m off (people used to walk to 7 m of a tank first), and its back-blast
+  no longer shoves the shooter's own side.
+
+### Missiles
+- The Spike LR-II's seeker looks at everything inside its square and locks on to the person, animal or
+  vehicle nearest the middle (anything else solid only when there's none of those), following it while
+  it's in the square; it used to lock only on what was right under the pointer.
+- A missile whose motor has burnt out keeps steering for its target as it glides, less and less as it
+  slows, instead of dropping like a stone.
+- Right-click a launcher (or the M113) for "Missile: Standard / Cruise / Strike (5)". Cruise: its motor
+  burns 4 times as long and its warhead is twice as strong. Strike: one launch sends out 5 smaller
+  missiles that never hit each other: from the Guided Missile Launcher they spread round the pointer;
+  from the Spike they share out over the targets in its square (marked with small gates on the reticle).
+  Each has its own look, and all three work with vertical launch.
+
+### Multiplayer
+- Each player's missiles follow their own pointer: a guest's guided missile, an M113 a guest fires, and a
+  guest's Spike seeker (whose reticle and lock now show on the guest's screen) used to go by the host's.
+- Limbs grown back with Regeneration grow back for guests too, and Repair shows for them.
+
 ## 0.2.4 — 2026-10-27
 
 ### Missiles

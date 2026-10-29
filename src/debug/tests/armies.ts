@@ -11,8 +11,8 @@ import { teamOf, type TeamMember } from '../../systems/Teams';
 import { spawnBattle } from '../../ui/ArmyPanel';
 
 /**
- * Smarter fighting and armies: weapons kept at their reach, guns held while a
- * friend is in the way, teams that find their own enemies (and the next), quick
+ * Smarter fighting and armies: weapons kept at their reach, guns fired past a
+ * friend in the way, teams that find their own enemies (and the next), quick
  * to get up again, the Battle panel, and finding a way to the foe: no running off
  * roofs, leaping a gap that can be leapt, climbing up and jumping down to them.
  */
@@ -124,7 +124,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       if (mean(swings) < 0.8 || mean(swings) > 1.5) return `swings started ${mean(swings).toFixed(2)} m apart on average (${swings.map((g) => g.toFixed(2)).join(', ')}): a bat reaches about 1.1 m`;
       return true;
     }],
-    ['extra: armies: a gunman holds fire while one of their own side is in the line of fire, and fires once it’s clear', () => {
+    ['extra: armies: a gunman fires past one of their own side in the line of fire, as if from beside them: the foe is hit, their own never', () => {
       kit.reset();
       const g = human(-4);
       const friend = human(-1.5);
@@ -138,12 +138,21 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       g.setTeam('red');
       friend.setTeam('red');
       foe.setTeam('blue');
+      const hits = (h: Human): (() => number) => {
+        let n = 0;
+        const ob = h.onBullet.bind(h);
+        h.onBullet = (hit) => {
+          n++;
+          return ob(hit);
+        };
+        return () => n;
+      };
+      const onFriend = hits(friend);
+      const onFoe = hits(foe);
       kit.advance(3);
-      if (g.foe !== foe) return `on a team, the gunman went for ${g.foe ? 'someone else' : 'nobody'}`;
-      if (gun.shots) return `fired ${gun.shots} shots through their own side`;
-      game.remove(friend);
-      kit.advance(3);
-      if (!gun.shots) return 'the line of fire clear, it never fired';
+      if (!gun.shots) return `with one of their own in the line of fire, it never fired (going for ${g.foe === foe ? 'the foe' : g.foe ? 'someone else' : 'nobody'})`;
+      if (onFriend()) return `${onFriend()} of ${gun.shots} shots hit the one of their own side in the way`;
+      if (!onFoe()) return `none of ${gun.shots} shots hit the foe`;
       return true;
     }],
     ['extra: armies: Team in the menu puts everyone picked on a side; sides fight on their own, a side never fights itself', () => {

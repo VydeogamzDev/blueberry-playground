@@ -76,8 +76,14 @@ export default function tests({ game, kit, human, arm }: TestCtx): Test[] {
         const b = p.localToWorld(l.a2.x, l.a2.y);
         if (Math.hypot(a.x - b.x, a.y - b.y) > 0.05) return `the new ${k} is ${Math.hypot(a.x - b.x, a.y - b.y).toFixed(2)} m off its joint`;
       }
+      // (the lowest it gets over a while: one moment it may be mid-step, or on a bit of the old leg)
       const foot = h.limbs.get('footF')!.part;
-      if (foot.y > 0.2) return `the new foot is ${foot.y.toFixed(2)} m up, standing`;
+      let low = foot.y;
+      for (let i = 0; i < 20; i++) {
+        kit.advance(0.1);
+        low = Math.min(low, foot.y);
+      }
+      if (low > 0.2) return `the new foot is never lower than ${low.toFixed(2)} m, standing`;
       const xray = skeleton(h).filter((b) => b.gone || b.severed).map((b) => b.key);
       if (xray.length) return `the x-ray still shows ${xray.join(', ')} missing`;
       // saved and loaded, they're whole and back up

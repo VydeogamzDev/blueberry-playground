@@ -5,7 +5,7 @@ import { Entity } from '../world/Entity';
 import { MAT } from '../world/Materials';
 import { PK } from '../systems/Particles';
 import { isLiving, stillUp } from '../systems/Fighting';
-import { dye, enemies, isTeamId, isTeamMachine, nearestFoe, onSide, type TeamId } from '../systems/Teams';
+import { blastClear, dye, enemies, isTeamId, isTeamMachine, nearestFoe, onSide, TEAM_IDS, type TeamId } from '../systems/Teams';
 import { Car, type CarConfig } from './Car';
 import type { PixelArt } from '../art/PixelArt';
 import type { Part, ShapeSpec } from '../world/Part';
@@ -58,15 +58,20 @@ const TURN_AFTER = 1.2;
 const LAID = 0.6;
 /** Driven or laid by hand, its crew leave it to whoever does for this long (s). */
 const HANDS_OFF = 4;
-/** It holds its fire with anyone of its side within this (m) of where the shell would land (its blast's reach and a little). */
-const CLEAR_BLAST = 5;
+/** It holds its fire with anyone of its side within this (m) of where the shell would land (its blast's reach, 4.5 m, and a metre and a half more: what it flings). */
+const CLEAR_BLAST = 6;
 /** Nor does it drive on with one of its own side this near (m) in front of it (or behind, backing up). */
 const GIVE_WAY = 3;
 
-/** Its own side a shell (or a missile) is fired past (see Tank.clear()): their parts, and how far on (m, across) it has gone by them. */
+/**
+ * Its own side a shell (or a missile) is fired past (see Tank.clear()): their
+ * parts, how far on (m, across) it has gone by them, and the side: its soldiers'
+ * bullets don't meet a round fired for it (see Projectiles.PastOwn).
+ */
 export interface Passing {
   parts: Part[];
   d: number;
+  side?: string;
 }
 
 /**
@@ -257,7 +262,7 @@ export class Tank extends Car {
     // (the barrel itself there: not still swinging from the hull rocking)
     const laid = ((this.barrel.a - b.a) * 180) / Math.PI * dir;
     if (Math.abs(laid - el) > LAID) return;
-    const past = this.clear(at);
+    const past = this.clear(at, foe);
     if (past) this.fire(past);
   }
 
@@ -330,23 +335,31 @@ export class Tank extends Car {
    * (null: it holds its fire). Those of its side between it and there it's
    * fired past (beside them, as a side-on view can't show: in a line of battle
    * they're all in its way, its own infantry and the tanks ahead of it): what
-   * of them it goes through, and for how long.
+   * of them it goes through, and for how long. Laid on another side's machine
+   * (`foe`), it's fired over the people in the way, whatever their side: tanks
+   * fight it out over the heads of the infantry fighting theirs.
    */
-  private clear(at: V2): Passing | null {
+  private clear(at: V2, foe: Entity): Passing | null {
     const b = this.barrel;
     const m = b.pixelToWorld(this.gun.muzzle[0], this.gun.muzzle[1]);
     const dir = this.body.flip;
     const reach = (at.x - m.x) * dir;
     const own = this.attachedEntities();
-    const past: Passing = { parts: [], d: 0 };
-    for (const a of onSide(this.game, this.team!)) {
-      if (a.e === this || own.includes(a.e)) continue;
-      if (Math.hypot(a.x - at.x, a.y - at.y) < CLEAR_BLAST) return null;
-      const s = (a.x - m.x) * dir;
-      if (s < -1 || s > reach + 1) continue;
-      // (a tank ahead is long: by its middle and as far again)
-      past.d = Math.max(past.d, s + 4);
-      for (const e of [a.e, ...a.e.attachedEntities()]) for (const p of e.parts) if (!p.destroyed) past.parts.push(p);
+    const past: Passing = { parts: [], d: 0, side: this.team! };
+    const over = isTeamMachine(foe);
+    // (none of its side by where it lands: there, or on the first of the enemy in the way)
+    if (!blastClear(this.game, this.team!, m.x, m.y, at, CLEAR_BLAST, (e) => e === this || own.includes(e), over)) return null;
+    for (const side of TEAM_IDS) {
+      const mine = side === this.team;
+      if (!mine && !over) continue;
+      for (const a of onSide(this.game, side)) {
+        if (a.e === this || a.e === foe || own.includes(a.e) || (!mine && !isLiving(a.e))) continue;
+        const s = (a.x - m.x) * dir;
+        if (s < -1 || s > reach + 1) continue;
+        // (a tank ahead is long: by its middle and as far again)
+        past.d = Math.max(past.d, s + 4);
+        for (const e of [a.e, ...a.e.attachedEntities()]) for (const p of e.parts) if (!p.destroyed) past.parts.push(p);
+      }
     }
     return past;
   }
@@ -440,6 +453,8 @@ export class Shell extends Entity {
   private spent = false;
   /** How long (s) it goes through what it's launched past (see launch()). */
   private passT = 0.4;
+  /** The side it was fired for, whose soldiers' bullets don't meet it (see Passing). */
+  firedFor: string | null = null;
 
   constructor(game: Game, def: ItemDef, art: PixelArt, shapes: ShapeSpec[], density: number, blast: ExplosionOpts, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -457,6 +472,7 @@ export class Shell extends Entity {
   launch(from: Entity, vx: number, vy: number, past?: Passing): void {
     this.main.setNoCollide(past?.parts.length ? [...from.parts, ...past.parts] : from.parts);
     this.passT = Math.max(0.4, past ? past.d / Math.max(1, Math.abs(vx)) : 0);
+    this.firedFor = past?.side ?? null;
     this.main.body.setLinvel({ x: vx, y: vy }, true);
   }
 

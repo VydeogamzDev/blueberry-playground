@@ -256,28 +256,38 @@ export function nearestEnemy(me: TeamMember, x: number, y: number, sight: number
 }
 
 /**
+ * A machine (a tank) goes for another side's machine before its people, unless
+ * they're much nearer: a machine counts for this share of how far off it is.
+ */
+const MACHINES_FIRST = 0.4;
+
+/**
  * The enemy a machine at (x, y) facing `dir` (1: right) should go for: someone
  * of another side up and about, or another side's machine, within `sight` m
  * (and 15 m up or down) and in sight; the nearest, one behind it counting for
- * as far again (it has to turn round for them). Null: there's none. (Soldiers
- * with guns look this way too, once there's nobody left to shoot but machines.)
+ * as far again (it has to turn round for them), and another side's machine
+ * for much nearer than it is (see MACHINES_FIRST: tanks fight it out with
+ * tanks, the people with people). Null: there's none. (Soldiers with guns look
+ * this way too, once there's nobody left to shoot but machines; with a launcher
+ * for armour, for `machinesOnly`.)
  */
-export function nearestFoe(me: Entity, x: number, y: number, sight: number, dir: number): Entity | null {
+export function nearestFoe(me: Entity, x: number, y: number, sight: number, dir: number, machinesOnly = false): Entity | null {
   const r = roster(me.game);
   const near: { e: Entity; d: number; x: number; y: number }[] = [];
-  const consider = (e: Entity, ex: number, ey: number) => {
+  const consider = (e: Entity, ex: number, ey: number, k: number) => {
     const dx = ex - x;
     const dy = ey - y;
     if (Math.abs(dx) > sight || Math.abs(dy) > 15) return;
-    near.push({ e, x: ex, y: ey, d: Math.abs(dx) * (dx * dir < 0 ? 2 : 1) + Math.abs(dy) });
+    near.push({ e, x: ex, y: ey, d: (Math.abs(dx) * (dx * dir < 0 ? 2 : 1) + Math.abs(dy)) * k });
   };
-  for (let i = 0; i < r.members.length; i++) {
+  for (let i = 0; i < r.members.length && !machinesOnly; i++) {
     const e = r.members[i];
-    if (!e.destroyed && stillUp(e) && enemies(me, e)) consider(e, r.at[2 * i], r.at[2 * i + 1]);
+    if (!e.destroyed && stillUp(e) && enemies(me, e)) consider(e, r.at[2 * i], r.at[2 * i + 1], 1);
   }
+  const first = isTeamMachine(me) ? MACHINES_FIRST : 1;
   for (let i = 0; i < r.machines.length; i++) {
     const e = r.machines[i];
-    if (e !== me && !e.destroyed && !e.wrecked && enemies(me, e)) consider(e, r.machinesAt[2 * i], r.machinesAt[2 * i + 1]);
+    if (e !== me && !e.destroyed && !e.wrecked && enemies(me, e)) consider(e, r.machinesAt[2 * i], r.machinesAt[2 * i + 1], first);
   }
   near.sort((a, b) => a.d - b.d);
   // (the first few in sight: past that, there's no telling it's worth the rays)
@@ -296,6 +306,36 @@ export function onSide(game: Game, side: TeamId): { e: Entity; x: number; y: num
     if (!e.destroyed && e.team === side) out.push({ e, x: r.machinesAt[2 * i], y: r.machinesAt[2 * i + 1] });
   });
   return out;
+}
+
+/**
+ * Whether a shot that goes off where it lands (a rocket, a grenade, a shell),
+ * fired from (x0, y0) at `at` past `side`'s own in the way (see Tank.clear()),
+ * would hurt none of `side` (but those `skip` takes: whoever fires it): none of
+ * them within `reach` m of where it may go off. That's `at`, or anyone else in
+ * the way short of it, near the line of fire: it goes off on the first it meets
+ * (in a melee, one of the enemy right by their own). Fired `over` the people
+ * in the way (see Tank.clear()), only machines there count.
+ */
+export function blastClear(game: Game, side: TeamId, x0: number, y0: number, at: { x: number; y: number }, reach: number, skip: (e: Entity) => boolean, over = false): boolean {
+  const r = roster(game);
+  const dx = at.x - x0;
+  const dy = at.y - y0;
+  const spots = [at.x, at.y];
+  const inWay = (e: Entity, x: number, y: number) => {
+    if (e.destroyed || sideOf(e) === side || skip(e)) return;
+    const k = (x - x0) / dx;
+    if (k > 0 && k < 1 && Math.abs(y - (y0 + dy * k)) < 1.3) spots.push(x, y);
+  };
+  if (Math.abs(dx) > 0.5) {
+    for (let i = 0; i < r.members.length && !over; i++) inWay(r.members[i], r.at[2 * i], r.at[2 * i + 1]);
+    for (let i = 0; i < r.machines.length; i++) inWay(r.machines[i], r.machinesAt[2 * i], r.machinesAt[2 * i + 1]);
+  }
+  for (const a of onSide(game, side)) {
+    if (skip(a.e)) continue;
+    for (let k = 0; k < spots.length; k += 2) if (Math.hypot(a.x - spots[k], a.y - spots[k + 1]) < reach) return false;
+  }
+  return true;
 }
 
 /** A lit bomb (not one `skip` is holding) whose blast would reach (x, y), a metre to spare: its x, or null. */

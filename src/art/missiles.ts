@@ -19,53 +19,82 @@ const SAND = KHAKI;
 const M113_DRAB = ramp('#5c6440');
 
 export type MissileKind = 'guided' | 'spike';
+/**
+ * Which missile a launcher fires (picked in its menu): the standard one; the
+ * cruise missile, its motor burning four times as long and twice its warhead;
+ * or a Strike, five small missiles at one launch.
+ */
+export type MissileVersion = 'standard' | 'cruise' | 'strike';
 
 // ------------------------------------------------------------------ the missiles
 
-/** The missile's art size: its body is BODY pixels across (a cell holds one: see VLS). */
+/** The standard missile's art size: its body is BODY pixels across (a cell holds one: see VLS). */
 export const MISSILE = { w: 22, h: 8, body: 4 };
+/** Each version's art size: the cruise missile longer (its fuel), a Strike's small (each fits a cell too). */
+export const MISSILES: Record<MissileVersion, typeof MISSILE> = {
+  standard: MISSILE,
+  cruise: { w: 30, h: 8, body: 4 },
+  strike: { w: 14, h: 7, body: 3 },
+};
 
-const missiles = new Map<MissileKind, PixelArt>();
+const missiles = new Map<string, PixelArt>();
 
 /**
- * A missile pointing right: tail fins round the motor's nozzle, a pair of wings
- * at its middle, and its warhead. The mouse-guided one is dark green with a
- * stand-off probe on its nose; the Spike is white, its seeker's dark glass dome
- * on the nose and a yellow band round the warhead.
+ * A missile pointing right: tail fins round the motor's nozzle, and its
+ * warhead. The mouse-guided one is dark green with a stand-off probe on its
+ * nose; the Spike is white, its seeker's dark glass dome on the nose and a
+ * yellow band round the warhead. The standard missile has a pair of wings at
+ * its middle; the cruise missile is longer, with small swept wings forward,
+ * an air scoop under its tail and its fuel tank's seam; a Strike's are short,
+ * with canards behind the nose and a red band.
  */
-export function missileArt(kind: MissileKind): PixelArt {
-  let a = missiles.get(kind);
-  if (!a) missiles.set(kind, (a = drawMissile(kind)));
+export function missileArt(kind: MissileKind, version: MissileVersion = 'standard'): PixelArt {
+  const key = `${kind}:${version}`;
+  let a = missiles.get(key);
+  if (!a) missiles.set(key, (a = drawMissile(kind, version)));
   return a;
 }
 
-function drawMissile(kind: MissileKind): PixelArt {
+function drawMissile(kind: MissileKind, version: MissileVersion): PixelArt {
   const P = kind === 'spike' ? SPIKE_WHITE : DARK_GREEN;
-  const a = new PixelArt(MISSILE.w, MISSILE.h);
-  // tail fins and mid wings, above and below the body
-  for (const [y0, y1] of [[2, 0], [6, 8]] as const) {
-    a.poly([[1, y0], [5, y0], [3.5, y1], [1, y1]], P[1]);
-    a.poly([[8, y0], [12, y0], [11, y1], [9, y1]], P[1]);
+  const { w, h, body } = MISSILES[version];
+  const a = new PixelArt(w, h);
+  // (the body's top and bottom rows, and where its nose begins)
+  const top = Math.floor((h - body) / 2);
+  const bot = top + body;
+  const nose = w - 5;
+  const small = version === 'strike';
+  // tail fins, and wings, above and below the body
+  for (const [y0, y1] of [[top, 0], [bot, h]] as const) {
+    a.poly([[1, y0], [small ? 4 : 5, y0], [small ? 3 : 3.5, y1], [1, y1]], P[1]);
+    const out = y1 < y0 ? -1.5 : 1.5;
+    if (version === 'standard') a.poly([[8, y0], [12, y0], [11, y1], [9, y1]], P[1]);
+    else if (version === 'cruise') a.poly([[11, y0], [18, y0], [13.5, y0 + out], [11, y0 + out]], P[1]);
+    else a.poly([[nose - 3, y0], [nose - 1, y0], [nose - 2, y0 + out * 0.7], [nose - 3, y0 + out * 0.7]], P[1]);
   }
-  a.rect(1, 2, 16, 4, P[2]);
-  a.rect(0, 3, 1, 2, GUNMETAL[1]);
+  a.rect(1, top, nose - 1, body, P[2]);
+  a.rect(0, top + 1, 1, body - 2, GUNMETAL[1]);
+  if (version === 'cruise') a.rect(5, bot, 5, 1, P[1]);
   if (kind === 'spike') {
     // the seeker's dome, rounded off
-    a.rect(17, 2, 3, 4, P[2]);
-    a.rect(20, 3, 2, 2, GLASS[1]);
+    a.rect(nose, top, 3, body, P[2]);
+    a.rect(nose + 3, top + 1, 2, body - 2, GLASS[1]);
   } else {
-    a.rect(17, 2, 2, 4, P[2]);
-    a.rect(19, 3, 3, 2, P[1]);
+    a.rect(nose, top, 2, body, P[2]);
+    a.rect(nose + 2, top + 1, 3, body - 2, P[1]);
   }
   finish(a, { shadow: false });
-  if (kind === 'spike') {
-    a.set(14, 3, YELLOW[2]).set(14, 4, YELLOW[1]);
-    a.set(21, 3, GLASS[3]).set(20, 3, GLASS[2]);
-  } else {
-    a.set(15, 3, YELLOW[2]).set(15, 4, YELLOW[1]);
-    a.set(21, 3, P[3]);
+  const band = nose - (kind === 'spike' ? 3 : 2);
+  const mark = small ? LED_RED : YELLOW[2];
+  a.set(band, top + 1, mark).set(band, bot - 2, small ? LED_RED : YELLOW[1]);
+  if (kind === 'spike') a.set(w - 1, top + 1, GLASS[3]).set(w - 2, top + 1, GLASS[2]);
+  else a.set(w - 1, top + 1, P[3]);
+  if (version === 'cruise') {
+    // the fuel tank's seam, and the scoop's mouth
+    a.vline(20, top + 1, bot - 2, P[1]);
+    a.set(9, bot, GUNMETAL[0]);
   }
-  a.set(0, 3, GUNMETAL[0]).set(0, 4, GUNMETAL[0]);
+  a.set(0, top + 1, GUNMETAL[0]).set(0, bot - 2, GUNMETAL[0]);
   return a;
 }
 

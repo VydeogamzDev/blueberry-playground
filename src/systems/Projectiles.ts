@@ -18,6 +18,25 @@ export interface BulletOpts {
   ignore?: RAPIER.RigidBody | null;
   life?: number;
   tracer?: boolean;
+  /** Fired by a soldier on a side: their own side in the way it goes through (see PastOwn). */
+  past?: PastOwn | null;
+}
+
+/**
+ * A soldier's shot fired past their own side (see Firearm.firePast()): the parts
+ * of those of them in the way, gone through as if fired from beside them (a
+ * side-on view can't show that), until it's `d` m across from where it was fired;
+ * and their side, whose rounds in flight it never meets (see SideRound).
+ */
+export interface PastOwn {
+  parts: ReadonlySet<Part>;
+  d: number;
+  side: string | null;
+}
+
+/** A round in flight (a rocket, a grenade, a bolt, a shell) fired for a side, which that side's soldiers' bullets go by (see PastOwn). */
+export interface SideRound {
+  firedFor?: string | null;
 }
 
 interface Bullet {
@@ -33,6 +52,10 @@ interface Bullet {
   life: number;
   tracer: boolean;
   bounces: number;
+  /** Its own side it's going past, and where (x) it was fired from; and the side, the whole way (see PastOwn). */
+  past: PastOwn | null;
+  x0: number;
+  side: string | null;
 }
 
 const BULLET_GROUPS = groups(GROUP.DEBRIS, GROUP.STATIC | GROUP.DYNAMIC);
@@ -44,6 +67,8 @@ export interface LaserOpts {
   color: number;
   ignore?: RAPIER.RigidBody | null;
   range?: number;
+  /** Fired by a soldier on a side: their own side in the way it goes through (see PastOwn). */
+  past?: PastOwn | null;
 }
 
 interface Beam {
@@ -68,6 +93,13 @@ export class Projectiles {
   private lineCol = new Float32Array(MAX_TRACERS * 8);
   private beams: Beam[] = [];
   private beamBatch = new LineBatch(3000, 46.5);
+  /** The parts the ray being cast goes through (a soldier's own side: see PastOwn), the side whose rounds it goes by, and the filter that skips them. */
+  private skip: ReadonlySet<Part> | null = null;
+  private side: string | null = null;
+  private readonly unskipped = (c: RAPIER.Collider): boolean => {
+    const p = this.game.physics.partOf(c);
+    return !p || !(this.skip?.has(p) || (this.side !== null && (p.entity as SideRound).firedFor === this.side));
+  };
 
   constructor(game: Game) {
     this.game = game;
@@ -113,7 +145,10 @@ export class Projectiles {
     for (let hits = 0; hits < 6; hits++) {
       this.ray.origin = { x: ox, y: oy };
       this.ray.dir = { x: dx, y: dy };
-      const hit = world.castRayAndGetNormal(this.ray, remaining, true, undefined, BULLET_GROUPS, undefined, ign);
+      // (a soldier's beam goes through their own side in the way, as far as they stand)
+      this.skip = o.past && Math.abs(ox - x) < o.past.d ? o.past.parts : null;
+      this.side = o.past?.side ?? null;
+      const hit = world.castRayAndGetNormal(this.ray, remaining, true, undefined, BULLET_GROUPS, undefined, ign, this.skip || this.side ? this.unskipped : undefined);
       if (!hit) {
         end = { x: ox + dx * remaining, y: oy + dy * remaining };
         break;
@@ -176,7 +211,7 @@ export class Projectiles {
     this.bullets.push({
       x, y, vx: (dx / l) * speed, vy: (dy / l) * speed,
       energy: o.energy, energy0: o.energy, damage: o.damage, push: o.push ?? 0.012,
-      ignore: o.ignore ?? null, life: o.life ?? 1.2, tracer: o.tracer ?? true, bounces: 0,
+      ignore: o.ignore ?? null, life: o.life ?? 1.2, tracer: o.tracer ?? true, bounces: 0, past: o.past ?? null, x0: x, side: o.past?.side ?? null,
     });
   }
 
@@ -192,11 +227,16 @@ export class Projectiles {
       let ox = b.x;
       let oy = b.y;
       let alive = true;
+      // (a soldier's: through their own side in the way, until it's gone by them)
+      if (b.past && Math.abs(ox - b.x0) > b.past.d) b.past = null;
+      const skip = b.past?.parts ?? null;
       for (let hits = 0; hits < 8 && remaining > 1e-4; hits++) {
         this.ray.origin = { x: ox, y: oy };
         this.ray.dir = { x: dx, y: dy };
         const ign = b.ignore && b.ignore.isValid() ? b.ignore : undefined;
-        const hit = world.castRayAndGetNormal(this.ray, remaining, true, undefined, BULLET_GROUPS, undefined, ign);
+        this.skip = skip;
+        this.side = b.side;
+        const hit = world.castRayAndGetNormal(this.ray, remaining, true, undefined, BULLET_GROUPS, undefined, ign, this.skip || this.side ? this.unskipped : undefined);
         if (!hit) {
           ox += dx * remaining;
           oy += dy * remaining;

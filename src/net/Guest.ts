@@ -11,9 +11,10 @@ import type { Controls } from '../tools/Controls';
 import type { EntityState } from '../world/types';
 import type { MapSpec } from '../world/Maps';
 import type { MusicPlan } from '../engine/Music';
+import { SpikeLauncher, type Sighted } from '../entities/Missiles';
 import { FxPlayer, type Fx, type PartRef } from './Effects';
 import { Wire, type Link } from './Link';
-import { PART_FLAGS, type GuestOp, type HostMsg, type NetConn, type NetPuddles, type NetTime, type PlayerInfo, type Tick, type Welcome } from './protocol';
+import { PART_FLAGS, type GuestOp, type HostMsg, type NetConn, type NetPuddles, type NetSeeker, type NetSight, type NetTime, type PlayerInfo, type Tick, type Welcome } from './protocol';
 import { VITALS } from './Host';
 
 /** How far behind the host's clock things are shown (ms): two ticks, so there's always a next pose to move towards. */
@@ -69,14 +70,16 @@ export class NetClient {
   /** Our clock less the host's (ms), the least seen: the link's quickest. */
   private offset = Infinity;
   private lastHt = 0;
-  private role: NetRole;
+  /** The seekers the host has held on, shown here (see seekers()). */
+  private seeking = new Set<SpikeLauncher>();
+  private role: { guest: true; me: number; pose: NetRole['pose'] };
   private frameHook: () => void;
   private done = false;
 
   constructor(private game: Game, private controls: Controls, link: Link, name: string) {
     this.wire = new Wire<HostMsg, GuestOp>(link);
     this.fx = new FxPlayer(game, (r) => this.part(r));
-    this.role = { guest: true, pose: () => this.pose(false) };
+    this.role = { guest: true, me: 0, pose: () => this.pose(false) };
     this.frameHook = () => this.frame();
     this.wire.onmessage = (m) => {
       try {
@@ -146,13 +149,14 @@ export class NetClient {
   private welcome(m: Welcome): void {
     const game = this.game;
     const first = !this.you;
-    this.you = m.you;
+    this.you = this.role.me = m.you;
     this.players = m.players;
     this.due.length = 0;
     this.samples.clear();
     this.fx.clear();
     this.ents.clear();
     this.conns.clear();
+    this.seeking.clear();
     this.offset = Infinity;
     // (joining shows what the host is looking at; a scene loaded later leaves the view alone)
     const made = loadFromString(game, m.save, { camera: first });
@@ -169,6 +173,7 @@ export class NetClient {
     const now = performance.now();
     this.offset = Math.min(this.offset + OFFSET_CREEP, now - m.ht);
     if (m.spawn) this.spawn(m.spawn.ids, m.spawn.ents);
+    const cut = m.grow ? this.regrow(m.grow, m.cut) : m.cut;
     if (m.extra) {
       for (const [id, x] of m.extra) {
         const e = this.ents.get(id);
@@ -179,7 +184,7 @@ export class NetClient {
     if (m.conns) this.setConns(m.conns);
     if (m.ps) this.partStates(floats(m.ps));
     if (m.tf) this.poses(floats(m.tf), m.ht);
-    if (m.fx || m.gone || m.cut) this.due.push({ ht: m.ht, fx: m.fx, gone: m.gone, cut: m.cut });
+    if (m.fx || m.gone || cut) this.due.push({ ht: m.ht, fx: m.fx, gone: m.gone, cut });
     if (m.holds) this.fx.hold(m.holds);
     if (m.puddles) this.setPuddles(m.puddles);
     if (m.fluid) this.game.fluid.unpack(m.fluid.n, floats(m.fluid.xy), new Int16Array(fromBase64(m.fluid.v).buffer));
@@ -192,7 +197,70 @@ export class NetClient {
       this.cursors.clear();
       for (const [id, x, y] of m.cursors) if (id !== this.you) this.cursors.set(id, { x, y });
     }
+    if (m.seekers) this.seekers(m.seekers);
     this.lastHt = m.ht;
+  }
+
+  /**
+   * Limbs grown back in the host's game (see Regrowth), grown here too: at once,
+   * as the pieces of flesh the old ones were cast off as came with this tick's
+   * spawns, and before this tick's poses (theirs are the new limbs'). Each
+   * body's cuts go first, this tick's and any still to come (the old limb,
+   * what hung from it: a cut left for later would take off the new one); the
+   * cuts of the rest are left to be made when the poses get there.
+   */
+  private regrow(grow: PartRef[], cut: PartRef[] | undefined): PartRef[] | undefined {
+    const bodies = new Set(grow.map((r) => r[0]));
+    const later = (r: PartRef) => {
+      if (!bodies.has(r[0])) return true;
+      const p = this.part(r);
+      if (p) p.entity.removePart(p);
+      return false;
+    };
+    for (const d of this.due) if (d.cut) d.cut = d.cut.filter(later);
+    const rest = cut?.filter(later);
+    for (const [id, i] of grow) {
+      const e = this.ents.get(id) as (Entity & { regrowPart?(i: number): Part | null }) | undefined;
+      const old = e?.parts[i];
+      if (!e || e.destroyed || !old) continue;
+      if (!old.destroyed) e.removePart(old);
+      const p = e.regrowPart?.(i);
+      if (p) p.body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, true);
+    }
+    return rest?.length ? rest : undefined;
+  }
+
+  /**
+   * The seekers held on in the host's game (see SpikeLauncher.showSeeker()),
+   * shown on this game's copies: the reticle of one this player holds is drawn
+   * round their own cursor, its gate on what the host's seeker found there.
+   */
+  private seekers(list: NetSeeker[]): void {
+    const on = new Set<SpikeLauncher>();
+    for (const [id, by, locking, sighted, lock, tracked] of list) {
+      const e = this.ents.get(id);
+      if (!(e instanceof SpikeLauncher) || e.destroyed) continue;
+      e.showSeeker(by, this.sight(sighted), locking, this.sight(lock), (tracked ?? []).flatMap((t) => this.sight(t) ?? []));
+      on.add(e);
+    }
+    for (const e of this.seeking) if (!on.has(e) && !e.destroyed) e.showSeeker(0, null, 0, null);
+    this.seeking = on;
+  }
+
+  /** What a seeker's gate is on, on this game's copy of it. */
+  private sight(n: NetSight | null): Sighted | null {
+    if (!n) return null;
+    if ('p' in n) {
+      const p = this.part(n.p);
+      if (!p) return null;
+      const local = { x: n.local[0], y: n.local[1] };
+      return { entity: p.entity, part: p, local, at: p.localToWorld(local.x, local.y) };
+    }
+    if ('e' in n) {
+      const e = this.ents.get(n.e);
+      return e && !e.destroyed ? { entity: e, part: null, local: { x: 0, y: 0 }, at: e.center() } : null;
+    }
+    return { entity: null, part: null, local: { x: 0, y: 0 }, at: { x: n.at[0], y: n.at[1] } };
   }
 
   /** An entity as the host has it: numbered as there, moved only by the host. */

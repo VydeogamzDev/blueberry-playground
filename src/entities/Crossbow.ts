@@ -15,6 +15,7 @@ import type { Entity } from '../world/Entity';
 import type { Part } from '../world/Part';
 import type { ValueEditor } from '../tools/Controls';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
+import type { Passing } from './Tank';
 
 export type { BoltKind };
 
@@ -45,8 +46,9 @@ const ARM_SPEED = 8;
 const SPENT_SPEED = 5;
 /** Seconds of flight after which a bolt that hit nothing is only a stick lying about. */
 const MAX_FLIGHT = 6;
-/** How far (m) a bolt goes before it can hit the crossbow it came off, or whoever holds that. */
+/** How far (m) a bolt goes before it can hit the crossbow it came off, or whoever holds that; and the longest (s) it goes through the side of the soldier who shot it. */
 const CLEAR = 1.2;
+const PASS_MOST = 1.5;
 /** The drug in a poisoned bolt's head and in a tranquilizer dart, and how much (a full syringe is 1). */
 const DOSE: Partial<Record<BoltKind, [Drug, number]>> = { poison: ['poison', 0.8], tranquilizer: ['knockout', 1] };
 /** An explosive bolt's charge: a grenade's, much smaller. */
@@ -191,9 +193,9 @@ export class Crossbow extends Firearm {
     const dx = fwd.x * Math.cos(a) - fwd.y * Math.sin(a);
     const dy = fwd.x * Math.sin(a) + fwd.y * Math.cos(a);
     const v = p.body.linvel();
-    // it leaves past the prod and whoever holds it
+    // it leaves past the prod and whoever holds it (and a soldier's, past their own side in the way)
     const own = this.holder ? [...this.parts, ...this.holder.parts] : this.parts;
-    bolt.launch(own, v.x + dx * speed, v.y + dy * speed, g.damage);
+    bolt.launch(own, v.x + dx * speed, v.y + dy * speed, g.damage, this.passing()?.pass);
     if (!p.frozen) p.body.applyImpulseAtPoint({ x: -fwd.x * g.recoil, y: -fwd.y * g.recoil }, this.gripWorld() ?? at, true);
     cull(game);
     this.show();
@@ -267,8 +269,11 @@ export class Bolt extends Prop {
   private depth = 0;
   private cut = 0;
   private age = 0;
-  /** Where it was loosed from (see CLEAR). */
+  /** Where it was loosed from (see CLEAR), and how far on (m, across) it goes through the side of the soldier who shot it (see launch()). */
   private start: V2 | null = null;
+  private passD = 0;
+  /** That side, whose soldiers' bullets don't meet it (see Passing). */
+  firedFor: string | null = null;
   /** The part it was just pulled out of: kept from touching it until it's clear of it. */
   private freed: Part | null = null;
   private freeT = 0;
@@ -284,10 +289,16 @@ export class Bolt extends Prop {
     boltsOf(game).push(this);
   }
 
-  /** Sends it off at (vx, vy), passing through `own` (the crossbow and whoever holds it), sinking in with `power`. */
-  launch(own: Part[], vx: number, vy: number, power: number): void {
+  /**
+   * Sends it off at (vx, vy), passing through `own` (the crossbow and whoever
+   * holds it), sinking in with `power`. A soldier on a side shoots it `past`
+   * their own side in the way (see Firearm.firePast()).
+   */
+  launch(own: Part[], vx: number, vy: number, power: number, past?: Passing): void {
     const p = this.main;
-    p.setNoCollide(own);
+    p.setNoCollide(past?.parts.length ? [...own, ...past.parts] : own);
+    this.passD = past?.d ?? 0;
+    this.firedFor = past?.side ?? null;
     p.body.setLinvel({ x: vx, y: vy }, true);
     p.body.setAngvel(0, true);
     this.power = power;
@@ -314,7 +325,8 @@ export class Bolt extends Prop {
     if (this.state !== 'flying') return;
     const p = this.main;
     this.age += dt;
-    if (p.noCollide && (!this.start || this.age > 0.5 || Math.hypot(p.x - this.start.x, p.y - this.start.y) > CLEAR)) p.setNoCollide(null);
+    const passing = !!this.start && this.age < PASS_MOST && Math.abs(p.x - this.start.x) < this.passD;
+    if (p.noCollide && !passing && (!this.start || this.age > 0.5 || Math.hypot(p.x - this.start.x, p.y - this.start.y) > CLEAR)) p.setNoCollide(null);
     const v = p.body.linvel();
     const speed = Math.hypot(v.x, v.y);
     if (this.kind === 'firework') {

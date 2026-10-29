@@ -1,7 +1,6 @@
-import { PX } from '../engine/constants';
 import { Tank, type CannonSpec, type Passing } from './Tank';
-import { Missile, angleFor, type Guide } from './Missiles';
-import { MISSILE, M113_LAUNCHER } from '../art/missiles';
+import { cursorGuide, launchVolley, versionActions, versionOf, type Guide } from './Missiles';
+import { M113_LAUNCHER, type MissileVersion } from '../art/missiles';
 import type { CarConfig } from './Car';
 import type { Game } from '../world/Game';
 import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
@@ -16,20 +15,40 @@ const LAUNCH = 11;
  * does too (see Tank). Off a side, Use fires a missile the player steers with
  * the cursor (see Missile's Guide); on one, its crew drive at the enemy they
  * pick, lay the launcher on them and fire missiles that guide themselves onto
- * that enemy. Its two tubes fire in turn, a reload (the gun's) apart.
+ * that enemy. Its two tubes fire in turn, a reload (the gun's) apart. Its
+ * menu picks which missile (see MissileVersion: a Strike's five go out of a
+ * tube at once, after the same enemy or round the cursor), kept in its config.
  */
 export class MissileCarrier extends Tank {
-  /** What it fires (makes a Missile). */
-  private readonly round: ItemDef;
+  /** What it fires (makes a Missile), by version, and the version it fires. */
+  private readonly rounds: Record<MissileVersion, ItemDef>;
+  version: MissileVersion;
   /** Seconds until the next missile is in, and the tube it goes from. */
   reloadT = 0;
   private tube = 0;
   /** Aimed with the cursor: F works it (when it's selected) whatever the cursor is over (see Controls). */
   readonly cursorAimed = true;
+  /** Who held Use down on it (their player number: see Game.actor), whose cursor what it fires meanwhile follows. */
+  private heldBy = 1;
 
-  constructor(game: Game, def: ItemDef, cfg: CarConfig, gun: CannonSpec, round: ItemDef, x: number, y: number, opts: SpawnOptions) {
+  constructor(game: Game, def: ItemDef, cfg: CarConfig, gun: CannonSpec, rounds: Record<MissileVersion, ItemDef>, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, gun, x, y, opts);
-    this.round = round;
+    this.rounds = rounds;
+    this.version = versionOf(opts.config);
+    this.config = this.version === 'standard' ? undefined : { missile: this.version };
+  }
+
+  /** Which missile it fires from now on: kept in its config. */
+  setVersion(v: MissileVersion): void {
+    if (v === this.version || this.destroyed) return;
+    this.version = v;
+    this.config = v === 'standard' ? undefined : { missile: v };
+    this.game.sound.play('gun/rpg_reload', { gain: 0.3, x: this.body.x, rate: 1.3, vary: 0.04 });
+  }
+
+  setActiveHeld(on: boolean): void {
+    if (on && !this.activeHeld) this.heldBy = this.game.actor;
+    super.setActiveHeld(on);
   }
 
   preStep(dt: number): void {
@@ -38,9 +57,10 @@ export class MissileCarrier extends Tank {
   }
 
   /**
-   * Fires a missile from the next tube, once it has reloaded: on a side, at
-   * the enemy the crew have picked (it guides itself there, past its own side
-   * in the way: see Tank.clear()); else where the cursor is.
+   * Fires from the next tube, once it has reloaded (a missile, or a Strike's
+   * five): on a side, at the enemy the crew have picked (they guide themselves
+   * there, past its own side in the way: see Tank.clear()); else where the
+   * cursor is.
    */
   fire(past?: Passing): void {
     const b = this.barrel;
@@ -48,19 +68,16 @@ export class MissileCarrier extends Tank {
     if (this.reloadT > 0 || this.destroyed || this.wrecked || b.destroyed) return;
     const [tx, ty] = M113_LAUNCHER.tubes[this.tube];
     const fwd = b.localDir(b.flip, 0);
-    const heading = Math.atan2(fwd.y, fwd.x);
     const m = b.pixelToWorld(tx - 0.5, ty - 0.5);
-    // (its tail just inside the tube)
-    const back = (MISSILE.w / 2 - 6) * PX;
-    const c = { x: m.x + fwd.x * back, y: m.y + fwd.y * back };
-    const shot = game.spawn(this.round, c.x, c.y, { flip: this.flipped, angle: angleFor(heading, this.flipped) });
-    if (!(shot instanceof Missile)) return;
-    shot.zBase = this.zBase - 0.01;
-    for (const q of shot.parts) q.updateZ();
     const foe = this.team && this.foe && !this.foe.destroyed ? this.foe : null;
-    const guide: Guide = foe ? { kind: 'target', entity: foe, part: null, local: { x: 0, y: 0 }, at: foe.center() } : { kind: 'cursor' };
+    // (Use held fires again as it reloads, in a step: those follow whoever held it)
+    const guide: Guide = foe ? { kind: 'target', entity: foe, part: null, local: { x: 0, y: 0 }, at: foe.center() } : cursorGuide(game, this.activeHeld ? this.heldBy : game.actor);
     const own = [...this.parts, ...this.attachedEntities().flatMap((e) => e.parts)];
-    shot.launch(own, heading, LAUNCH, false, guide, b.velocityAt(m.x, m.y), past);
+    const fired = launchVolley(game, {
+      round: this.rounds[this.version], version: this.version, at: m, dir: fwd, inset: 6, flipped: this.flipped, zBase: this.zBase,
+      speed: LAUNCH, cold: false, guides: [guide], own, carry: b.velocityAt(m.x, m.y), past,
+    });
+    if (!fired.length) return;
     this.reloadT = this.gun.reload;
     this.tube = 1 - this.tube;
     this.shots++;
@@ -71,9 +88,10 @@ export class MissileCarrier extends Tank {
     game.alarm(m.x, m.y, 30);
   }
 
-  /** (The tank's menu, its barrel's elevations the launcher's.) */
+  /** (The tank's menu, its barrel's elevations the launcher's; and which missile it fires.) */
   contextActions(): ContextAction[] {
-    return super.contextActions().map((a) => (a.label.startsWith('Barrel ') ? { ...a, label: `Launcher ${a.label.slice(7)}` } : a));
+    const acts = super.contextActions().map((a) => (a.label.startsWith('Barrel ') ? { ...a, label: `Launcher ${a.label.slice(7)}` } : a));
+    return [...acts, ...versionActions(this.version, (v) => this.setVersion(v))];
   }
 
   protected serializeExtra(): Record<string, unknown> {

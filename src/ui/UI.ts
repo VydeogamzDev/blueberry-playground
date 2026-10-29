@@ -285,7 +285,7 @@ export class UI implements UIBridge {
       dialog: (title, text, value, okLabel, ok) => this.dialog(title, text, value, okLabel, ok),
       download: (name, text) => this.download(name, text),
     });
-    this.army = new ArmyPanel(game, controls, root, { toast: (msg) => this.toast(msg), close: () => this.hide(this.army.overlay) });
+    this.army = new ArmyPanel(game, controls, root, { toast: (msg) => this.toast(msg), close: () => this.hide(this.army.overlay), tellGuests: (msg) => this.session.host?.tellGuests(msg) });
     this.tutorials = new TutorialsPanel(game, root, {
       tours: () => this.tutorial.tours(),
       start: (id) => this.startTour(id),

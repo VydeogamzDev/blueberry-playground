@@ -90,6 +90,8 @@ export interface Tick {
   gone?: number[];
   /** Parts destroyed (a limb blown off, a board snapped in two). */
   cut?: PartRef[];
+  /** Parts made anew in their place in the body (a limb grown back: see Regrowth), after this tick's cuts. */
+  grow?: PartRef[];
   /** Objects' own state (a lamp switched on, a bomb's fuse burning down), as serializeExtra() has it. */
   extra?: [number, Record<string, unknown>][];
   /** How people and animals are (see VITALS). */
@@ -109,9 +111,21 @@ export interface Tick {
   map?: MapSpec;
   /** Where everyone's cursor is: player, x, y. */
   cursors?: [number, number, number][];
+  /** Every seeker held on (see NetSeeker), when any changed: the player holding one draws its reticle. */
+  seekers?: NetSeeker[];
   /** The host's statistics of the game (see Stats), now and then as they change. */
   stats?: Record<string, number>;
 }
+
+/** What a seeker's gate is on: a part (and the point on it, part-local m), a whole thing (its middle), or a point (world m). */
+export type NetSight = { p: PartRef; local: [number, number] } | { e: number } | { at: [number, number] };
+
+/**
+ * A Spike launcher's seeker held on (see SpikeLauncher): its net id, the player
+ * holding it, how long its gate has been on what it's on (s), what that is,
+ * what it has locked on, and (firing a Strike) the targets in its square.
+ */
+export type NetSeeker = [number, number, number, NetSight | null, NetSight | null, NetSight[]?];
 
 export interface PlayersMsg {
   t: 'players';
@@ -137,7 +151,8 @@ export const PART_FLAGS = { frozen: 1, left: 2, noCollide: 4 } as const;
  */
 export type GuestOp =
   | { op: 'hello'; name: string }
-  | { op: 'cursor'; x: number; y: number }
+  /** Where their cursor is, and their view's zoom (screen px per m: a seeker's gate covers as much as it does on their screen). */
+  | { op: 'cursor'; x: number; y: number; zoom?: number }
   | { op: 'spawn'; def: string; x: number; y: number; left: boolean; config?: EntityConfig; frozen?: boolean; active?: boolean; angle?: number }
   | { op: 'place'; snap: Snapshot; dx: number; dy: number; label: string; frozen?: boolean; active?: boolean }
   /** Z: takes back the newest thing this guest spawned. */

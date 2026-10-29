@@ -1,7 +1,7 @@
 import type { Game } from '../world/Game';
 import type { Controls } from '../tools/Controls';
 import { cleanCode, joinLobby, openLobby, type Network } from './Link';
-import { HOST_ROLE, NetHost } from './Host';
+import { NetHost } from './Host';
 import { NetClient } from './Guest';
 import type { PlayerInfo } from './protocol';
 
@@ -53,7 +53,7 @@ export class Session {
       host.onplayers = () => this.onchange?.();
       host.ontoast = (msg) => this.controls.ui.toast(msg);
       lobby.onlost = (why) => this.controls.ui.toast(`${why}: no one else can join now`);
-      this.game.net = HOST_ROLE;
+      this.game.net = host.role;
       this.game.keepRunning(true);
       this.host = host;
       this.code = lobby.code;

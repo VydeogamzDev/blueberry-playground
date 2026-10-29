@@ -1,8 +1,8 @@
-import type { Game } from '../world/Game';
+import type { Game, NetRole } from '../world/Game';
 import type { Entity } from '../world/Entity';
 import type { Part } from '../world/Part';
 import { RIGID_KINDS, type ConnOpts, type Connection } from '../systems/Connections';
-import { PX } from '../engine/constants';
+import { DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, PX } from '../engine/constants';
 import { ARRANGE, type ArrangeHow, type LayerDir } from '../tools/Arrange';
 import { CONN_LABEL } from '../tools/ConnectTool';
 import { capture, instantiate } from '../world/Snapshot';
@@ -13,10 +13,11 @@ import { arrayToBase64 } from '../engine/base64';
 import { clamp, type V2 } from '../engine/math';
 import { isFighter, isLiving, setFighting } from '../systems/Fighting';
 import { Car } from '../entities/Car';
+import { heldSeekers, STRIKE_COUNT, type Sighted } from '../entities/Missiles';
 import { beginGrab, dragPaused, grabAlong, inWorld, Powers, releaseGrab, stepGrab, type Controls, type Grab, type PowerId, type ValueEditor } from '../tools/Controls';
 import { FxRecorder, refOf, type PartRef } from './Effects';
 import { Wire, type Lobby, type Link } from './Link';
-import { PART_FLAGS, type GuestOp, type HostMsg, type NetConn, type NetTime, type PlayerInfo, type Tick, type Welcome } from './protocol';
+import { PART_FLAGS, type GuestOp, type HostMsg, type NetConn, type NetSeeker, type NetSight, type NetTime, type PlayerInfo, type Tick, type Welcome } from './protocol';
 
 /** Ticks a second's worth: how often guests hear what changed (ms between). */
 const TICK_MS = 50;
@@ -36,6 +37,8 @@ export const VITALS = ['alive', 'consciousness', 'blood', 'pain', 'shock', 'stat
 interface Guest extends PlayerInfo {
   wire: Wire<GuestOp, HostMsg>;
   cursor: V2 | null;
+  /** Their view's zoom (screen px per m), as they last said (see Game.cursorOf()). */
+  zoom: number;
   grab: Grab | null;
   /** What moves with the held thing while time is paused (their selection). */
   grabList: Entity[];
@@ -58,7 +61,8 @@ interface Guest extends PlayerInfo {
 
 /** What the guests were last sent about an entity. */
 interface Known {
-  /** Which parts were destroyed. */
+  /** The part in each place in its list as they have it (one made anew there, a limb grown back, goes again), and which were destroyed. */
+  parts: Part[];
   gone: boolean[];
   extra: string;
   vitals: string;
@@ -115,10 +119,22 @@ export class NetHost {
   private fluidN = 0;
   private time = '';
   private stats = '';
+  /** The seekers held on as they were last sent. */
+  private seeking = '';
   private scene: number;
   /** The map as the guests have it. */
   private map: MapSpec;
   private hooks: { pre: (dt: number) => void; post: () => void; frame: (dt: number) => void };
+  /** The host's game as a multiplayer role (see Game.net): it simulates as usual, and knows where its guests' pointers are. */
+  readonly role: NetRole = {
+    guest: false,
+    me: 1,
+    pose: () => {},
+    cursorOf: (player) => {
+      const g = this.guests.get(player);
+      return g?.cursor ? { x: g.cursor.x, y: g.cursor.y, zoom: g.zoom } : null;
+    },
+  };
 
   constructor(private game: Game, private controls: Controls, private lobby: Lobby, name: string) {
     this.me = { id: 1, name: cleanName(name, 'Host'), color: PLAYER_COLORS[0] };
@@ -163,7 +179,7 @@ export class NetHost {
     const id = this.nextPlayer++;
     const wire = new Wire<GuestOp, HostMsg>(link);
     const g: Guest = {
-      id, name: `Player ${id}`, color: PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length], wire, cursor: null,
+      id, name: `Player ${id}`, color: PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length], wire, cursor: null, zoom: DEFAULT_ZOOM,
       grab: null, grabList: [], target: { x: 0, y: 0 }, rot: 0, snap: false, snapGrid: 0.1, snapStep: Math.PI / 12, alone: false, moveList: null,
       powers: new Powers(this.game), power: { kind: null, x: 0, y: 0, flick: { x: 0, y: 0 } },
       activated: new Set(), creations: [],
@@ -192,10 +208,17 @@ export class NetHost {
     this.onplayers?.();
   }
 
+  /** A message for every guest's status bar, as the host's own game shows it (who won a battle: see ArmyPanel). */
+  tellGuests(msg: string): void {
+    const m: HostMsg = { t: 'toast', msg };
+    for (const g of this.guests.values()) g.wire.send(m);
+  }
+
   private welcome(g: Guest): Welcome {
     const ents = this.game.entities.filter((e) => !e.destroyed);
-    // (someone new: the statistics go again with the next look at them)
+    // (someone new: the statistics go again with the next look at them, and the seekers held on with the next tick)
     this.stats = '';
+    this.seeking = '';
     return {
       t: 'welcome', you: g.id, players: this.players, save: saveToString(this.game), ids: ents.map((e) => e.netId),
       conns: this.connList(), time: this.netTime(),
@@ -280,6 +303,7 @@ export class NetHost {
     }
     m.cursors = [[1, this.controls.wx, this.controls.wy]];
     for (const g of this.guests.values()) if (g.cursor) m.cursors.push([g.id, g.cursor.x, g.cursor.y]);
+    this.seekerState(m);
     const s = JSON.stringify(m);
     for (const g of this.guests.values()) g.wire.sendRaw(s);
   }
@@ -289,6 +313,7 @@ export class NetHost {
     const live = new Set<Entity>();
     const fresh: Entity[] = [];
     const cut: PartRef[] = [];
+    const grow: PartRef[] = [];
     const extra: [number, Record<string, unknown>][] = [];
     const vitals: [number, Record<string, unknown>][] = [];
     for (const e of this.game.entities) {
@@ -300,6 +325,18 @@ export class NetHost {
         continue;
       }
       e.parts.forEach((p, i) => {
+        const was = k.parts[i];
+        if (was && p !== was) {
+          // a part made anew in its place (a limb grown back: see Regrowth.swapIn()), the one there before off first
+          if (!k.gone[i]) cut.push([e.netId, i]);
+          k.parts[i] = p;
+          k.gone[i] = p.destroyed;
+          if (!p.destroyed) grow.push([e.netId, i]);
+          // (where it is and how it is go with this tick)
+          k.pose[i * 3] = NaN;
+          k.state[i * 4] = NaN;
+          return;
+        }
         if (p.destroyed && !k.gone[i]) {
           k.gone[i] = true;
           cut.push([e.netId, i]);
@@ -339,6 +376,7 @@ export class NetHost {
     }
     if (gone.length) m.gone = gone;
     if (cut.length) m.cut = cut;
+    if (grow.length) m.grow = grow;
     if (extra.length) m.extra = extra;
     if (vitals.length) m.vitals = vitals;
   }
@@ -347,7 +385,7 @@ export class NetHost {
   private know(e: Entity): Known {
     const x = extraOf(e);
     const k: Known = {
-      gone: e.parts.map((p) => p.destroyed), extra: x ? JSON.stringify(x) : '', vitals: isLiving(e) ? JSON.stringify(vitalsOf(e)) : '',
+      parts: [...e.parts], gone: e.parts.map((p) => p.destroyed), extra: x ? JSON.stringify(x) : '', vitals: isLiving(e) ? JSON.stringify(vitalsOf(e)) : '',
       pose: new Float32Array(e.parts.length * 3), state: new Float32Array(e.parts.length * 4),
     };
     e.parts.forEach((p, i) => {
@@ -448,6 +486,26 @@ export class NetHost {
     m.fluid = { n: s.n, xy: arrayToBase64(s.xy), v: arrayToBase64(s.v) };
   }
 
+  /**
+   * The seekers held on (see SpikeLauncher), when any changed: whoever holds
+   * one draws its reticle round their own cursor, its gate on what the host's
+   * seeker has found there (see Guest.seekers()).
+   */
+  private seekerState(m: Tick): void {
+    const out: NetSeeker[] = [];
+    for (const s of heldSeekers(this.game)) {
+      if (s.destroyed || !s.holder || !s.netId) continue;
+      const one: NetSeeker = [s.netId, s.holder, Math.round(s.locking * 100) / 100, sight(s.sighted), sight(s.lock)];
+      // (a Strike's other targets in the square are marked too: the nearest few, as many as it has missiles)
+      if (s.version === 'strike') one.push(s.tracked.slice(0, STRIKE_COUNT + 1).flatMap((t) => sight(t) ?? []));
+      out.push(one);
+    }
+    const sig = JSON.stringify(out);
+    if (sig === this.seeking) return;
+    this.seeking = sig;
+    m.seekers = out;
+  }
+
   // ---- what guests do -------------------------------------------------------------------
 
   private entity(id: number): Entity | null {
@@ -474,15 +532,21 @@ export class NetHost {
     queueMicrotask(() => this.ontoast?.(msg));
   }
 
-  /** Runs `fn` with the host's status-bar messages going to the guest instead. */
+  /**
+   * Runs `fn` as the guest: the host's status-bar messages go to them instead,
+   * and what's done is theirs (see Game.actor: a missile they fire follows their cursor).
+   */
   private as(g: Guest, fn: () => void): void {
     const ui = this.controls.ui;
     const own = Object.prototype.hasOwnProperty.call(ui, 'toast');
     const toast = ui.toast;
+    const actor = this.game.actor;
     ui.toast = (msg: string) => g.wire.send({ t: 'toast', msg });
+    this.game.actor = g.id;
     try {
       fn();
     } finally {
+      this.game.actor = actor;
       if (own) ui.toast = toast;
       else delete (ui as unknown as Record<string, unknown>).toast;
     }
@@ -506,9 +570,12 @@ export class NetHost {
         this.sendPlayers();
         this.tell(`${g.name} joined`);
         break;
-      case 'cursor':
+      case 'cursor': {
         g.cursor = { x: Number(m.x) || 0, y: Number(m.y) || 0 };
+        const zoom = Number(m.zoom);
+        if (Number.isFinite(zoom) && zoom > 0) g.zoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
         break;
+      }
       case 'spawn': {
         const def = getItem(m.def);
         if (!def?.create) return;
@@ -832,6 +899,15 @@ export class NetHost {
   }
 }
 
+/** What a seeker's gate is on, as the guests name it (see NetSight). */
+function sight(s: Sighted | null): NetSight | null {
+  if (!s) return null;
+  const r = refOf(s.part);
+  if (r) return { p: r, local: [s.local.x, s.local.y] };
+  if (s.entity && !s.entity.destroyed && s.entity.netId) return { e: s.entity.netId };
+  return { at: [s.at.x, s.at.y] };
+}
+
 /** A point sent by a guest is two finite numbers. */
 function finite(v: unknown): v is V2 {
   const p = v as V2 | null;
@@ -860,7 +936,4 @@ function connOpts(v: unknown): ConnOpts | undefined {
   for (const k of Object.keys(p) as (keyof ConnOpts)[]) if (p[k] === undefined) delete p[k];
   return Object.keys(p).length ? (p as ConnOpts) : undefined;
 }
-
-/** The host's game as a multiplayer role (see Game.net): it simulates as usual. */
-export const HOST_ROLE = { guest: false, pose: () => {} } as const;
 

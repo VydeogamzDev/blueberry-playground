@@ -14,7 +14,8 @@ import { washBlood } from './Medical';
 import { Tendons } from '../systems/Tendons';
 import { FLESH, PLATING, breakUp, blastEnergy, gibNow, sliceLimb, takeChunk } from '../systems/Chunks';
 import { isFighter, isLiving, land, onFeet, stillUp, strikePoint, type Fighter } from '../systems/Fighting';
-import { allies, bombNear, dress, dye, enemies, isTeamId, isTeamMachine, lyingNear, nearestEnemy, nearestFoe, TEAMS, undead, type TeamId } from '../systems/Teams';
+import { allies, blastClear, bombNear, dress, dye, enemies, isTeamId, isTeamMachine, lyingNear, nearestEnemy, nearestFoe, onSide, TEAMS, undead, type TeamId } from '../systems/Teams';
+import type { Passing } from './Tank';
 import type { PixelArt } from '../art/PixelArt';
 import { ACID_SCAR, Liquid, liquidSound, paintWound, seep, woundSpot } from '../systems/Liquids';
 import { Breath, HEAD_SINKS, shoreward, tread, type Lungful } from '../systems/Breath';
@@ -268,15 +269,16 @@ const SHOT = { settle: 0.4, settleJitter: 0.35, steady: 0.12, fire: 0.07, head: 
 
 /**
  * How near and how far off they shoot from with each gun (m): nearer, they step back;
- * further, they walk in. (A launcher's are well clear of its blast; a flamethrower's
- * and a stun gun's within what they reach: about five and six metres. A flamethrower
+ * further, they walk in. (A launcher's are well clear of its blast, an RPG's out to
+ * where its rocket still flies flat; a flamethrower's and a stun gun's within what
+ * they reach: about five and six metres. A flamethrower
  * isn't brought in any closer than it must be: a heavy thing held low, it doesn't tip
  * up far or steadily enough for someone right in front of them, and isn't fired.)
  */
 const RANGE: Record<string, [number, number]> = {
   pistol: [4, 8], revolver: [4, 8], smg: [3, 7], rifle: [5, 11], shotgun: [2.5, 5], sniper: [8, 18], minigun: [4, 10], 'laser-rifle': [5, 12], crossbow: [5, 12],
   'burst-rifle': [5, 11], 'battle-rifle': [6, 14], 'machine-gun': [4, 11], 'double-barrel': [2, 4.5], flintlock: [3, 6.5],
-  'grenade-launcher': [7, 14], flamethrower: [2, 5.5], 'stun-gun': [1.5, 4.5],
+  'grenade-launcher': [7, 14], rpg: [5.5, 16], flamethrower: [2, 5.5], 'stun-gun': [1.5, 4.5],
 };
 /** Any other gun's. */
 const RANGE_ANY: [number, number] = [3.5, 9];
@@ -285,9 +287,27 @@ const RANGE_ANY: [number, number] = [3.5, 9];
  * On a team (see scan()): how often they look about for an enemy (s), how far off
  * they see one (m), how much nearer (m) another must be to leave the one they're
  * fighting for it, and how far (m) they'd go for a weapon lying about, empty-handed
- * against an armed foe.
+ * against an armed foe; for a launcher that breaks armour, against a tank with a
+ * gun that can't; and for their own gun, let go of when they went down.
  */
-const SCAN = { every: 0.4, sight: 30, switch: 2, fetch: 3 };
+const SCAN = { every: 0.4, sight: 30, switch: 2, fetch: 3, arms: 10, regrab: 4 };
+
+/**
+ * In a line of battle (see rankAhead()): how near (m, trunk to trunk) they come
+ * up behind one of their own side on the way to the foe, and how much room they
+ * keep beyond the end of what they hold out ahead (a gun held out would only
+ * shove them along); how far short of that they start slowing (m), and how much
+ * faster than that one they may close (m/s for each metre more); nearer than
+ * `near`, or than `poke` beyond what they hold out, they step back from one
+ * standing still; and how often they look (s).
+ */
+const RANKS = { room: 0.8, clear: 0.45, slow: 1.2, close: 1.5, near: 0.6, poke: 0.2, every: 0.2 };
+
+/** A soldier holds an explosive round while anything flies fast this near (m) the muzzle: a rocket's blast and a little more (see Human.flyingBy()). */
+const FLYING_BY = 4.5;
+
+/** Going to pick up a weapon, what they held is tossed aside this far (m) before it (see Human.fetching()). */
+const LET_GO = 1.5;
 
 /**
  * Zombies (see rise()): how long an infection takes to turn someone (s); how fast they
@@ -391,6 +411,21 @@ function weaponReach(it: Item): number {
 function isWeapon(e: Entity): e is Item {
   const it = e as Item & { lodge?: unknown };
   return !!it.hold && !it.lodge && (e.def.category === 'Melee' || isGun(it));
+}
+
+/**
+ * Does it hurt armour (a tank)? A launcher whose shot blows up: an RPG, a grenade
+ * launcher, a crossbow with explosive bolts; not bullets, a beam, a flame or a jolt
+ * (it keeps clear of its own blast: see Human.gunfight()).
+ */
+function breaksArmour(it: Item): boolean {
+  const g = it as Item & { flies?: boolean; standOff?(): number };
+  return isGun(it) && g.flies === true && !!g.standOff && g.standOff() > 3.5;
+}
+
+/** A launcher lying about that breaks armour (see breaksArmour()). */
+function isLauncher(e: Entity): e is Item {
+  return isWeapon(e) && breaksArmour(e);
 }
 
 interface Wound {
@@ -604,11 +639,19 @@ export class Human extends Entity implements Holder {
   private evadeT = 0;
   private evadeX = 0;
   private dangerT = 0;
-  /** A weapon lying about they're going for (empty-handed against an armed foe), and for how long so far (s). */
+  /** A weapon lying about they're going for (empty-handed against an armed foe; a launcher, against a tank), and for how long so far (s). */
   private fetch: Item | null = null;
   private fetchT = 0;
-  /** Kept for looking along the line of fire (see friendInWay()). */
+  /** The gun they last fought with (picked up again if it's let go of, see scan()). */
+  private ownGun: Item | null = null;
+  /** In a line of battle: the most speed (m/s) they may go on toward the foe at, behind one of their own (-1: any), and until they look again (s; see rankAhead()). */
+  private rank = -1;
+  private rankT = 0;
+  /** That one's standing still too near ahead of them: a step back (see rankAhead()). */
+  private crowded = false;
+  /** Kept for looking along the line of fire (see friendInWay()), and round the muzzle (see flyingBy()). */
   private fireRay: RAPIER.Ray | null = null;
+  private muzzleBall: RAPIER.Ball | null = null;
   /**
    * Finding a way to the foe (see route()): the speed to go at, as worked out at the
    * last look (0: off, jumping or climbing; null: walking on as anyone does); and for
@@ -1020,6 +1063,17 @@ export class Human extends Entity implements Holder {
     this.rouse();
     growth(this.game).add(l);
     sprout(this.game, parent.part.localToWorld(l.a1.x, l.a1.y), true);
+  }
+
+  /**
+   * The limb in the body's place `i` (gone) grows back as the host's did: a
+   * guest's copy (see net/Guest). The new part, or null if it can't.
+   */
+  regrowPart(i: number): Part | null {
+    const l = this.limbOf(this.parts[i]);
+    if (!l?.parent || !l.part.destroyed || l.parent.part.destroyed) return null;
+    this.regrow(l);
+    return l.part;
   }
 
   /**
@@ -2110,9 +2164,9 @@ export class Human extends Entity implements Holder {
     return true;
   }
 
-  /** An enemy machine (a tank) still in the fight, and a gun in hand to shoot it with (fists do nothing to armour). */
+  /** An enemy machine (a tank) still in the fight, and a gun in hand to shoot it with, or one they're just picking up (fists do nothing to armour). */
   private canShootAt(e: Entity): boolean {
-    return !this.zombie && isTeamMachine(e) && !e.destroyed && !e.wrecked && enemies(this, e) && this.grips.some((g) => isGun(g.item));
+    return !this.zombie && isTeamMachine(e) && !e.destroyed && !e.wrecked && enemies(this, e) && (this.grips.some((g) => isGun(g.item)) || (!!this.fetch && isGun(this.fetch)));
   }
 
   /** Leaves off fighting. */
@@ -2139,14 +2193,27 @@ export class Human extends Entity implements Holder {
   /**
    * On a team: looks about for the enemy to go for (see Teams.nearestEnemy()) and
    * goes for it, unless already fighting one about as near (or someone they were
-   * set on who isn't on another side: they see that through). Empty-handed against
-   * someone armed, they'll pick up a weapon lying close by first.
+   * set on who isn't on another side: they see that through). With a launcher that
+   * breaks armour, they go for the enemy's machines (tanks) first. Empty-handed
+   * against someone armed, they'll pick up a weapon lying close by first (their
+   * own gun, let go of when they went down, from a little further); against a tank
+   * with a gun that can't hurt it, a launcher lying about that can.
    */
   private scan(c: Part): void {
     this.scanT = SCAN.every * (0.7 + Math.random() * 0.6);
     const foe = this.foe;
+    const gun = this.zombie ? undefined : this.grips.find((g) => isGun(g.item))?.item;
+    if (gun) this.ownGun = gun;
+    // a launcher for armour in hand: the enemy's machines first (the one they're after, while it's in the fight)
+    if (gun && breaksArmour(gun)) {
+      const m = foe && this.canShootAt(foe) ? foe : nearestFoe(this, c.x, c.y, SCAN.sight, this.f, true);
+      if (m) {
+        if (m !== foe) this.fight(m, false);
+        return;
+      }
+    }
     // (no way to get at the one they're after, for now: rather someone else)
-    const stuck = this.noWayT > 0 && !this.grips.some((g) => isGun(g.item)) ? foe : null;
+    const stuck = this.noWayT > 0 && !gun ? foe : null;
     const e = nearestEnemy(this, c.x, c.y, SCAN.sight, stuck);
     if (e && e !== foe) {
       const up = !!foe && stillUp(foe);
@@ -2154,15 +2221,17 @@ export class Human extends Entity implements Holder {
       if (swap) this.fight(e, false);
     }
     // nobody of the other side about but their machines (a tank): shot at, with a gun to shoot them with
-    if (!e && !this.foe && this.grips.some((g) => isGun(g.item))) {
+    if (!e && !this.foe && gun) {
       const m = nearestFoe(this, c.x, c.y, SCAN.sight, this.f);
       if (m && isTeamMachine(m)) this.fight(m, false);
     }
     const now = this.foe;
-    if (now instanceof Human && now.grips.length && !this.grips.length && !this.fetch && !this.zombie && Math.abs(now.center().x - c.x) > 2.5) {
-      this.fetch = lyingNear(this.game, c.x, c.y, SCAN.fetch, isWeapon);
-      this.fetchT = 0;
-    }
+    if (!now || this.fetch || this.zombie) return;
+    const own = this.ownGun;
+    if (!this.grips.length && own && !own.destroyed && !own.holder && Math.hypot(own.main.x - c.x, own.main.y - c.y) < SCAN.regrab) this.fetch = own;
+    else if (now instanceof Human && now.grips.length && !this.grips.length && Math.abs(now.center().x - c.x) > 2.5) this.fetch = lyingNear(this.game, c.x, c.y, SCAN.fetch, isWeapon);
+    else if (isTeamMachine(now) && gun && !breaksArmour(gun)) this.fetch = lyingNear(this.game, c.x, c.y, SCAN.arms, isLauncher);
+    this.fetchT = 0;
   }
 
   /**
@@ -2227,15 +2296,58 @@ export class Human extends Entity implements Holder {
     }
     const dx = foe.center().x - c.x;
     const dir = Math.sign(dx) || this.f;
-    const gun = this.grips.find((g) => isGun(g.item))?.item as (Item & { fire(): void }) | undefined;
-    if (gun) return this.gunfight(gun, foe, Math.abs(dx), dir, dt);
-    const held = this.grips[0]?.item ?? null;
-    // (empty-handed against someone armed: the weapon lying close by they're going for)
-    if (!held && this.fetch) {
+    // (on a side: one of their own just ahead on the way, looked for a few times a second)
+    if ((this.rankT -= dt) <= 0) {
+      this.rankT = RANKS.every;
+      this.crowded = false;
+      this.rank = this.team ? this.rankAhead(dir, Math.abs(dx)) : -1;
+    }
+    // (a weapon lying about they're going for: empty-handed against someone armed, their own gun, a launcher against a tank)
+    if (this.fetch) {
       const s = this.fetching(c, dt);
       if (s !== null) return s;
     }
-    return this.melee(held, foe, Math.abs(dx), dir, dt);
+    const gun = this.grips.find((g) => isGun(g.item))?.item as (Item & { fire(): void }) | undefined;
+    if (gun) return this.gunfight(gun, foe, Math.abs(dx), dir, dt);
+    return this.melee(this.grips[0]?.item ?? null, foe, Math.abs(dx), dir, dt);
+  }
+
+  /**
+   * In a line of battle: one of their own side standing ahead of them on the way
+   * to the foe (`dir`, `ad` m off). They come up no nearer than RANKS keeps them
+   * (and what they hold out ahead) from them, slowing as they near that, rather
+   * than shove into them; so near that what they hold pokes into one standing
+   * still, they step back (see crowded). The most speed they may go on toward
+   * the foe at (m/s), or -1: as fast as they like.
+   */
+  private rankAhead(dir: number, ad: number): number {
+    const c = this.L('upperTorso').part;
+    let ahead = 0;
+    for (const g of this.grips) {
+      const p = g.item.main;
+      ahead = Math.max(ahead, (p.x - c.x) * dir + (p.w * PX) / 2);
+    }
+    ahead = Math.min(ahead, 1.6);
+    const room = Math.max(RANKS.room, ahead + RANKS.clear);
+    let most = -1;
+    for (const a of onSide(this.game, this.team!)) {
+      // (where they were a moment ago, near enough to look closer)
+      if (a.e === this || !(a.e instanceof Human) || Math.abs(a.x - c.x) > room + RANKS.slow + 1) continue;
+      const o = a.e.L('upperTorso').part;
+      const s = (o.x - c.x) * dir;
+      if (a.e.state !== 'stand' || s <= 0.05 || s > Math.min(room + RANKS.slow, ad) || Math.abs(o.y - c.y) > 1) continue;
+      // (their pace, and a little more the further off they are)
+      const v = o.vx * dir;
+      const may = Math.max(0, v + Math.max(0, s - room) * RANKS.close);
+      most = most < 0 ? may : Math.min(most, may);
+      if (v < 0.3 && v > -0.3 && s < Math.max(RANKS.near, ahead + RANKS.poke)) this.crowded = true;
+    }
+    return most;
+  }
+
+  /** On toward the foe that way (`dir`) at `speed` (m/s): in a line of battle, no faster than the one of their own ahead lets them (see rankAhead()). */
+  private onward(dir: number, speed: number): number {
+    return dir * (this.rank < 0 ? speed : Math.min(speed, this.rank));
   }
 
   /** How much higher (m) the foe stands than they do: the lowest of each (the feet, or whatever they lie on). */
@@ -2264,11 +2376,17 @@ export class Human extends Entity implements Holder {
   private fetching(c: Part, dt: number): number | null {
     const it = this.fetch!;
     this.fetchT += dt;
-    if (it.destroyed || it.holder || this.fetchT > 5) {
+    if (it.destroyed || it.holder || this.fetchT > 8) {
       this.fetch = null;
       return null;
     }
     const dx = it.main.x - c.x;
+    // (whatever they held tossed aside behind them a step or two before: it'd wedge in by the new one, or trip them)
+    if (Math.abs(dx) < LET_GO && this.grips.length) {
+      const held = this.grips.map((g) => g.item);
+      this.dropAll();
+      for (const h of held) for (const p of h.parts) if (!p.destroyed && !p.frozen) p.body.setLinvel({ x: -Math.sign(dx) * 2.5, y: 1.5 }, true);
+    }
     if (Math.abs(dx) > 0.4) return Math.sign(dx) * GAIT.run * this.rush;
     // (stooping for it is left out: it's in hand)
     this.fetch = null;
@@ -2317,7 +2435,7 @@ export class Human extends Entity implements Holder {
       this.combo = false;
       // (a moment's wait once there, different every time: two coming together don't strike as one)
       if (this.blowT < 0.1) this.blowT = 0.1 + Math.random() * 0.5;
-      return dir * (ad > ready + 1.5 ? GAIT.run : GAIT.walk) * this.rush;
+      return this.onward(dir, (ad > ready + 1.5 ? GAIT.run : GAIT.walk) * this.rush);
     }
     if (dir !== this.f) {
       this.turn();
@@ -2333,10 +2451,10 @@ export class Human extends Entity implements Holder {
         this.backstep = true;
         return -dir * FIGHT.back * this.rush;
       }
-      return ad > ready + 0.2 ? dir * GAIT.walk * 0.6 * this.rush : 0;
+      return ad > ready + 0.2 ? this.onward(dir, GAIT.walk * 0.6 * this.rush) : 0;
     }
     // stepping in to strike (the foe in the way counts as near enough: walking on, they'd stop short of them)
-    if (ad > strike + 0.1 && !(ad < strike + 0.6 && this.blockedAhead() && this.ofFoe(this.blocker))) return dir * GAIT.walk * this.rush;
+    if (ad > strike + 0.1 && !(ad < strike + 0.6 && this.blockedAhead() && this.ofFoe(this.blocker))) return this.onward(dir, GAIT.walk * this.rush);
     // too near to swing a weapon at: a step back first (if there's room behind)
     if (held && ad < strike - 0.4 && this.backClear) {
       this.backstep = true;
@@ -2493,17 +2611,19 @@ export class Human extends Entity implements Holder {
     // (its own range if it has one, kept clear of a blast made bigger in Edit gun…)
     const [near, own] = RANGE[gun.def.id] ?? (clear ? [0, Math.max(FIGHT.shoot, clear + 2)] : RANGE_ANY);
     const far = Math.max(own, clear + 2);
-    // beyond its range: in until well inside it (no way on to them: shot at from where they are)
+    // beyond its range: in until well inside it (no way on to them, or one of their own
+    // stopped just ahead in a line of battle: shot at from where they are)
     if (ad > far) this.closing = true;
     else if (ad < far - 1) this.closing = false;
-    if (this.closing && !this.noWay(dir)) return dir * (ad > far + 2 ? GAIT.run : GAIT.walk) * this.rush;
+    if (this.closing && !this.noWay(dir) && !(this.rank >= 0 && this.rank < 0.3)) return this.onward(dir, (ad > far + 2 ? GAIT.run : GAIT.walk) * this.rush);
     if (dir !== this.f) {
       this.turn();
       return 0;
     }
     this.shoot(gun, foe, dt);
-    // too near for it: a few steps back, still facing them (right on top of them, they just shoot)
-    if (ad < near && ad > 1.2) {
+    // too near for it: a few steps back, still facing them (right on top of them, they just
+    // shoot); and in a line of battle, back from one of their own close in front, to make room
+    if ((ad < near && ad > 1.2) || this.crowded) {
       this.backstep = true;
       return -dir * FIGHT.back * this.rush;
     }
@@ -2513,8 +2633,8 @@ export class Human extends Entity implements Holder {
   /**
    * Aims at the foe (the body mostly, now and then the head; where they'll be by
    * the time the shot gets there, and above them for a slow shot that drops on its
-   * way) and fires once the gun has been steady on them a moment, unless one of
-   * their own side is in the line of fire.
+   * way) and fires once the gun has been steady on them a moment: on a side, past
+   * their own in the way (see clearToFire()).
    */
   private shoot(gun: Item & { fire(): void }, foe: Entity, dt: number): void {
     const m = gun.main;
@@ -2545,7 +2665,7 @@ export class Human extends Entity implements Holder {
     const err = Math.abs(off);
     this.aimT = err < SHOT.steady ? this.aimT + dt : 0;
     if (this.shotT > 0 || err > SHOT.fire || this.aimT < this.aimNeed) return;
-    if (this.friendInWay(gun, Math.hypot(x, y) + 0.3)) {
+    if (!this.clearToFire(gun, tx, ty, Math.hypot(x, y) + 0.3)) {
       this.shotT = 0.15;
       return;
     }
@@ -2567,6 +2687,96 @@ export class Human extends Entity implements Holder {
       if (p.name === 'Chest' || p.name === 'Upper torso') body = p;
     }
     return body;
+  }
+
+  /**
+   * Whether to fire now, aimed at (tx, ty), `range` m off. On a side, a shot that
+   * flies (bullets, a beam, a rocket, a bolt: see Firearm.flies) is fired past
+   * their own side in the way, as if from beside them (see Firearm.firePast(),
+   * and Tank.clear()); but an explosive one is held while one of their own is
+   * within its blast of where it would go off (on the foe, the first of the enemy
+   * in the way, or whatever else it would meet first), or while anything flies
+   * fast by the muzzle; and a flame or a jolt while one of them is in the way.
+   */
+  private clearToFire(gun: Item, tx: number, ty: number, range: number): boolean {
+    if (!this.team) return true;
+    const g = gun as Item & { flies?: boolean; firePast?(by: Entity, pass: Passing): void; standOff?(): number };
+    if (!g.flies || !g.firePast) return !this.friendInWay(gun, range);
+    const m = gun.main;
+    const dir = this.f;
+    const reach = (tx - m.x) * dir;
+    // (a launcher's blast: as far as it keeps from it, round where it lands, or on the first of the enemy in the way)
+    const blast = g.standOff?.() ?? 0;
+    if (blast && !blastClear(this.game, this.team, m.x, m.y, { x: tx, y: ty }, blast, (e) => e === this)) return false;
+    // (nor into the rocket of one of their own going by, or what a blast flings about: it'd go off on it, or in its blast)
+    if (blast && this.flyingBy(m)) return false;
+    const past: Passing = { parts: [], d: 0, side: this.team };
+    for (const a of onSide(this.game, this.team)) {
+      if (a.e === this) continue;
+      const s = (a.x - m.x) * dir;
+      if (s < -1 || s > reach + 1) continue;
+      // (gone through as far as the far end of them: what they hold out ahead, a tank's gun; a shot's tail clear of it)
+      for (const e of [a.e, ...a.e.attachedEntities()]) {
+        for (const p of e.parts) {
+          if (p.destroyed) continue;
+          past.parts.push(p);
+          past.d = Math.max(past.d, (p.x - m.x) * dir + (Math.max(p.w, p.h) * PX) / 2 + 0.5);
+        }
+      }
+    }
+    // (and on the first thing it'd meet short of them: the dead, what a blast flings about, the
+    // ground; none of their own within the blast of it, and unless it's the enemy, the shooter not either)
+    const hit = blast ? this.firstInWay(gun, range, past.parts) : null;
+    if (hit && Math.hypot(hit.x - tx, hit.y - ty) > 1.5) {
+      const foe = !!hit.e && enemies(this, (hit.e as Entity & { holder?: Entity | null }).holder ?? hit.e);
+      if ((!foe && Math.hypot(hit.x - m.x, hit.y - m.y) < blast) || !blastClear(this.game, this.team, m.x, m.y, hit, blast, (e) => e === this)) return false;
+    }
+    g.firePast(this, past);
+    return true;
+  }
+
+  /** Where a round fired now would first meet something along the barrel, and what (null: the ground), out to `range` m, going through `past` (their own side: see clearToFire()) and their side's rounds on their way; null if nothing. */
+  private firstInWay(gun: Item, range: number, past: Part[]): { x: number; y: number; e: Entity | null } | null {
+    const m = gun.main;
+    const f = gun.forward();
+    const ray = (this.fireRay ??= new RAPIER.Ray({ x: 0, y: 0 }, { x: 1, y: 0 }));
+    const skip = new Set(past);
+    const pass = (c: RAPIER.Collider): boolean => {
+      if (c.isSensor()) return false;
+      const p = this.game.physics.partOf(c);
+      return !p || !(p.destroyed || p.entity === this || p.entity === gun || skip.has(p) || (p.entity as { firedFor?: unknown }).firedFor === this.team);
+    };
+    // (along the middle of the round and either side of it: it's as thick as a rocket)
+    let d = Infinity;
+    let e: Entity | null = null;
+    for (const k of [0, 0.15, -0.15]) {
+      ray.origin = { x: m.x - f.y * k, y: m.y + f.x * k };
+      ray.dir = f;
+      const hit = this.game.physics.world.castRay(ray, range, true, undefined, undefined, undefined, undefined, pass);
+      if (!hit || hit.timeOfImpact >= d) continue;
+      d = hit.timeOfImpact;
+      e = this.game.physics.partOf(hit.collider)?.entity ?? null;
+    }
+    return d < Infinity ? { x: m.x + f.x * d, y: m.y + f.y * d, e } : null;
+  }
+
+  /**
+   * Is anything flying fast near the muzzle (`m`, within FLYING_BY): the rocket of
+   * one of their own going by from behind, or just gone on ahead, bodies and bits
+   * flung by a blast? A round fired now would come out into it, be caught up by
+   * it, or be set off by its blast.
+   */
+  private flyingBy(m: Part): boolean {
+    const ball = (this.muzzleBall ??= new RAPIER.Ball(FLYING_BY));
+    let near = false;
+    this.game.physics.world.intersectionsWithShape({ x: m.x, y: m.y }, 0, ball, (c) => {
+      const q = this.game.physics.partOf(c);
+      if (!q || q.destroyed || q.entity === this || (q.entity as { holder?: unknown }).holder) return true;
+      const v = q.body.linvel();
+      near = v.x * v.x + v.y * v.y > 64;
+      return !near;
+    });
+    return near;
   }
 
   /** Is anyone on their side in the line of fire, out to `range` m (see Teams)? */

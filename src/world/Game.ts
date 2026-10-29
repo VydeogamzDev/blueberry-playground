@@ -41,8 +41,17 @@ export interface GameHooks {
 export interface NetRole {
   /** Joined someone else's game: the world shown is theirs, copied, not simulated here. */
   readonly guest: boolean;
+  /** This screen's player's number (the host is 1; a guest's is 0 until the host has said). */
+  readonly me: number;
   /** A guest's step: where everything should be now (the host's poses, a moment ago). */
   pose(dt: number): void;
+  /** Where another player's pointer is, as they last said (the host hears its guests'); null if it isn't known. */
+  cursorOf?(player: number): Pointer | null;
+}
+
+/** A player's pointer in the sandbox (see Game.cursorOf()): where it is (world m), and their view's zoom (screen px per m). */
+export interface Pointer extends V2 {
+  zoom: number;
 }
 
 /** Central hub: owns the world, systems, entity list and the fixed-step loop. */
@@ -114,10 +123,16 @@ export class Game {
   /**
    * Where the player's pointer is in the sandbox (world metres), as of the last
    * frame (Controls sets it): what a mouse-guided missile steers for and a
-   * seeker looks through. Null until there's a pointer. In a multiplayer game
-   * it's the host's own (guests simulate nothing).
+   * seeker looks through. Null until there's a pointer. It's this screen's
+   * player's own: what follows a player's pointer asks cursorOf() for theirs.
    */
   cursor: V2 | null = null;
+  /**
+   * The player whose doing is being done now (their number): 1, the host's own
+   * or playing alone, or a guest's while the host does what they asked (see
+   * net/Host). What's aimed with a pointer remembers whose it is (cursorOf()).
+   */
+  actor = 1;
   /** Length of a physics step (s): FIXED_DT, or COARSE_DT while the scene is too heavy for real time (see pickStep()). */
   stepDt = FIXED_DT;
   /** Always the long step (Settings > Graphics' lightest physics), rather than the short one while the scene allows. */
@@ -393,6 +408,21 @@ export class Game {
   /** A blast or a gunshot at (x, y): anything within `radius` m that can hear it reacts (animals run). */
   alarm(x: number, y: number, radius: number): void {
     for (const e of this.entities) if (!e.destroyed) e.onAlarm(x, y, radius);
+  }
+
+  /**
+   * Where player `player`'s pointer is, with their view's zoom (what a seeker's
+   * gate covers on their screen goes by it): this screen's player's own (see
+   * cursor), or in a hosted game a guest's, as they last said. Null if it isn't
+   * known (no pointer yet, or they've left).
+   */
+  cursorOf(player: number): Pointer | null {
+    const net = this.net;
+    if (!net || player === net.me) {
+      const c = this.cursor;
+      return c && { x: c.x, y: c.y, zoom: this.renderer.zoom };
+    }
+    return net.cursorOf?.(player) ?? null;
   }
 
   /** Schedules an entity for removal (safe to call mid-step). */

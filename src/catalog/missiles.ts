@@ -5,7 +5,7 @@ import { PixelArt } from '../art/PixelArt';
 import * as A from '../art/missiles';
 import { seeThrough, wreckOf } from '../art/vehicles';
 import { artRect, densityFor } from '../entities/Item';
-import { Missile, MouseLauncher, SpikeLauncher, type MissileSpec } from '../entities/Missiles';
+import { Missile, MouseLauncher, SpikeLauncher, WARHEADS, type MissileSpec } from '../entities/Missiles';
 import { MissileCarrier } from '../entities/M113';
 import type { CarConfig, SeatSpec } from '../entities/Car';
 import type { CannonSpec } from '../entities/Tank';
@@ -35,24 +35,52 @@ function polyArea(pts: Pt[]): number {
 }
 
 /**
- * How each missile flies: the mouse-guided one a little slower and handier, to
- * be steered by hand; the Spike faster, coming down on its target from above.
+ * How each standard missile flies: the mouse-guided one a little slower and
+ * handier, to be steered by hand; the Spike faster, coming down on its target
+ * from above.
  */
 const SPECS: Record<A.MissileKind, MissileSpec> = {
-  guided: { cruise: 24, accel: 40, turn: 4.6, burn: 8, loft: false },
-  spike: { cruise: 30, accel: 45, turn: 4.6, burn: 8, loft: true },
+  guided: { cruise: 24, accel: 40, turn: 4.6, burn: 8, loft: false, warhead: WARHEADS.standard },
+  spike: { cruise: 30, accel: 45, turn: 4.6, burn: 8, loft: true, warhead: WARHEADS.standard },
 };
 
-/** A missile of `kind` (not in the toybox). */
-function missile(id: string, name: string, kind: A.MissileKind): ItemDef {
-  const art = lazyArt(() => A.missileArt(kind));
-  const shapes: ShapeSpec[] = [{ kind: 'box', w: A.MISSILE.w - 2, h: A.MISSILE.body, r: 0.8 }];
+/**
+ * A version's (see A.MissileVersion): the cruise missile's motor burns four
+ * times as long, its warhead twice the standard's; a Strike's small missiles
+ * are a little quicker and handier, their motors burn out sooner, and their
+ * warheads are half the standard's.
+ */
+function specOf(kind: A.MissileKind, version: A.MissileVersion): MissileSpec {
+  const s = SPECS[kind];
+  if (version === 'cruise') return { ...s, burn: s.burn * 4, warhead: WARHEADS.cruise };
+  if (version === 'strike') return { ...s, cruise: s.cruise + 2, accel: s.accel * 1.2, turn: s.turn * 1.15, burn: s.burn * 0.6, warhead: WARHEADS.strike };
+  return s;
+}
+
+/** Each version's weight (kg). */
+const MISSILE_KG: Record<A.MissileVersion, number> = { standard: 3, cruise: 5, strike: 1 };
+
+/** A missile of `kind` and `version` (not in the toybox). */
+function missile(id: string, name: string, kind: A.MissileKind, version: A.MissileVersion): ItemDef {
+  const art = lazyArt(() => A.missileArt(kind, version));
+  const size = A.MISSILES[version];
+  const shapes: ShapeSpec[] = [{ kind: 'box', w: size.w - 2, h: size.body, r: 0.8 }];
+  const spec = specOf(kind, version);
   const def: ItemDef = register({
     id, name, category: 'Weapons', description: 'A guided missile in flight.', tags: [], hidden: true,
     preview: previewOf(art),
-    create: (game, x, y, opts) => new Missile(game, def, kind, SPECS[kind], art(), shapes, densityFor(3, shapes), x, y, opts),
+    create: (game, x, y, opts) => new Missile(game, def, kind, version, spec, art(), shapes, densityFor(MISSILE_KG[version], shapes), x, y, opts),
   });
   return def;
+}
+
+/** Each version of a kind's missile: the standard one keeps its first id (`missile-guided`, `missile-spike`). */
+function missiles(kind: A.MissileKind, name: string): Record<A.MissileVersion, ItemDef> {
+  return {
+    standard: missile(`missile-${kind}`, `${name} Missile`, kind, 'standard'),
+    cruise: missile(`missile-${kind}-cruise`, `${name} Cruise Missile`, kind, 'cruise'),
+    strike: missile(`missile-${kind}-strike`, `${name} Strike Missile`, kind, 'strike'),
+  };
 }
 
 /** The launcher on its bipod: one convex piece from the baseplate's foot up the tube to its muzzle. */
@@ -70,15 +98,15 @@ function launcherCfg(kind: A.MissileKind, vertical: boolean): PropConfig {
   return { art: lazyArt(() => A.launcherArt(kind, true)), material: MAT.metal, shapes: MORTAR_SHAPES, density, angularDamping: 0.3 };
 }
 
-/** A guided launcher's item: normal or vertical by its config (see GuidedLauncher.setVertical()). */
-function launcher(id: string, name: string, kind: A.MissileKind, round: ItemDef, make: typeof MouseLauncher | typeof SpikeLauncher, description: string, tags: string[]): void {
+/** A guided launcher's item: normal or vertical by its config (see GuidedLauncher.setVertical()), firing `rounds` by version. */
+function launcher(id: string, name: string, kind: A.MissileKind, rounds: Record<A.MissileVersion, ItemDef>, make: typeof MouseLauncher | typeof SpikeLauncher, description: string, tags: string[]): void {
   const normal = launcherCfg(kind, false);
   const vertical = launcherCfg(kind, true);
   const def: ItemDef = register({
     id, name, category: 'Weapons', description, tags,
     preview: previewOf(normal.art),
     halfHeight: (A.MORTAR.h * PX) / 2,
-    create: (game, x, y, opts) => new make(game, def, opts.config?.vertical === true ? vertical : normal, kind, round, x, y, opts),
+    create: (game, x, y, opts) => new make(game, def, opts.config?.vertical === true ? vertical : normal, kind, rounds, x, y, opts),
   });
 }
 
@@ -113,7 +141,8 @@ const M113_PIECES: Pt[][] = [
   ...trackEnds(),
 ];
 
-function m113(round: ItemDef): void {
+function m113(rounds: Record<A.MissileVersion, ItemDef>): void {
+  const round = rounds.standard;
   const body = lazyArt(A.m113Art);
   const wreck = lazyArt(() => wreckOf(body()));
   // (the front layer over the commander is the hull, down to the track)
@@ -150,24 +179,31 @@ function m113(round: ItemDef): void {
   const def: ItemDef = register({
     id: 'm113', name: 'M113A1 Missile Carrier', category: 'Vehicles', tags: ['vehicle', 'apc', 'm113', 'm901', 'tow', 'missile', 'launcher', 'army', 'military', 'tracks', 'usa', 'american'],
     description: 'The M113A1 armoured personnel carrier with a missile launcher raised on its roof. Select it to drive it with A and D, and raise or lower the launcher with W and S. ' +
-      'Use fires a missile you steer with the cursor; put it on a team and its crew find the nearest enemy and fire missiles that guide themselves onto it. Its thin aluminium armour won\'t stand much.',
+      'Use fires a missile you steer with the cursor; put it on a team and its crew find the nearest enemy and fire missiles that guide themselves onto it. Its menu picks the missile: standard, cruise or a Strike of five. ' +
+      'Its thin aluminium armour won\'t stand much.',
     preview: previewOf(preview),
     // from the hull's middle down to the bottom of its wheels
     halfHeight: (Math.max(...D.axles.map(([, ay]) => ay)) + 0.5 - D.h / 2 + D.r) * PX,
-    create: (game, x, y, opts) => new MissileCarrier(game, def, cfg, gun, round, x, y, opts),
+    create: (game, x, y, opts) => new MissileCarrier(game, def, cfg, gun, rounds, x, y, opts),
   });
 }
 
+/** What every launcher's menu says of its missiles (see A.MissileVersion). */
+const VERSIONS_TOLD = 'Its menu picks the missile: the standard one; a cruise missile, its motor burning four times as long and its warhead twice as big; ' +
+  'or a Strike, five small missiles at one launch that never hit each other. Burnt out, a missile still steers as it falls.';
+
 export function registerMissiles(): void {
-  const guided = missile('missile-guided', 'Guided Missile', 'guided');
-  const spike = missile('missile-spike', 'Spike Missile', 'spike');
+  const guided = missiles('guided', 'Guided');
+  const spike = missiles('spike', 'Spike');
   launcher('guided-launcher', 'Guided Missile Launcher', 'guided', guided, MouseLauncher,
     'An anti-tank missile on a squat launch tube. Activate (F) to fire: the dark green missile flies wherever the cursor is, turning as you move it, and blows up on what it hits, wrecking a car outright. ' +
-    'Turn it to aim the tube (drag it and press A or D). Vertical launch, in its menu, puts it in a launch cell that throws the missile straight up, turns it over and then lights its motor.',
-    ['missile', 'launcher', 'atgm', 'guided', 'wire', 'tow', 'anti-tank', 'mortar', 'vls']);
+    'Turn it to aim the tube (drag it and press A or D). Vertical launch, in its menu, puts it in a launch cell that throws the missile straight up, turns it over and then lights its motor. ' +
+    VERSIONS_TOLD + ' A Strike\'s five spread out round the cursor.',
+    ['missile', 'launcher', 'atgm', 'guided', 'wire', 'tow', 'anti-tank', 'mortar', 'vls', 'cruise', 'strike', 'salvo']);
   launcher('spike-launcher', 'Spike LR-II', 'spike', spike, SpikeLauncher,
-    'A fire-and-forget anti-tank missile. Hold F to switch its seeker on, and keep the small square in the middle of the reticle on a vehicle, a person or an animal until it locks on; then let go of F to fire. ' +
-    'The white missile flies itself to the target, over or round what\'s in the way, and comes down on it from above. Let go before it locks and nothing fires. Vertical launch is in its menu.',
-    ['missile', 'launcher', 'atgm', 'spike', 'fire and forget', 'seeker', 'lock', 'anti-tank', 'mortar', 'vls', 'israel']);
+    'A fire-and-forget anti-tank missile. Hold F to switch its seeker on: it tracks what\'s inside the reticle\'s square, and its small square goes on the vehicle, person or animal nearest the middle; ' +
+    'keep that in the square until it locks on, then let go of F to fire. The white missile flies itself to the target, over or round what\'s in the way, and comes down on it from above. ' +
+    'Let go before it locks and nothing fires. Vertical launch is in its menu. ' + VERSIONS_TOLD + ' A Strike\'s five go after the locked target and the others in the square, marked by small squares.',
+    ['missile', 'launcher', 'atgm', 'spike', 'fire and forget', 'seeker', 'lock', 'anti-tank', 'mortar', 'vls', 'israel', 'cruise', 'strike', 'salvo']);
   m113(guided);
 }

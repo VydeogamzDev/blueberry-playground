@@ -2,6 +2,7 @@ import { RAPIER } from '../engine/Physics';
 import { Entity } from '../world/Entity';
 import { MAT } from '../world/Materials';
 import { PK } from '../systems/Particles';
+import { allies } from '../systems/Teams';
 import { Firearm, type GunSpec } from './Firearm';
 import { WARHEAD_SHOWS, rpgArt } from '../art/ordnance';
 import type { HoldSpec } from './Item';
@@ -13,6 +14,7 @@ import type { ExplosionOpts } from '../systems/Explosions';
 import type { ValueEditor } from '../tools/Controls';
 import type { V2 } from '../engine/math';
 import type { ContextAction, DamageKind, ItemDef, SpawnOptions } from '../world/types';
+import type { Passing } from './Tank';
 
 /**
  * The middle of the rocket sitting in the loaded launcher, and the back of the
@@ -35,6 +37,8 @@ const BURN_GRAVITY = 0.25;
 const MAX_FLIGHT = 6;
 /** How far (m) a rocket goes before it can hit the launcher it came out of, or whoever holds that. */
 const CLEAR = 2.5;
+/** The longest (s) it goes through the side of the soldier who fired it (see Rocket.launch()). */
+const PASS_MOST = 2;
 /** Seconds the next rocket takes to slide into the tube, at the end of the reload (its sound's clunk is as it seats). */
 const SLIDE = 0.6;
 /** The stock warhead's blast (Edit gun…'s Power scales it: see blastFor()). */
@@ -129,12 +133,12 @@ export class RocketLauncher extends Firearm {
     // where it isn't pointed (it flies the way it faces), only its speed forward adds on
     const v = p.velocityAt(at.x, at.y);
     const speed = g.speed + Math.max(0, v.x * fwd.x + v.y * fwd.y);
-    // it leaves through the launcher and past whoever holds it
+    // it leaves through the launcher and past whoever holds it (and a soldier's, past their own side in the way)
     const own = this.holder ? [...this.parts, ...this.holder.parts] : this.parts;
-    rocket.launch(own, fwd.x * speed, fwd.y * speed, blastFor(g.damage));
+    rocket.launch(own, fwd.x * speed, fwd.y * speed, blastFor(g.damage), this.passing()?.pass);
     // nearly recoilless: the back-blast takes most of the kick, a light shove is left
     if (!p.frozen) p.body.applyImpulseAtPoint({ x: -fwd.x * g.recoil, y: -fwd.y * g.recoil }, this.gripWorld() ?? at, true);
-    this.backBlast(fwd);
+    this.backBlast(fwd, !!this.passing());
     // the rocket pops out of the muzzle in a puff
     const ps = game.particles;
     const m = { x: at.x + fwd.x * 0.25, y: at.y + fwd.y * 0.25 };
@@ -146,8 +150,12 @@ export class RocketLauncher extends Firearm {
     game.alarm(at.x, at.y, 30);
   }
 
-  /** Flame, a flash and a cloud of smoke out of the back of the tube, and a shove for whatever stands just behind it. */
-  private backBlast(fwd: V2): void {
+  /**
+   * Flame, a flash and a cloud of smoke out of the back of the tube, and a shove
+   * for whatever stands just behind it (a soldier's: not their own side, who stand
+   * beside them, as a side-on view can't show: see Firearm.firePast()).
+   */
+  private backBlast(fwd: V2, soldier: boolean): void {
     const game = this.game;
     const ps = game.particles;
     const b = this.main.pixelToWorld(VENTURI[0], VENTURI[1]);
@@ -171,9 +179,12 @@ export class RocketLauncher extends Firearm {
     // (sparks that can light oil they're blown across)
     ps.sparks(b.x, b.y, -fwd.x, -fwd.y, 8, 7);
     const behind: Part[] = [];
+    const side = soldier ? this.holder : null;
     game.physics.world.intersectionsWithShape({ x: b.x - fwd.x * 0.8, y: b.y - fwd.y * 0.8 }, 0, new RAPIER.Ball(0.9), (c) => {
       const q = game.physics.partOf(c);
-      if (q && !q.destroyed && !q.frozen && q.entity !== this && q.entity !== this.holder) behind.push(q);
+      if (!q || q.destroyed || q.frozen || q.entity === this || q.entity === this.holder) return true;
+      const e = q.entity as Entity & { holder?: Entity | null };
+      if (!side || !(allies(side, e) || (!!e.holder && allies(side, e.holder)))) behind.push(q);
       return true;
     });
     for (const q of behind) {
@@ -232,6 +243,10 @@ export class Rocket extends Entity {
   private spent = false;
   /** Where it left the tube (see CLEAR). */
   private start: V2 | null = null;
+  /** How far on (m, across) it goes through the side of the soldier who fired it (see launch()). */
+  private passD = 0;
+  /** That side, whose soldiers' bullets don't meet it (see Passing). */
+  firedFor: string | null = null;
   /** Where its tail was a step ago: the trail is laid along the way from there. */
   private tail: V2 | null = null;
 
@@ -244,10 +259,16 @@ export class Rocket extends Entity {
     });
   }
 
-  /** Sends it off at (vx, vy) with its motor lit, passing through `own` (the launcher and its holder) and going off with `blast`. */
-  launch(own: Part[], vx: number, vy: number, blast: ExplosionOpts): void {
+  /**
+   * Sends it off at (vx, vy) with its motor lit, passing through `own` (the
+   * launcher and its holder) and going off with `blast`. A soldier on a side
+   * fires it `past` their own side in the way (see Firearm.firePast()).
+   */
+  launch(own: Part[], vx: number, vy: number, blast: ExplosionOpts, past?: Passing): void {
     const p = this.main;
-    p.setNoCollide(own);
+    p.setNoCollide(past?.parts.length ? [...own, ...past.parts] : own);
+    this.passD = past?.d ?? 0;
+    this.firedFor = past?.side ?? null;
     p.body.setLinvel({ x: vx, y: vy }, true);
     p.body.setGravityScale(BURN_GRAVITY, true);
     this.blast = blast;
@@ -266,8 +287,9 @@ export class Rocket extends Entity {
       this.detonate();
       return;
     }
-    // clear of what fired it, it can come down on it like on anything else
-    if (p.noCollide && (!this.start || this.age > 1.5 || Math.hypot(p.x - this.start.x, p.y - this.start.y) > CLEAR)) p.setNoCollide(null);
+    // clear of what fired it (and past its side), it can come down on it like on anything else
+    const passing = !!this.start && this.age < PASS_MOST && Math.abs(p.x - this.start.x) < this.passD;
+    if (p.noCollide && !passing && (!this.start || this.age > 1.5 || Math.hypot(p.x - this.start.x, p.y - this.start.y) > CLEAR)) p.setNoCollide(null);
     const v = p.body.linvel();
     if (v.x * v.x + v.y * v.y > 1) {
       p.body.setRotation(Math.atan2(v.y * p.flip, v.x * p.flip), false);

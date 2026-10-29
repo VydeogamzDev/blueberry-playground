@@ -22,7 +22,8 @@ const RENDERER = { la: 'addLight', sh: 'shake' } as const;
 const PROJECTILES = { bf: 'fire', bm: 'drawBeam' } as const;
 const CASINGS = { ce: 'eject' } as const;
 const STAINS = { st: 'add', sc: 'clear' } as const;
-const PAINT = { pp: 'paintPixel', pa: 'paintAtPixel', pc: 'carve' } as const;
+/** (and mended: whole and clean again, a limb's chunks filled in by Regen, a thing repaired) */
+const PAINT = { pp: 'paintPixel', pa: 'paintAtPixel', pc: 'carve', pr: 'repair' } as const;
 
 type Wrapped = { target: object; name: string; own: boolean; orig: unknown };
 
@@ -219,6 +220,7 @@ export class FxPlayer {
       case 'pp': this.part(a[1] as PartRef)?.paintPixel(n(2), n(3), n(4), a[5] as number | undefined); break;
       case 'pa': this.part(a[1] as PartRef)?.paintAtPixel(n(2), n(3), n(4), a[5] as number | undefined, a[6] as number | undefined); break;
       case 'pc': if (Array.isArray(a[2])) this.part(a[1] as PartRef)?.carve(a[2] as number[], Array.isArray(a[3]) ? (a[3] as number[]) : []); break;
+      case 'pr': this.part(a[1] as PartRef)?.repair(); break;
     }
   }
 

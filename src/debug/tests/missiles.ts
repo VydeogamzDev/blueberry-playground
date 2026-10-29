@@ -3,12 +3,13 @@ import type { Car } from '../../entities/Car';
 import type { Tank } from '../../entities/Tank';
 import type { Entity } from '../../world/Entity';
 import type { V2 } from '../../engine/math';
-import type { GuidedLauncher, Missile, SpikeLauncher } from '../../entities/Missiles';
+import type { GuidedLauncher, Guide, Missile, SpikeLauncher } from '../../entities/Missiles';
 import type { MissileCarrier } from '../../entities/M113';
+import { STRIKE_COUNT } from '../../entities/Missiles';
 import { saveToString, loadFromString } from '../../world/SaveLoad';
 
-/** The guided missiles: the mouse-guided launcher, the Spike LR-II, vertical launch and the M113 missile carrier. */
-export default function tests({ game, controls, kit }: TestCtx): Test[] {
+/** The guided missiles: the mouse-guided launcher, the Spike LR-II, vertical launch, the missile versions and the M113 missile carrier. */
+export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
   const r = game.renderer;
   /** The missile of `id` in flight (the newest), if any. */
   const flying = (id: string): Missile | undefined => [...game.entities].reverse().find((e) => e.def.id === id && !e.destroyed) as Missile | undefined;
@@ -248,5 +249,212 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       if (top < 6) return `steered at a point 9 m up, it got only ${top.toFixed(1)} m high`;
       return true;
     })],
+    ['extra: missiles: the Spike\'s seeker tracks everything in its square and locks the target nearest the middle (not a wall nearer still); when that leaves the square it drops it and locks the next nearest', () => tidy(() => {
+      kit.reset();
+      const L = kit.spawn('spike-launcher', -16, 0.4) as SpikeLauncher;
+      const a = human(-1.4);
+      const b = human(2.6);
+      const c = human(4.1);
+      wall(0.6, 1.6);
+      kit.advance(1);
+      for (const h of [a, b, c]) h.setFrozen(true);
+      // (the square: 56 screen px each way from the cursor, 4.7 m at this zoom)
+      r.zoom = r.targetZoom = 12;
+      const at = { x: 0, y: 1 };
+      L.setActiveHeld(true);
+      fly(0.2, at);
+      const ids = (L.tracked as { entity: Entity | null }[]).map((s) => (s.entity === a ? 'a' : s.entity === b ? 'b' : s.entity === c ? 'c' : s.entity?.def.id ?? 'ground'));
+      if (ids.slice(0, 3).join() !== 'a,b,c') return `in its square it tracks ${ids.join(', ')} (targets nearest the middle first: a, b, c)`;
+      if (!ids.includes('concrete-block')) return `the wall in the square isn't tracked (${ids.join(', ')})`;
+      if (L.sighted?.entity !== a) return `the gate is on ${L.sighted?.entity?.def.id ?? 'nothing'}, not the person nearest the middle`;
+      fly(0.7, at);
+      if (L.lock?.entity !== a) return `after 0.9 s it has locked on ${L.lock?.entity === b ? 'the second nearest' : L.lock?.entity?.def.id ?? 'nothing'}, not the nearest`;
+      const ac = a.center();
+      if (Math.abs(L.lock.at.x - ac.x) > 0.6) return `locked on the nearest, the gate is at x ${L.lock.at.x.toFixed(2)}, not on them (at ${ac.x.toFixed(2)})`;
+      // the cursor moves on: the locked one is out of the square, the third the nearest now
+      const on = { x: 4.6, y: 1 };
+      fly(0.05, on);
+      if (L.lock?.entity === a) return 'the locked target left the square, and the lock held';
+      if (L.sighted?.entity !== c) return `the target out of the square, the gate went to ${L.sighted?.entity === b ? 'the second' : L.sighted?.entity?.def.id ?? 'nothing'}, not the nearest now`;
+      fly(0.8, on);
+      if (L.lock?.entity !== c) return `0.8 s on, it's locked on ${L.lock?.entity?.def.id ?? 'nothing'}, not the nearest in the square`;
+      L.setActiveHeld(false);
+      if (L.shots !== 1) return `let go of, locked, it fired ${L.shots}`;
+      return true;
+    })],
+    ['extra: missiles: burnt out, a missile glides on, falling but still turning toward its target (one with nothing to steer for falls away)', () => {
+      kit.reset();
+      // (straight ahead while its motor burns; then, burnt out, up and ahead)
+      const aim = { x: -4, y: 16 };
+      const go = (y: number, guide: Guide): Missile => {
+        const m = kit.spawn('missile-guided', -24, y, { angle: 0 }) as Missile;
+        m.launch([], 0, 24, false, guide);
+        return m;
+      };
+      const g = go(16, { kind: 'target', entity: null, part: null, local: { x: 0, y: 0 }, at: { ...aim } });
+      const n = go(30, { kind: 'none' });
+      fly(0.15, null);
+      if (g.phase !== 'boost' || n.phase !== 'boost') return `0.15 s after launch they're not under their motors (${g.phase}, ${n.phase})`;
+      g.burn = n.burn = 0.001;
+      fly(0.05, null);
+      // (read afresh: the steps since changed it)
+      const phase: string = g.phase;
+      if (phase !== 'coast') return `its motor burnt out, it's in ${phase}`;
+      const angle = (m: Missile) => {
+        const v = m.main.body.linvel();
+        return Math.atan2(v.y, v.x);
+      };
+      if (g.guide.kind === 'target') g.guide.at = { x: aim.x, y: aim.y + 5 };
+      const way0 = Math.atan2(aim.y + 5 - g.main.y, aim.x - g.main.x);
+      fly(0.8, null);
+      if (g.destroyed || n.destroyed) return 'a missile went off in the sky';
+      const gw = angle(g);
+      const nw = angle(n);
+      const v = g.main.body.linvel();
+      if (gw < nw + 0.3) return `burnt out, the guided one's way is ${gw.toFixed(2)} rad, the unguided's ${nw.toFixed(2)}: it didn't turn toward its target (${way0.toFixed(2)} rad off)`;
+      if (Math.hypot(v.x, v.y) > 23.5) return `gliding, it's still going ${Math.hypot(v.x, v.y).toFixed(1)} m/s: the air doesn't slow it`;
+      if (nw > -0.3) return `the one with nothing to steer for isn't falling away (its way ${nw.toFixed(2)} rad)`;
+      return true;
+    }],
+    ['extra: missiles: a cruise missile\'s motor burns four times as long as the standard one\'s, and its blast does at least twice the harm', () => {
+      kit.reset();
+      // each sent after a point in the sky it circles round, until its motor burns out
+      const go = (id: string, x: number): Missile => {
+        const m = kit.spawn(id, x, 20, { angle: Math.PI / 2 }) as Missile;
+        m.launch([], Math.PI / 2, 11, false, { kind: 'target', entity: null, part: null, local: { x: 0, y: 0 }, at: { x, y: 28 } });
+        return m;
+      };
+      const s = go('missile-guided', -30);
+      const k = go('missile-guided-cruise', 30);
+      const lit: Record<string, number> = {};
+      const out: Record<string, number> = {};
+      let t = 0;
+      fly(40, null, () => {
+        t += game.stepDt;
+        for (const [name, m] of [['s', s], ['k', k]] as const) {
+          if (m.phase === 'boost' && lit[name] === undefined) lit[name] = t;
+          if (m.phase === 'coast' && lit[name] !== undefined && out[name] === undefined) out[name] = t;
+        }
+        return out.s !== undefined && out.k !== undefined;
+      });
+      if (out.s === undefined || out.k === undefined) return `motors still burning after 40 s (standard ${s.phase}, cruise ${k.phase}${k.destroyed ? ', gone' : ''})`;
+      const bs = out.s - lit.s;
+      const bk = out.k - lit.k;
+      if (Math.abs(bk / bs - 4) > 0.1) return `the standard motor burnt ${bs.toFixed(1)} s, the cruise ${bk.toFixed(1)} s (${(bk / bs).toFixed(2)} times)`;
+      // the blast, a metre and a half over a tank held still (no jet: it struck nothing)
+      kit.reset();
+      const harm = (id: string, x: number): number => {
+        const tank = kit.spawn('tank-abrams', x, 1.5) as Tank;
+        kit.advance(1);
+        tank.setFrozen(true);
+        const hp = tank.body.hp;
+        const m = kit.spawn(id, tank.body.x, tank.body.y + 2.2) as Missile;
+        m.detonate();
+        kit.advance(0.3);
+        return hp - tank.body.hp;
+      };
+      const ws = s.spec.warhead;
+      const wk = k.spec.warhead;
+      if (wk.power !== ws.power * 2 || wk.damage !== ws.damage * 2 || wk.jet !== ws.jet * 2) return `the cruise warhead's power ${wk.power}, damage ${wk.damage}, jet ${wk.jet}: not twice the standard's (${ws.power}, ${ws.damage}, ${ws.jet})`;
+      const hs = harm('missile-guided', -20);
+      const hk = harm('missile-guided-cruise', 20);
+      if (hs <= 0.5) return `the standard blast did the tank no harm (${hs.toFixed(1)} hp)`;
+      if (hk < hs * 2) return `the cruise blast took ${hk.toFixed(1)} hp off a tank, the standard ${hs.toFixed(1)}: not twice as much`;
+      return true;
+    }],
+    ['extra: missiles: a Strike sends out five small missiles that never touch one another, spread round the cursor, and they wreck the car there', () => {
+      kit.reset();
+      const L = kit.spawn('guided-launcher', -12, 0.4) as GuidedLauncher;
+      const car = kit.spawn('car', 7, 0.8) as Car;
+      kit.advance(1);
+      const pick = L.contextActions().find((a) => a.label === 'Missile: Strike (5)');
+      if (!pick) return `no Strike in its menu (${L.contextActions().map((a) => a.label).join(', ')})`;
+      pick.action();
+      if (L.version !== 'strike') return `picked Strike, it fires ${L.version}`;
+      const at = { x: car.body.x, y: car.body.y + 0.3 };
+      game.cursor = at;
+      L.activate();
+      const strike = () => game.entities.filter((e) => e.def.id === 'missile-guided-strike' && !e.destroyed) as Missile[];
+      const five = strike();
+      if (five.length !== STRIKE_COUNT) return `one launch sent out ${five.length} missiles`;
+      if (L.shots !== 1) return `one launch counted ${L.shots} shots`;
+      const last = new Map<Missile, V2>();
+      let apart = 0;
+      let wrongSet = '';
+      fly(4, at, () => {
+        const up = strike();
+        for (const m of up) last.set(m, { x: m.main.x, y: m.main.y });
+        if (up.length === STRIKE_COUNT && game.time > 0) {
+          for (const m of up) {
+            const others = up.filter((o) => o !== m).map((o) => o.main);
+            if (!wrongSet && others.some((o) => !m.main.noCollide?.has(o))) wrongSet = `a missile ${m.age.toFixed(2)} s out would touch another of its five`;
+          }
+          for (const m of up) for (const o of up) apart = Math.max(apart, Math.hypot(m.main.x - o.main.x, m.main.y - o.main.y));
+        }
+        return up.length === 0;
+      });
+      if (wrongSet) return wrongSet;
+      if (strike().length) return `${strike().length} of the five still flying 4 s on`;
+      if (apart < 0.6) return `the five flew as one (at most ${apart.toFixed(2)} m apart)`;
+      const far = [...last.values()].map((p) => Math.hypot(p.x - at.x, p.y - at.y)).filter((d) => d > 3.2);
+      if (far.length) return `${far.length} of the five went off away from the cursor (${far.map((d) => d.toFixed(1)).join(', ')} m)`;
+      kit.advance(0.1);
+      if (!car.wrecked) return `the car under the cursor isn't wrecked (hp ${car.body.hp.toFixed(0)})`;
+      return true;
+    }],
+    ['extra: missiles: a Spike Strike out of a vertical cell sends its five after the locked target and the other in the square (three and two), and wrecks both', () => tidy(() => {
+      kit.reset();
+      const L = kit.spawn('spike-launcher', -12, 0.2, { config: { vertical: true, missile: 'strike' } }) as SpikeLauncher;
+      const near = kit.spawn('car', 5, 0.8) as Car;
+      const other = kit.spawn('car', 10.5, 0.8) as Car;
+      kit.advance(1);
+      if (!L.vertical || L.version !== 'strike') return `spawned vertical with Strike, it's ${L.vertical ? 'vertical' : 'a tube'} firing ${L.version}`;
+      r.zoom = r.targetZoom = 10;
+      const at = { x: near.body.x, y: near.body.y + 0.2 };
+      L.setActiveHeld(true);
+      fly(0.9, at);
+      if (L.lock?.entity !== near) return `locked on ${L.lock?.entity === other ? 'the further car' : L.lock?.entity?.def.id ?? 'nothing'}`;
+      if (!L.tracked.some((s) => s.entity === other)) return 'the second car in the square isn\'t tracked';
+      L.setActiveHeld(false);
+      const five = game.entities.filter((e) => e.def.id === 'missile-spike-strike' && !e.destroyed) as Missile[];
+      if (five.length !== STRIKE_COUNT) return `letting go sent out ${five.length} missiles`;
+      const after = (e: Entity) => five.filter((m) => m.guide.kind === 'target' && m.guide.entity === e).length;
+      if (after(near) !== 3 || after(other) !== 2) return `${after(near)} went after the locked car, ${after(other)} after the other`;
+      fly(5, null, () => !game.entities.some((e) => e.def.id === 'missile-spike-strike' && !e.destroyed));
+      kit.advance(0.1);
+      if (!near.wrecked || !other.wrecked) return `the locked car is ${near.wrecked ? '' : 'not '}wrecked, the other ${other.wrecked ? '' : 'not '}wrecked`;
+      return true;
+    })],
+    ['extra: missiles: the missile picked in a launcher\'s or an M113\'s menu survives save and load, and undo; a Strike\'s vertical cell keeps it when made a tube', () => {
+      kit.reset();
+      const g = kit.spawn('guided-launcher', -6, 0.4) as GuidedLauncher;
+      const s = kit.spawn('spike-launcher', -2, 0.2, { config: { vertical: true } }) as GuidedLauncher;
+      const m = kit.spawn('m113', 6, 1.5) as MissileCarrier;
+      kit.advance(1);
+      controls.history.clear();
+      controls.history.record('Missile');
+      const menu = (e: { contextActions(): { label: string; action(): void; checked?: boolean }[] }, label: string) => e.contextActions().find((a) => a.label === label);
+      menu(g, 'Missile: Cruise')?.action();
+      menu(s, 'Missile: Strike (5)')?.action();
+      menu(m, 'Missile: Strike (5)')?.action();
+      const read = () => {
+        const one = (id: string) => game.entities.find((e) => e.def.id === id && !e.destroyed) as (Entity & { version?: string; vertical?: boolean }) | undefined;
+        return ['guided-launcher', 'spike-launcher', 'm113'].map((id) => `${id}:${one(id)?.version}${one(id)?.vertical ? ':v' : ''}`).join(' ');
+      };
+      const want = 'guided-launcher:cruise spike-launcher:strike:v m113:strike';
+      if (read() !== want) return `picked in their menus: ${read()}`;
+      if (!menu(g, 'Missile: Cruise')?.checked) return 'the launcher\'s menu doesn\'t tick Missile: Cruise';
+      loadFromString(game, saveToString(game));
+      if (read() !== want) return `saved and loaded: ${read()}`;
+      controls.undo();
+      if (read() !== 'guided-launcher:standard spike-launcher:standard:v m113:standard') return `undone: ${read()}`;
+      controls.redo();
+      if (read() !== want) return `redone: ${read()}`;
+      const v = game.entities.find((e) => e.def.id === 'spike-launcher' && !e.destroyed) as GuidedLauncher;
+      v.setVertical(false);
+      const t = game.entities.find((e) => e.def.id === 'spike-launcher' && !e.destroyed) as GuidedLauncher;
+      if (t.vertical || t.version !== 'strike') return `made a tube, it's ${t.vertical ? 'still vertical' : 'a tube'} firing ${t.version}`;
+      return true;
+    }],
   ];
 }

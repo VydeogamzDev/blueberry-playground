@@ -2396,6 +2396,14 @@ export class Creature extends Entity {
     sprout(this.game, parent.part.localToWorld(l.a1.x, l.a1.y), true);
   }
 
+  /** The limb in the body's place `i` (gone) grows back as the host's did: a guest's copy (see Human.regrowPart()). */
+  regrowPart(i: number): Part | null {
+    const l = this.limbOf(this.parts[i]);
+    if (!l?.parent || !l.part.destroyed || l.parent.part.destroyed) return null;
+    this.regrow(l);
+    return l.part;
+  }
+
   /** Healing (see Human.mend): it comes round and gets up again, the blood washed off it. */
   private mend(dose: number): void {
     if (!this.alive) return;

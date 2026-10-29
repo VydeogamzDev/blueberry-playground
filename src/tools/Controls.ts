@@ -2961,7 +2961,8 @@ export class Controls {
     if (now - this.sentAt < 33) return;
     this.sentAt = now;
     const net = this.net!;
-    net.send({ op: 'cursor', x: this.wx, y: this.wy });
+    // (with the view's zoom: a seeker held from here looks through a gate the size it's drawn here)
+    net.send({ op: 'cursor', x: this.wx, y: this.wy, zoom: this.game.renderer.zoom });
     if (this.grab) {
       const t = this.dragTarget();
       const snap = this.arrange.dragSnap();

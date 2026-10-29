@@ -601,7 +601,7 @@ input[type='checkbox']:disabled {
   pointer-events: none !important;
 }
 
-#ui.ui-hidden > :not(.toast):not(.detail-view):not(.overlay):not(.ctx) {
+#ui.ui-hidden > :not(.toast):not(.battle-banner):not(.detail-view):not(.overlay):not(.ctx) {
   display: none !important;
 }
 
@@ -1439,15 +1439,44 @@ input[type='checkbox']:disabled {
   grid-template-columns: 1fr auto auto auto;
 }
 
+/* (a side's or a squad's ×, no taller than its line) */
+.army-side .panel-btn {
+  margin-top: 0;
+  padding: 2px 10px;
+}
+
 .army-side-name {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.army-tanks-name {
+/* (each starts a line of its own: a squad more, the button for another, the tanks) */
+.army-tanks-name,
+.army-squad-name {
+  grid-column: 1;
   color: var(--dim);
   padding-left: 20px;
+}
+
+.army-add-squad {
+  grid-column: 1;
+  justify-self: start;
+  margin-left: 20px;
+  padding: 2px 0;
+  background: none;
+  border: none;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.army-add-squad:hover {
+  color: var(--text);
+}
+
+.army-add-squad:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .army-side .army-off {
@@ -1468,6 +1497,41 @@ input[type='checkbox']:disabled {
 .army-btns .panel-btn:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* a battle from the Battle panel is over: who won, under the status toast and as it comes and goes (see ArmyPanel) */
+.battle-banner {
+  position: absolute;
+  top: 48px;
+  left: 50%;
+  transform: translate(-50%, -8px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  background: var(--panel-2);
+  border: 1px solid #454a51;
+  border-radius: 3px;
+  padding: 6px 14px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 0.15s, transform 0.15s;
+  pointer-events: none !important;
+}
+
+.battle-banner.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (max-width: 700px) {
+  /* clear of the wrapped toolbar: above the hints at the bottom, as the map's banner */
+  .battle-banner {
+    top: auto;
+    bottom: 120px;
+  }
 }
 
 .map-field {
