@@ -13,6 +13,11 @@ import { Projectiles } from '../systems/Projectiles';
 import { Explosions } from '../systems/Explosions';
 import { Connections } from '../systems/Connections';
 import { Fire } from '../systems/Fire';
+import { Heat } from '../systems/Heat';
+import { Aero } from '../systems/Aero';
+import { Piloting } from '../systems/Piloting';
+import { Atmosphere } from './Atmosphere';
+import { Structure } from '../systems/Structure';
 import { Weather } from '../systems/Weather';
 import { Water } from '../systems/Water';
 import { Fluid } from '../systems/Fluid';
@@ -22,6 +27,9 @@ import { Puddles } from '../systems/Puddles';
 import { ContactGroups } from '../systems/ContactGroups';
 import { WeldUnits } from '../systems/WeldUnits';
 import { liftOutOfGround } from '../systems/GroundLift';
+import { maybeRebase, Origin } from './Origin';
+import { Altitude } from '../systems/Altitude';
+import { Parking } from './Parking';
 import type { Entity } from './Entity';
 import type { Part } from './Part';
 import type { EntityConfig, ItemDef, SpawnOptions } from './types';
@@ -47,6 +55,8 @@ export interface NetRole {
   pose(dt: number): void;
   /** Where another player's pointer is, as they last said (the host hears its guests'); null if it isn't known. */
   cursorOf?(player: number): Pointer | null;
+  /** Where the other players are looking (the host's guests' pointers): nothing near them is parked (see world/Parking). */
+  views?(): V2[];
 }
 
 /** A player's pointer in the sandbox (see Game.cursorOf()): where it is (world m), and their view's zoom (screen px per m). */
@@ -73,6 +83,24 @@ export class Game {
   readonly contactGroups: ContactGroups;
   readonly weldUnits: WeldUnits;
   readonly fire: Fire;
+  /** Every part's temperature (see systems/Heat). */
+  readonly heat: Heat;
+  /** The air: how thick, how warm, how strongly things fall (see world/Atmosphere). */
+  readonly air = new Atmosphere();
+  /** Where local (0, 0) truly is: on the World map, everything is kept near it (see world/Origin). */
+  readonly origin = new Origin();
+  /** The air's push on what moves through it (see systems/Aero). */
+  readonly aero: Aero;
+  /** Builds flown by the keys (see systems/Piloting). */
+  readonly piloting: Piloting;
+  /** The World's heights: lighter up high, and nothing left fallen through the ground (see systems/Altitude). */
+  readonly altitude = new Altitude(this);
+  /** What's far from every view on the World, taken out of it until someone comes near (see world/Parking). */
+  readonly parking = new Parking(this);
+  /** Broken pieces lying about at most (Settings > Graphics > Debris; see entities/Debris). */
+  debrisCap = 250;
+  /** How things not alive break (see systems/Structure). */
+  readonly structure: Structure;
   /** A map's sea, and the void's drop (see systems/Water). */
   readonly water: Water;
   readonly fluid: Fluid;
@@ -199,6 +227,7 @@ export class Game {
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new Renderer(canvas);
+    this.renderer.origin = this.origin;
     this.physics = new Physics();
     this.env = new Environment(this.physics, this.renderer.scene);
     this.particles = new Particles(this);
@@ -212,6 +241,10 @@ export class Game {
     this.contactGroups = new ContactGroups(this);
     this.weldUnits = new WeldUnits(this);
     this.fire = new Fire(this);
+    this.heat = new Heat(this);
+    this.aero = new Aero(this);
+    this.piloting = new Piloting(this);
+    this.structure = new Structure(this);
     // (the sea first: the weather's drops stop at its surface)
     this.water = new Water(this);
     this.fluid = new Fluid(this);
@@ -458,6 +491,8 @@ export class Game {
     this.particles.clear();
     this.casings.clear();
     this.connections.clearAll();
+    this.piloting.clear();
+    this.parking.clear();
   }
 
   /** Clears entities and all stains/effects: liquid on the floor, fires, drops in the air, blasts still to go off. */
@@ -468,6 +503,7 @@ export class Game {
     this.fluid.clear();
     this.liveWater.clear();
     this.fire.clear();
+    this.heat.clear();
     this.explosions.clear();
   }
 
@@ -483,9 +519,16 @@ export class Game {
     const before = this.map;
     this.resetEnvironment();
     this.map = spec;
+    this.air.groundTemp = spec.theme === 'snow' ? -6 : spec.theme === 'desert' ? 34 : 20;
+    // (only the World's air thins with height; and every map starts at the origin)
+    this.air.layered = !!spec.world;
+    const moved = this.origin.x !== 0 || this.origin.y !== 0;
+    this.origin.reset();
+    this.air.base = 0;
     // (a map with weather of its own brings it: the Snow map's snow)
     this.weather.onMap(before, spec);
-    if (spec.width !== before.width || spec.height !== before.height || spec.theme !== before.theme || !spec.endless !== !before.endless) {
+    if (spec.width !== before.width || spec.height !== before.height || spec.theme !== before.theme || !spec.endless !== !before.endless
+      || spec.world?.seed !== before.world?.seed || (spec.world && moved)) {
       applyBounds(spec);
       this.env.build(spec);
       this.puddles.resize();
@@ -512,9 +555,9 @@ export class Game {
     liftOutOfGround(this);
   }
 
-  /** Where the camera goes home to: over the middle of the floor (or the ground there). */
+  /** Where the camera goes home to: over the middle of the floor (or the ground there; on the World, where it began). */
   home(): V2 {
-    const x = (WORLD.left + WORLD.right) / 2;
+    const x = this.map.world ? -this.origin.x : (WORLD.left + WORLD.right) / 2;
     return { x, y: this.env.groundAt(x, WORLD.ceiling) + this.renderer.floorLift };
   }
 
@@ -874,8 +917,10 @@ export class Game {
     this.particles.frame();
     this.casings.frame();
     this.stains.frame(this.renderer.zoom * this.renderer.dpr);
-    this.env.frame(this.renderer.camX);
+    this.env.frame(this.renderer.camX, this.renderer.width / (2 * this.renderer.zoom));
     this.sound.rate = this.paused ? 1 : this.timeScale;
+    // (high on the World, the air carries sound worse: see Sound.setAir())
+    this.sound.setAir(this.map.world ? this.air.thinness(this.renderer.camY) : 1);
     this.sound.update(realDt);
     lap?.('frame: effects');
     // (a hidden tab kept running for a multiplayer game shows nothing: see keepRunning())
@@ -913,6 +958,15 @@ export class Game {
   step(): void {
     const dt = this.stepDt;
     this.physics.setDt(dt);
+    // the World map: everything kept near the origin, and ground under what's about
+    // (a guest's origin moves with its host's: see net/Guest)
+    if (this.map.world) {
+      if (!this.net?.guest) maybeRebase(this);
+      // (and round the guests' views: their things are simulated here)
+      const xs = [this.renderer.camX];
+      for (const v of this.net?.views?.() ?? []) xs.push(v.x);
+      this.env.stream(xs);
+    }
     if (this.net?.guest) {
       this.guestStep(dt);
       return;
@@ -920,7 +974,10 @@ export class Game {
     const lap = this.lapper();
     this.stepping = true;
     for (const h of this.preStepHandlers) h(dt);
+    this.piloting.step(dt);
     for (const e of this.entities) if (!e.destroyed) e.preStep(dt);
+    this.aero.step(dt);
+    this.altitude.step(dt);
     lap?.('step: control');
     wakeSettled(this);
     this.contactGroups.update();
@@ -946,6 +1003,7 @@ export class Game {
     this.connections.postStep(dt);
     lap?.('step: sync');
     this.fire.step(dt);
+    this.heat.step(dt);
     this.weather.step(dt);
     this.water.step(dt);
     lap?.('step: effects');
@@ -957,6 +1015,7 @@ export class Game {
     this.casings.step(dt);
     this.puddles.step(dt);
     this.stats.step(this, dt);
+    this.parking.step(dt);
     lap?.('step: effects');
     this.time += dt;
     this.stepping = false;

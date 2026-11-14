@@ -47,6 +47,14 @@ class Spray {
 
   constructor(private game: Game, private flight: Flight) {}
 
+  /** The floating origin moved (see world/Origin): the blobs in flight with everything. */
+  shift(dx: number, dy: number): void {
+    for (const b of this.blobs) {
+      b.x += dx;
+      b.y += dy;
+    }
+  }
+
   /** Throws a blob from `at` along `dir`, on top of the nozzle's own velocity `v`. */
   add(at: V2, dir: V2, v: V2): Blob {
     const f = this.flight;
@@ -104,7 +112,7 @@ class Spray {
 
 /** The floor's height under x (the ground's top, on a map with ground). */
 function floorAt(game: Game, x: number, y: number): number {
-  return game.env.ground.length ? game.env.groundAt(x, y) : WORLD.floor;
+  return game.env.hasGround ? game.env.groundAt(x, y) : WORLD.floor;
 }
 
 // ------------------------------------------------------------------ flamethrower
@@ -135,6 +143,12 @@ export class Flamethrower extends Firearm {
   private burstT = 0;
   private emitT = 0;
   private readonly spray: Spray;
+
+  /** The floating origin moved (see world/Origin): its spray in flight with everything. */
+  shifted(dx: number, dy: number): void {
+    super.shifted(dx, dy);
+    this.spray.shift(dx, dy);
+  }
   private gauge = 1;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, hold: HoldSpec, gun: GunSpec, x: number, y: number, opts: SpawnOptions) {
@@ -336,6 +350,12 @@ export class Extinguisher extends Item {
   private emitT = 0;
   private cloudT = 0;
   private readonly spray: Spray;
+
+  /** The floating origin moved (see world/Origin): its spray in flight with everything. */
+  shifted(dx: number, dy: number): void {
+    super.shifted(dx, dy);
+    this.spray.shift(dx, dy);
+  }
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, hold: HoldSpec, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, hold, x, y, opts);

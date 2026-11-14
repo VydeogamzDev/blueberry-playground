@@ -21,14 +21,19 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
   };
   const checked = (e: Entity) => e.contextActions().filter((a) => a.checked).map((a) => a.label).join(', ');
   const find = <T extends Entity>(id: string, i = 0) => game.entities.filter((e) => e.def.id === id && !e.destroyed)[i] as T;
-  /** The push (N) a free thruster gives in a step from standing, 6 m up, along its facing (gravity's pull taken out). */
+  /**
+   * The push (N) a free thruster gives in a step from standing, 6 m up, along its facing (gravity's pull taken out).
+   * (Held still the rest of the time: let go, a thruster on for a second is a rocket that ends in the ceiling.)
+   */
   const pushOf = (t: Thruster) => {
     const p = t.parts[0];
+    t.setFrozen(false);
     t.translate(0, 6 - p.body.translation().y);
     t.setVelocity(0, 0);
     const f = p.localDir(p.flip, 0);
     game.step();
     const v = p.body.linvel();
+    t.setFrozen(true);
     return p.mass * ((v.x / game.stepDt) * f.x + (v.y / game.stepDt - game.gravity) * f.y);
   };
   /** Where a reversing switch's lever is now (read afresh: a test's own checks would narrow it). */
@@ -181,6 +186,7 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       const p = kit.spawn('piston', 1, 0.3) as Piston;
       const t = kit.spawn('thruster', 4, 6, { angle: UP }) as Thruster;
       kit.advance(0.3);
+      t.setFrozen(true);
       m.housing.setFrozen(true);
       p.base.setFrozen(true);
       r.setFrozen(true);

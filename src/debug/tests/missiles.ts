@@ -378,6 +378,16 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       const five = strike();
       if (five.length !== STRIKE_COUNT) return `one launch sent out ${five.length} missiles`;
       if (L.shots !== 1) return `one launch counted ${L.shots} shots`;
+      // (the first three or so tear the car apart: the rest may go off on its pieces flung
+      // up into their way, wherever those are; that's still on target)
+      const onPiece = new Set<Missile>();
+      for (const m of five) {
+        const was = m.detonate.bind(m);
+        m.detonate = (struck = null) => {
+          if (struck?.entity.def.id === 'debris') onPiece.add(m);
+          was(struck);
+        };
+      }
       const last = new Map<Missile, V2>();
       let apart = 0;
       let wrongSet = '';
@@ -396,7 +406,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       if (wrongSet) return wrongSet;
       if (strike().length) return `${strike().length} of the five still flying 4 s on`;
       if (apart < 0.6) return `the five flew as one (at most ${apart.toFixed(2)} m apart)`;
-      const far = [...last.values()].map((p) => Math.hypot(p.x - at.x, p.y - at.y)).filter((d) => d > 3.2);
+      const far = [...last].filter(([m]) => !onPiece.has(m)).map(([, p]) => Math.hypot(p.x - at.x, p.y - at.y)).filter((d) => d > 3.2);
       if (far.length) return `${far.length} of the five went off away from the cursor (${far.map((d) => d.toFixed(1)).join(', ')} m)`;
       kit.advance(0.1);
       if (!car.wrecked) return `the car under the cursor isn't wrecked (hp ${car.body.hp.toFixed(0)})`;

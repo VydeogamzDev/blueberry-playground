@@ -217,6 +217,7 @@ export const rawimpulsejointset_jointConfigureMotorModel: (a: number, b: number,
 export const rawimpulsejointset_jointConfigureMotorPosition: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const rawimpulsejointset_jointConfigureMotorVelocity: (a: number, b: number, c: number, d: number, e: number) => void;
 export const rawimpulsejointset_jointContactsEnabled: (a: number, b: number) => number;
+export const rawimpulsejointset_jointImpulsesOf: (a: number, b: number, c: number, d: number) => void;
 export const rawimpulsejointset_jointLimitsEnabled: (a: number, b: number, c: number) => number;
 export const rawimpulsejointset_jointLimitsMax: (a: number, b: number, c: number) => number;
 export const rawimpulsejointset_jointLimitsMin: (a: number, b: number, c: number) => number;

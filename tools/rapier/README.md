@@ -37,6 +37,17 @@ the first time: the threaded build rebuilds Rust's standard library.
   whether they touch and are fixed or asleep. The game's check for heaps at rest
   (`src/systems/Settle.ts`) asked that collider by collider, a few calls each way: in a heap
   of 100 people, a frame's worth of time every half second.
+- **Joint impulses in one call.** `World.jointImpulsesOf(handles)`: what each of these impulse
+  joints gave in the last step (its last substep's impulse, in the joint's frame: along its two
+  axes, then about its turning one). The game's welds, hinges and pins give way under too much
+  force by it (`Connections.strain()` in `src/systems/Connections.ts`).
+- **CCD sweeps a moving target along its own motion.** A body with CCD on (Rapier calls it a
+  bullet: the game's people, its vehicles' hulls, thrown weapons) is swept against everything
+  else without CCD, and Rapier held each of those still at its end-of-step pose. Riding on
+  one that moved further in a step than it is thick (a person standing on a plank flown at
+  22 m/s), the bullet started below that pose, was caught on its underside and driven through
+  it, and the solver flung both apart. Now a dynamic or kinematic target is swept from where
+  it was to where it's going, as Box2D does, so only motion relative to it hits it.
 - **No scans of everything after each step.** Rapier's JS layer looked over every body,
   collider and joint after each step, and every collider after each rigid-body removal, for
   what soft bodies may have made or removed on their own: only when there are soft bodies now.

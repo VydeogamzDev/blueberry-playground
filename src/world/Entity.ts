@@ -4,6 +4,10 @@ import type { Game } from './Game';
 import type { BulletHit, ContextAction, DamageKind, EntityConfig, EntityState, ImpactInfo, ItemDef, PartState } from './types';
 import type { V2 } from '../engine/math';
 
+/** A machine hurt past this share of its condition cuts in and out; under BROKEN, it's dead (see Entity.works). */
+export const WORN = 0.6;
+export const BROKEN = 0.25;
+
 /** Base class for everything that can be spawned into the sandbox. */
 export abstract class Entity {
   private static nextId = 1;
@@ -29,8 +33,42 @@ export abstract class Entity {
   config: EntityConfig | undefined;
   /** Activation input currently held (auto-fire etc). */
   activeHeld = false;
-  /** Receiving electrical power. */
-  powered = false;
+  /** Power reaching it, whatever state it's in (see powered). */
+  poweredIn = false;
+  /** Fried by a strong EMP (a nuke's): dead until it's repaired (see works). */
+  fried = false;
+  /**
+   * How much of the power reaching it gets through (0 to 1): all of it from a battery
+   * or a switch, less through a throttle lever pulled part way (see
+   * Connections.recomputePower()). Engines run at it (see Piloting.engineLevel()).
+   */
+  powerLevel = 1;
+  /** Receiving electrical power, and in working order to use it (see works). */
+  get powered(): boolean {
+    return this.poweredIn && this.works;
+  }
+  set powered(on: boolean) {
+    this.poweredIn = on;
+  }
+
+  /** How sound it is, 0..1 (1: as made): a breakable thing's hit points left (see Prop). */
+  get condition(): number {
+    return 1;
+  }
+
+  /**
+   * In working order: not fried, nor broken (under BROKEN of its condition: a switch
+   * sticks, a lamp, a motor, a gate are dead); hurt past WORN, it cuts in and out,
+   * off the more of the time the worse it is (a lamp flickers, a thruster sputters).
+   */
+  get works(): boolean {
+    if (this.fried) return false;
+    const c = this.condition;
+    if (c >= WORN) return true;
+    if (c < BROKEN) return false;
+    const k = (WORN - c) / (WORN - BROKEN);
+    return (this.game.time * 3.1 + this.id * 0.618) % 1 >= k * 0.7;
+  }
   /**
    * Its power comes turned round, through a reversing switch set to reverse:
    * motors and thrusters run backwards, pistons pull in (see Connections.recomputePower()).
@@ -50,6 +88,12 @@ export abstract class Entity {
   restChecks = 0;
   /** Checks in a row that found it at most slowly creeping. */
   slowChecks = 0;
+  /**
+   * When (game time, s) the sea last found it drifting: in it, neither held up as hard as
+   * it's weighed down nor resting on anything (see systems/Water). However slowly it
+   * sinks or rises, that isn't at rest (see restCheck()).
+   */
+  adriftAt = -Infinity;
 
   constructor(game: Game, def: ItemDef, flipped = false) {
     this.id = Entity.nextId++;
@@ -146,6 +190,8 @@ export abstract class Entity {
 
   /** Mended (Repair in its menu): every part of it whole, unburnt and clean again (see Part.repair()), with a knock and a flash. */
   repair(): void {
+    const dead = !this.works;
+    this.fried = false;
     let at: number | undefined;
     for (const p of this.parts) {
       if (p.destroyed) continue;
@@ -154,6 +200,26 @@ export abstract class Entity {
       at ??= p.x;
     }
     if (at !== undefined) this.game.sound.play('machine/power_hammer', { gain: 0.35, x: at, vary: 0.1 });
+    if (dead && this.works) this.game.connections.recomputePower();
+  }
+
+  /**
+   * Fried (a nuke's EMP): its electronics dead until repaired. Only what runs on
+   * power (see usesPower) or makes it; the rest is none the worse.
+   */
+  fry(recompute = true): boolean {
+    if (this.fried || this.destroyed) return false;
+    const src = this as Entity & { isPowerSource?(): boolean };
+    if (!this.usesPower && !src.isPowerSource) return false;
+    this.fried = true;
+    const p = this.parts.find((q) => !q.destroyed);
+    if (p) {
+      this.game.particles.sparks(p.x, p.y, 0, 1, 8, 3);
+      this.game.particles.smoke(p.x, p.y, 1, 0.2, true);
+    }
+    // (many at once, as by a nuke: the caller works the power out once, after)
+    if (recompute) this.game.connections.recomputePower();
+    return true;
   }
 
   /** Puts a current through water it's in (a battery switched on, a tesla coil running: see LiveWater). */
@@ -303,6 +369,20 @@ export abstract class Entity {
     return this.connectedParts(p).reduce((s, q) => s + (q.frozen ? 0 : q.mass), 0);
   }
 
+  /**
+   * The floating origin moved (see world/Origin): its parts' bodies were moved by
+   * (dx, dy) with everything's. What it keeps of where things are in the world (a
+   * walker's goal, a missile's target) moves with them: subclasses add theirs.
+   */
+  shifted(dx: number, dy: number): void {
+    for (const p of this.parts) if (!p.destroyed) p.shifted(dx, dy);
+    const r = this.restRef;
+    for (let i = 0; i + 1 < r.length; i += 3) {
+      r[i] += dx;
+      r[i + 1] += dy;
+    }
+  }
+
   /** Moves the whole entity rigidly by (dx, dy). */
   translate(dx: number, dy: number): void {
     for (const p of this.parts) {
@@ -335,6 +415,18 @@ export abstract class Entity {
     }
   }
 
+  /**
+   * Flies by its own rules (a missile's fins, a rocket's or shell's flight, a
+   * bolt's fletching): the air's drag and lift aren't put on it (see systems/Aero).
+   */
+  ownFlight = false;
+  /**
+   * The share of its parts' own drag the air puts on it: parts jointed close together
+   * shield and overlap one another (a person's limbs: a falling body's drag is its
+   * outline's, not the sum of its limbs'; see systems/Aero).
+   */
+  dragShare = 1;
+
   serialize(): EntityState {
     return {
       def: this.def.id,
@@ -350,12 +442,14 @@ export abstract class Entity {
         if (p.charred > 0) s.char = p.charred;
         if (p.oil > 0) s.oil = p.oil;
         if (p.weightless) s.weightless = true;
+        if (Math.abs(p.temp - this.game.air.tempAt(p.y)) > 1) s.temp = Math.round(p.temp);
         const paint = p.paintData();
         if (paint) s.paint = paint;
         return s;
       }),
       ...(this.config ? { config: this.config } : {}),
       ...(this.layered ? { z: this.zBase } : {}),
+      ...(this.fried ? { fried: true } : {}),
       extra: this.serializeExtra(),
     };
   }
@@ -376,6 +470,7 @@ export abstract class Entity {
 
   restore(s: EntityState): void {
     if (typeof s.z === 'number' && Number.isFinite(s.z)) this.setDepth(s.z);
+    if (s.fried === true) this.fried = true;
     s.parts.forEach((ps, i) => {
       const p = this.parts[i];
       if (!p) return;
@@ -386,12 +481,14 @@ export abstract class Entity {
       p.teleport(ps.x, ps.y, ps.a);
       p.body.setLinvel({ x: ps.vx, y: ps.vy }, true);
       p.body.setAngvel(ps.av, true);
-      p.hp = ps.hp;
+      // (a part that can't be hurt has Infinity, which a save's JSON writes as null)
+      p.hp = typeof ps.hp === 'number' ? ps.hp : p.maxHp;
       p.charred = ps.char ?? 0;
       p.oil = ps.oil ?? 0;
       if (ps.burn) this.game.fire.ignite(p, ps.burn);
       if (ps.frozen) p.setFrozen(true);
       if (ps.weightless) p.setWeightless(true);
+      if (typeof ps.temp === 'number' && Number.isFinite(ps.temp)) this.game.heat.set(p, ps.temp);
     });
     if (s.extra) this.restoreExtra(s.extra);
     // after the extra state, which may change a part's art (a lamp turned on)

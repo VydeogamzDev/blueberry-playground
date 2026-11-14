@@ -24,6 +24,16 @@ const NEAR_SKIP = 0.16;
 const DEEP = 0.25;
 /** Water this deep (m) or shallower under them, they touch the bottom: they wade along it, and don't tire. */
 const WADE = 1.3;
+/**
+ * Thin air (the World, up high): how much of a breath it gives, by its density as a share
+ * of the ground's. All of it to about 550 m (0.52), none by 2 km (0.1): they're short of
+ * breath at 800 m, out cold by about 1.3 km.
+ */
+function thinAir(thin: number): number {
+  return thin >= 0.52 ? 1 : clamp((thin - 0.1) / 0.42, 0, 1);
+}
+/** With no air to breathe (s): a full breath used up, as near as they go to fainting in 10 s or so. */
+const THIN_FADE = 15;
 /** A head's buoyancy (see Part.buoyancy): heavier than water, the bone in it, so it goes under unless held up. */
 export const HEAD_SINKS = 0.45;
 /** A bubble's rise (m/s²). */
@@ -121,8 +131,13 @@ export class Breath {
     } else {
       gasp = this.least < GASP;
       this.least = 1;
-      this.air = Math.min(1, this.air + dt / REFILL);
-      this.starved = Math.max(0, this.starved - dt * 2);
+      // (high up on the World the air's too thin to hold a full breath: they fade toward as
+      // much as it gives, out cold short of FAINT, and with none at all they starve of it)
+      const most = thinAir(game.air.thinness(mouth.y));
+      if (this.air > most) this.air = Math.max(most, this.air - dt / (awake ? THIN_FADE : THIN_FADE * 1.4));
+      else this.air = Math.min(most, this.air + dt / REFILL);
+      if (this.air <= 0) this.starved += dt;
+      else this.starved = Math.max(0, this.starved - dt * 2);
     }
     if (treading && !this.wading) this.spent = Math.min(1, this.spent + dt / this.spec.tread);
     else if (!this.deep || this.wading) this.spent = Math.max(0, this.spent - dt / REST);

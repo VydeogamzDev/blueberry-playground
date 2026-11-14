@@ -10,6 +10,9 @@ import type { Game } from '../world/Game';
 import type { Part } from '../world/Part';
 import type { MapSpec, ThemeId } from '../world/Maps';
 
+/** On the World, the top of the clouds rain and snow fall from (true m: see the sky's, 120 to 700 m); above them it's clear. */
+const CLOUD_TOP = 650;
+
 /**
  * The weather and the world's light: what Settings > World sets (as People
  * Playground's environment settings), saved with a scene and sent to a
@@ -385,6 +388,12 @@ export class Weather {
     return ((a + (b - a) * Math.random()) * 100) / Math.max(1, this.state.lightning);
   }
 
+  /** Everything here moved by (dx, dy): the floating origin moved (see world/Origin). */
+  shift(_dx: number, _dy: number): void {
+    // (the tops held are by column in the world: measured again)
+    this.topsMap = null;
+  }
+
   // ---- the host's (or a lone player's) step: lightning, and rain on fires --------------------------
 
   step(dt: number): void {
@@ -410,10 +419,22 @@ export class Weather {
     }
   }
 
+  /**
+   * Where rain, snow and lightning come down from (local m): on the World the clouds,
+   * nothing falling above them; on any other map its top (a ray from the World's
+   * would start 10,000 km up).
+   */
+  private cloudTop(): number {
+    const g = this.game;
+    return g.map.world ? CLOUD_TOP - g.origin.y : WORLD.ceiling - 0.05;
+  }
+
   /** Is a part out in the rain: is it what a drop falling straight down on it would hit first (it, or its own body above it)? */
   private outside(p: Part): boolean {
     const g = this.game;
-    const top = WORLD.ceiling - 0.05;
+    const top = this.cloudTop();
+    // (above the clouds: dry)
+    if (p.y >= top) return false;
     this.ray.origin = { x: p.x, y: top };
     this.ray.dir = { x: 0, y: -1 };
     const hit = g.physics.world.castRay(this.ray, top - p.y + 0.5, true);
@@ -433,7 +454,7 @@ export class Weather {
     const r = g.renderer;
     const viewW = r.viewWidth / r.zoom;
     const viewTop = r.camY + r.height / r.zoom / 2;
-    const y0 = WORLD.ceiling - 0.05;
+    const y0 = this.cloudTop();
     const spots: { x: number; y: number }[] = [];
     for (let i = 0; i < 6; i++) {
       const x = clamp(r.camX + (Math.random() - 0.5) * viewW * 0.9, WORLD.left + 0.5, WORLD.right - 0.5);
@@ -444,7 +465,7 @@ export class Weather {
       if (hit) spots.push({ x, y: y0 - hit.timeOfImpact });
     }
     this.strikes++;
-    const sky = Math.min(WORLD.ceiling, viewTop + 1);
+    const sky = Math.min(y0, viewTop + 1);
     const thunder = (x: number) => g.sound.play('weather/thunder', { gain: 0.85, x, delay: 0.1 + Math.random() * 0.5, vary: 0.08 });
     if (!spots.length) {
       // sheet lightning: a flash and thunder, nothing struck
@@ -518,8 +539,8 @@ export class Weather {
     // more when zoomed out, but not as many more as the area grows
     const spread = Math.sqrt((bw * bh) / (64 * 32));
     const devPx = 1 / (r.zoom * r.dpr);
-    // (in a hall it comes down from the ceiling; out of doors the sky goes on up)
-    const top = g.env.backdrop.roofed ? WORLD.ceiling : 1e9;
+    // (in a hall it comes down from the ceiling; out of doors the sky goes on up, but for the World's clouds)
+    const top = g.env.backdrop.roofed ? WORLD.ceiling : g.map.world ? this.cloudTop() : 1e9;
     const rainN = Math.round(Math.min(RAIN_MOST, RAIN_DENSITY * s.rain * detail * spread));
     this.rain.update(rainN, box, RAIN_V, fdt, 0.28 + 0.2 * s.rain, Math.max(PX, devPx), 0, 0, top);
     const snowN = Math.round(Math.min(SNOW_MOST, SNOW_DENSITY * s.snow * detail * spread));
@@ -569,7 +590,7 @@ export class Weather {
   private splashes(n: number, midX: number, viewW: number, top: number): void {
     const g = this.game;
     const world = g.physics.world;
-    const y0 = Math.min(top, WORLD.ceiling - 0.05);
+    const y0 = Math.min(top, this.cloudTop());
     const host = !g.net?.guest;
     for (; n > 0; n--) {
       if (n < 1 && Math.random() >= n) break;

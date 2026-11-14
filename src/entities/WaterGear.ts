@@ -62,7 +62,7 @@ export class Tap extends Prop implements HandSwitched {
   }
 
   get running(): boolean {
-    return (this.on || this.powered) && !this.heldOff;
+    return (this.on || this.powered) && !this.heldOff && this.works;
   }
 
   activate(): void {

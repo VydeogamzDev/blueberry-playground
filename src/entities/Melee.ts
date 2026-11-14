@@ -83,8 +83,47 @@ export class Blade extends Item {
   private cutCooldown = new Map<Part, number>();
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, hold: HoldSpec, blade: BladeSpec, x: number, y: number, opts: SpawnOptions) {
-    super(game, def, { ...cfg, ccd: true }, hold, x, y, opts);
+    super(game, def, { ...cfg, ccd: true, depth: cfg.depth ?? BLADE_DEPTH }, hold, x, y, opts);
     this.blade = blade;
+  }
+
+  /** Where the edge was last step, base and tip (see cutCords()). */
+  private edgeWas = { bx: 0, by: 0, tx: 0, ty: 0, at: -1 };
+
+  /** The floating origin moved (see world/Origin): what it keeps of where things are in the world moves too. */
+  shifted(dx: number, dy: number): void {
+    super.shifted(dx, dy);
+    const w = this.edgeWas;
+    w.bx += dx;
+    w.by += dy;
+    w.tx += dx;
+    w.ty += dy;
+  }
+
+  /**
+   * Swung through a wire or a rope, the edge cuts it (see Connections.cutAcross()):
+   * whatever the edge swept over since the last step (going flat along a wire, it
+   * never lies across it).
+   */
+  private cutCords(): void {
+    const p = this.main;
+    const [b0, b1] = this.blade.blade;
+    const tip = p.pixelToWorld(b1, p.h / 2);
+    const base = p.pixelToWorld(b0, p.h / 2);
+    const w = this.edgeWas;
+    const fresh = this.game.time - w.at < this.game.stepDt * 1.5;
+    const { bx, by, tx, ty } = w;
+    w.bx = base.x;
+    w.by = base.y;
+    w.tx = tip.x;
+    w.ty = tip.y;
+    w.at = this.game.time;
+    const v = velAt(p, tip);
+    if (v.x * v.x + v.y * v.y < CUTS_CORD * CUTS_CORD) return;
+    const C = this.game.connections;
+    if (C.cutAcross(base.x, base.y, tip.x, tip.y, 1, this) || !fresh) return;
+    if (C.cutAcross(tx, ty, tip.x, tip.y, 1, this)) return;
+    C.cutAcross(bx, by, base.x, base.y, 1, this);
   }
 
   /** What it went into first (null: it's in nothing). */
@@ -291,6 +330,7 @@ export class Blade extends Item {
   }
 
   postStep(dt: number): void {
+    if (this.blade.edge !== 'none' && this.game.connections.hasCords) this.cutCords();
     if (!this.lodges.length) this.swing(dt);
     for (const l of [...this.lodges]) {
       if (l.target.destroyed || !l.prism.isValid() || !l.weld.isValid()) {
@@ -388,6 +428,15 @@ function thickness(q: Part, pt: V2, dir: V2): number {
   }
   return last + step;
 }
+
+/**
+ * (m) A blade's depth front to back, against the air (see systems/Aero): a blade seen
+ * flat is thin across, a spear's shaft a few cm (as thick as drawn, a spear thrown
+ * glided like a wing).
+ */
+const BLADE_DEPTH = 0.03;
+/** (m/s) How fast an edge must go through a wire or a rope to cut it (not laid on it, nor carried past it). */
+const CUTS_CORD = 2.5;
 
 function velAt(p: Part, x: V2 | number, y?: number): V2 {
   const px = typeof x === 'number' ? x : x.x;

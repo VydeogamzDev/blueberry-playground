@@ -34,6 +34,7 @@ import { Friends } from '../net/Friends';
 import { store } from '../engine/Store';
 import { desktop } from '../engine/Desktop';
 import { savesSettings } from './SavesSettings';
+import { grantMode } from '../world/GrantMode';
 import { rapierBuild } from '../engine/Physics';
 import { version } from '../../package.json';
 
@@ -189,6 +190,11 @@ export class UI implements UIBridge {
   /** The drive buttons at the screen's sides (a vehicle selected on a touch screen), and a tank's aim ones among them. */
   private drivePad!: HTMLDivElement;
   private aimBtns: HTMLButtonElement[] = [];
+  private turnBtns: HTMLButtonElement[] = [];
+  /** What's flown here (see systems/Piloting): its speed, height, climb and throttle. */
+  private pilotHud!: HTMLDivElement;
+  private pilotText = '';
+  private pilotBar!: HTMLDivElement;
   private matBar!: HTMLDivElement;
   private matBtns = new Map<string, HTMLButtonElement>();
   /** Under the tool bar: the kinds of the slot in hand (Rope, Fuse cord), or the Spring's stiffnesses. */
@@ -802,15 +808,23 @@ export class UI implements UIBridge {
     this.root.appendChild(this.touchBar);
     // driving: the drive keys (A, D) with a vehicle selected, as buttons held at the screen's sides (a tank's aim, W and S, with them)
     this.drivePad = el('div', 'drivepad hidden');
-    const pad = (label: string, title: string, id: 'driveLeft' | 'driveRight' | 'aimUp' | 'aimDown', cls: string) => {
+    const pad = (label: string, title: string, id: 'driveLeft' | 'driveRight' | 'aimUp' | 'aimDown' | 'turnLeft' | 'turnRight', cls: string) => {
       const b = btn(label, title, () => c.holdDrive(id, true), () => c.holdDrive(id, false), this.drivePad);
       b.classList.add('pad-btn', cls);
       return b;
     };
     pad('◀', 'Drive left (hold)', 'driveLeft', 'pad-l');
     pad('▶', 'Drive right (hold)', 'driveRight', 'pad-r');
-    this.aimBtns = [pad('▲', 'Raise the gun (hold)', 'aimUp', 'pad-up'), pad('▼', 'Lower the gun (hold)', 'aimDown', 'pad-down')];
+    this.aimBtns = [pad('▲', 'Raise the gun, or throttle up (hold)', 'aimUp', 'pad-up'), pad('▼', 'Lower the gun, or throttle down (hold)', 'aimDown', 'pad-down')];
+    this.turnBtns = [pad('⟲', 'Turn anticlockwise, or tilt back in the air (hold)', 'turnLeft', 'pad-tl'), pad('⟳', 'Turn clockwise, or tilt forward in the air (hold)', 'turnRight', 'pad-tr')];
     this.root.appendChild(this.drivePad);
+    // flying: what's flown, as a pilot's readout
+    this.pilotHud = el('div', 'pilot-hud hidden');
+    const bar = el('div', 'pilot-throttle');
+    this.pilotBar = el('div', 'pilot-throttle-fill');
+    bar.appendChild(this.pilotBar);
+    this.pilotHud.append(el('span', 'pilot-text'), bar);
+    this.root.appendChild(this.pilotHud);
     // building: what Alt, Shift and Ctrl do with a mouse, as switches (see Controls.freeAnchor...)
     this.buildBar = el('div', 'touchbar buildbar hidden');
     const sw = (label: string, title: string, fn: () => void, on?: () => boolean, show?: () => boolean) => {
@@ -1275,6 +1289,7 @@ export class UI implements UIBridge {
       lights: choice('set-lights', R.lights.map((v) => [v, v ? `${v} at once` : 'Off'] as [number, string]), gfx.lights, set('lights')),
       particles: choice('set-particles', R.particles.map((v) => [v, pct(v)] as [number, string]), gfx.particles, set('particles')),
       cases: choice('set-cases', R.cases.map((v) => [v, v ? `${v} at most` : 'None'] as [number, string]), gfx.cases, set('cases')),
+      debris: choice('set-debris', R.debris.map((v) => [v, `${v} at most`] as [number, string]), gfx.debris, set('debris')),
       step: choice('set-step', [['auto', 'Short while it can (smoother)'], ['long', 'Always long (half the work)']], gfx.step, set('step')),
       fps: choice('set-fps', R.fps.map((v) => [v, v === 'display' ? 'As the screen refreshes (V-sync)' : v === 'unlimited' ? 'Unlimited' : `${v} a second`] as [FpsCap, string]), gfx.fps, set('fps')),
     };
@@ -1288,6 +1303,7 @@ export class UI implements UIBridge {
     row('Lights', sel.lights, 'Muzzle flashes, fire and lamps that light up what’s round them');
     row('Effects', sel.particles, 'How much smoke, sparks, flames and dust (blood and liquids are always all there)');
     row('Spent cases', sel.cases, 'Cases thrown out by guns that lie about');
+    row('Debris', sel.debris, 'Broken pieces of things (scrap, splinters, shards, rubble) that lie about: each is a thing the physics moves');
     row('Background grid', check(true, (v) => (this.game.renderer.showGrid = v)));
     row('Blood', check(true, (v) => (this.game.particles.bloodEnabled = v)));
 
@@ -1446,6 +1462,8 @@ export class UI implements UIBridge {
     section('Saves and sync');
     savesSettings(row, { toast: (msg) => this.toast(msg), download: (name, text) => this.download(name, text) });
 
+    this.secretSettings(section, row, check);
+
     const foot = el('div', 'set-io help-foot');
     const bind = el('button', 'panel-btn', 'Key bindings…');
     // (toggle() closes Settings itself, handing over to the Controls panel whatever time-stop it holds)
@@ -1458,6 +1476,68 @@ export class UI implements UIBridge {
     close.onclick = () => this.hide(this.settings);
     foot.append(close, bind, exp, imp);
     box.appendChild(foot);
+  }
+
+  /**
+   * Secrets, at the foot of Settings: a code box, and Grant mode (see world/GrantMode), not
+   * there until "grant" is put in the box (or typed anywhere with Settings open: the keys
+   * that spell it out don't reach the scene behind); there from then on.
+   */
+  private secretSettings(
+    section: (title: string) => void,
+    row: (label: string, input: HTMLElement, hint?: string) => HTMLElement,
+    check: (val: boolean, fn: (v: boolean) => void) => HTMLInputElement,
+  ): void {
+    section('Secrets');
+    // (a code box anyone can type in, a phone too, with its own keyboard)
+    const code = el('input', 'set-iters-num set-code');
+    code.type = 'text';
+    code.placeholder = 'Got a code?';
+    code.autocomplete = 'off';
+    code.spellcheck = false;
+    code.setAttribute('autocapitalize', 'off');
+    code.enterKeyHint = 'done';
+    row('Code', code, 'Type a secret code here');
+    const sec = row('Grant mode', check(grantMode.on, (v) => {
+      grantMode.on = v;
+      this.renderItems();
+    }), 'Grant: short, broad and built different. On, he is in the toybox under Characters');
+    sec.classList.toggle('hidden', !grantMode.found);
+    const reveal = () => {
+      if (!sec.classList.contains('hidden')) return;
+      grantMode.found = true;
+      sec.classList.remove('hidden');
+      sec.scrollIntoView({ block: 'nearest' });
+      this.toast('Found a secret setting: Grant mode');
+    };
+    code.oninput = () => {
+      if (code.value.trim().toLowerCase() !== 'grant') return;
+      code.value = '';
+      code.blur();
+      reveal();
+    };
+    code.onkeydown = (e) => {
+      if (e.key !== 'Enter' || !code.value.trim()) return;
+      code.value = '';
+      this.toast('Nothing happens.');
+    };
+    const WORD = 'grant';
+    let typed = '';
+    window.addEventListener('keydown', (e) => {
+      // (not typed into a box: a ticked box or a slider with the focus doesn't take letters)
+      const t = e.target;
+      const typing = t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || (t instanceof HTMLInputElement && t.type !== 'checkbox' && t.type !== 'range');
+      if (this.settings.classList.contains('hidden') || typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      const next = typed + e.key.toLowerCase();
+      typed = WORD.startsWith(next) ? next : WORD.startsWith(e.key.toLowerCase()) ? e.key.toLowerCase() : '';
+      if (!typed) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (typed === WORD) {
+        typed = '';
+        reveal();
+      }
+    }, true);
   }
 
   /** Puts the graphics settings into effect (and the iterations, unless a host's count), keeps them, and shows them. */
@@ -1473,6 +1553,7 @@ export class UI implements UIBridge {
     this.game.renderer.maxLights = g.lights;
     this.game.particles.detail = g.particles;
     this.game.casings.cap = g.cases;
+    this.game.debrisCap = g.debris;
     this.game.longSteps = g.step === 'long';
     this.game.fpsCap = fpsLimit(g.fps);
     this.syncIterations();
@@ -1915,6 +1996,22 @@ export class UI implements UIBridge {
     return this.ctx !== null;
   }
 
+  /** The readout of what's flown here (see Controls.pilotHud()): shown while something is. */
+  private showPilot(): void {
+    const hud = this.controls.pilotHud();
+    if (this.pilotHud.classList.contains('hidden') !== !hud) this.pilotHud.classList.toggle('hidden', !hud);
+    if (!hud) return;
+    const climb = Math.abs(hud.climb) < 0.05 ? '0.0' : `${hud.climb > 0 ? '▲' : '▼'} ${Math.abs(hud.climb).toFixed(1)}`;
+    // (on the World: how high it truly is, and the air there)
+    const air = hud.alt === undefined ? '' : ` · alt ${altText(hud.alt)} · air ${(hud.air ?? 0) < 0.01 ? (hud.air ?? 0).toExponential(1) : (hud.air ?? 0).toFixed(2)} kg/m³ ${Math.round(hud.temp ?? 0)} °C`;
+    const text = `${hud.speed.toFixed(1)} m/s · ${hud.height.toFixed(1)} m up · climb ${climb} m/s · throttle ${Math.round(hud.throttle * 100)}% · ${hud.running}/${hud.engines} running${air}`;
+    if (text !== this.pilotText) {
+      this.pilotText = text;
+      (this.pilotHud.firstChild as HTMLElement).textContent = text;
+      this.pilotBar.style.width = `${Math.round(hud.throttle * 100)}%`;
+    }
+  }
+
   isPanelOpen(): boolean {
     return this.dialogClose !== null || this.editor !== null || this.layout.editing || this.overlays().some((p) => !p.classList.contains('hidden'));
   }
@@ -2000,6 +2097,8 @@ export class UI implements UIBridge {
       document.body.classList.toggle('driving', !!drive?.drive);
     }
     for (const b of this.aimBtns) if (b.classList.contains('hidden') !== !drive?.aim) b.classList.toggle('hidden', !drive?.aim);
+    for (const b of this.turnBtns) if (b.classList.contains('hidden') !== !drive?.turn) b.classList.toggle('hidden', !drive?.turn);
+    this.showPilot();
     if (targets.length) {
       const label = targets.every((e) => e.frozen) ? 'Unfreeze' : 'Freeze';
       if (this.btnFreeze.textContent !== label) this.btnFreeze.textContent = label;
@@ -2009,4 +2108,9 @@ export class UI implements UIBridge {
     if (!hint && h) hint = h.entity.label + (h.entity.parts.length > 1 ? ` — ${h.name}` : '') + (h.frozen ? ' (frozen)' : '');
     if (this.hintEl.textContent !== hint) this.hintEl.textContent = hint;
   }
+}
+
+/** A height for the pilot's readout: metres, or kilometres once it's that high. */
+function altText(m: number): string {
+  return Math.abs(m) < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(m < 10000 ? 2 : 1)} km`;
 }

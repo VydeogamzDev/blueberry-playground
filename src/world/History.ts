@@ -6,6 +6,8 @@ import type { PuddleState } from '../systems/Puddles';
 import type { FluidState } from '../systems/Fluid';
 import type { EntityState } from './types';
 import type { MapSpec } from './Maps';
+import { rebase } from './Origin';
+import type { Parked } from './Parking';
 
 /** How many edits can be undone. */
 const LIMIT = 40;
@@ -20,6 +22,10 @@ interface Entry {
   fluid: FluidState;
   /** The map it was on (undoing a switch of maps, or a load, switches back). */
   map: MapSpec;
+  /** Where the floating origin was (see world/Origin): what's captured is where it was from there. */
+  origin: { x: number; y: number };
+  /** What was parked then (see world/Parking). */
+  parked: Parked[];
   /** Taken as time started again after building (see record()): undoing it pauses time again. */
   paused?: boolean;
   /** Edits of this kind recorded right after it are part of it (see record()). */
@@ -167,17 +173,25 @@ export class History {
 
   private capture(label: string): Entry {
     const g = this.game;
-    return { label, snap: capture(g, g.entities, true), stains: g.stains.capture(), puddles: g.puddles.capture(), fluid: g.fluid.capture(), map: g.map, at: performance.now() };
+    return { label, snap: capture(g, g.entities, true), stains: g.stains.capture(), puddles: g.puddles.capture(), fluid: g.fluid.capture(), map: g.map, origin: { x: g.origin.x, y: g.origin.y }, parked: [...g.parking.list], at: performance.now() };
   }
 
   private restore(e: Entry): void {
     const g = this.game;
     if (e.paused) g.paused = true;
+    // (the origin back where it was when this was captured: everything's moved round it, the view stays)
+    const align = () => {
+      if (e.origin.x !== g.origin.x || e.origin.y !== g.origin.y) rebase(g, e.origin.x - g.origin.x, e.origin.y - g.origin.y);
+    };
+    if (e.map === g.map) align();
     if (e.map === g.map && this.fastRestore(e)) {
       this.lastRestore = 'fast';
     } else {
       this.lastRestore = 'full';
-      if (e.map !== g.map) g.setMap(e.map, false);
+      if (e.map !== g.map) {
+        g.setMap(e.map, false);
+        align();
+      }
       g.clearAll();
       g.fire.clear();
       // (a nuke's cloud and white-out, or a blast still to go off, belonged to the scene undone)
@@ -187,6 +201,7 @@ export class History {
     g.stains.restore(e.stains);
     g.puddles.restore(e.puddles);
     g.fluid.restore(e.fluid);
+    g.parking.list = [...e.parked];
     // (back to build: the next Play keeps the scene again, to come back to again)
     if (e.paused) this.dirtySincePause = true;
   }

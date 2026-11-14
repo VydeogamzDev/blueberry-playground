@@ -546,6 +546,12 @@ export class RawImpulseJointSet {
      */
     jointContactsEnabled(handle: number): boolean;
     /**
+     * The impulses each of these joints gave in the last step, in its own frame: three
+     * numbers a joint, along its two axes and then about its turning one (NaNs for one
+     * that's gone). One call for them all, as a joint's strain is watched step by step.
+     */
+    jointImpulsesOf(handles: Float64Array): Float32Array;
+    /**
      * Are the limits for this joint enabled?
      */
     jointLimitsEnabled(handle: number, axis: RawJointAxis): boolean;
@@ -2022,6 +2028,7 @@ export interface InitOutput {
     readonly rawimpulsejointset_jointConfigureMotorPosition: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly rawimpulsejointset_jointConfigureMotorVelocity: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly rawimpulsejointset_jointContactsEnabled: (a: number, b: number) => number;
+    readonly rawimpulsejointset_jointImpulsesOf: (a: number, b: number, c: number, d: number) => void;
     readonly rawimpulsejointset_jointLimitsEnabled: (a: number, b: number, c: number) => number;
     readonly rawimpulsejointset_jointLimitsMax: (a: number, b: number, c: number) => number;
     readonly rawimpulsejointset_jointLimitsMin: (a: number, b: number, c: number) => number;

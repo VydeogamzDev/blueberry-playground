@@ -6,6 +6,7 @@ import { PixelArt, type Color } from '../art/PixelArt';
 import { BRICK, CONCRETE, ramp, type Ramp } from '../art/palette';
 import { clamp, RNG } from '../engine/math';
 import { contains, floorless, LAB, type MapSpec, type TerrainMat, type ThemeId } from './Maps';
+import { WorldGround } from './WorldGround';
 
 /**
  * How wide (m) the floor and ceiling drawn on an endless map are: wider than
@@ -215,7 +216,7 @@ const SNOW = ramp('#dfe8ef', 0.3);
 const DARK = ramp('#2a2c31', 0.6);
 
 /** How a stretch of ground looks: its tile, the lit edge along its top, the dark lip under that, and grass on it. */
-interface Surface {
+export interface Surface {
   tile: PixelArt;
   edge: Color;
   lip: Color;
@@ -322,6 +323,8 @@ export interface Ground {
 
 /** How wide (m) the stretches of floor are that ground is filed under, for groundAt(). */
 const BUCKET = 4;
+/** Half the width (m) of the World's ground handed out as a piece (see groundPieceAt()). */
+const SAMPLE_W = 0.25;
 
 /**
  * On a map without a floor (the void): how far (m) below where the floor would
@@ -466,7 +469,14 @@ export class Environment {
   floorless = false;
   /** Where things land where there's no ground: the floor, or far down in the void (see VOID_DROP). */
   base: number = WORLD.floor;
+  /** The World map's ground, endless and streamed round the camera (see WorldGround); null on every other map. */
+  world: WorldGround | null = null;
+  /** Where the World's ground is laid round (local x: this view's middle, then the guests'), and the stretch in view. */
+  private reach: number[] = [0];
+  private viewL = -64;
+  private viewR = 64;
   private physics: Physics;
+  private scene: THREE.Scene;
   private look!: Look;
   private room: RAPIER.Collider[] = [];
   private groundColliders: RAPIER.Collider[] = [];
@@ -484,6 +494,7 @@ export class Environment {
 
   constructor(physics: Physics, scene: THREE.Scene, map: MapSpec = LAB) {
     this.physics = physics;
+    this.scene = scene;
     this.body = physics.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     this.build(map);
     scene.add(this.group, this.groundGroup);
@@ -501,6 +512,22 @@ export class Environment {
     const look = (this.look = lookOf(map.theme, height));
     this.backdrop = look.backdrop;
     this.surfaces.clear();
+    this.world?.dispose();
+    this.world = null;
+    if (map.world) {
+      // the World: no room, only its ground, built as it's needed (round the origin at the start),
+      // under its own sky
+      this.backdrop = { ...look.backdrop, sky: 4 };
+      this.floorless = false;
+      this.base = W.floor;
+      this.follow = [];
+      this.world = new WorldGround(this.physics, this.body, this.scene, map.world.seed, { x: 0, y: 0 }, {
+        earth: look.ground, rock: look.rock, snow: { tile: snowTile(47, SNOW), edge: SNOW[4], lip: SNOW[1] },
+      });
+      this.world.update([0], -64, 64);
+      this.buildGround(map);
+      return;
+    }
     const add = (cx: number, cy: number, hw: number, hh: number) => {
       const c = world.createCollider(
         RAPIER.ColliderDesc.cuboid(hw, hh)
@@ -605,6 +632,8 @@ export class Environment {
    * broken wherever ground stands on the floor.
    */
   private drawGround(): void {
+    // (the World's ground is drawn chunk by chunk: see WorldGround)
+    if (this.world) return;
     const W = WORLD;
     const look = this.look;
     const fills = new Map<TerrainMat, Quads>();
@@ -663,7 +692,15 @@ export class Environment {
    * Each frame, on an endless map: the floor and ceiling drawn move along under
    * the camera, a whole number of tiles at a time (and not on past the end walls).
    */
-  frame(camX: number): void {
+  frame(camX: number, halfW = 0): void {
+    if (this.world) {
+      // (the same places the steps lay ground round, this view first: they keep to one key)
+      this.reach[0] = camX;
+      this.viewL = camX - halfW;
+      this.viewR = camX + halfW;
+      this.world.update(this.reach, this.viewL, this.viewR);
+      return;
+    }
     if (!this.follow.length) return;
     const s = this.followStep;
     const half = FOLLOW_W / 2;
@@ -679,6 +716,30 @@ export class Environment {
     return s;
   }
 
+  /**
+   * Before a step, on the World map: the ground built within reach of the camera at
+   * local x (cheap unless it's moved to another stretch).
+   */
+  stream(xs: number[]): void {
+    if (!this.world) return;
+    this.reach = xs;
+    this.world.update(xs, this.viewL, this.viewR);
+  }
+
+  /** Is there ground besides the floor (a map's own, or the World's)? */
+  get hasGround(): boolean {
+    return this.ground.length > 0 || this.world !== null;
+  }
+
+  /** Everything moved by (dx, dy): the floating origin moved (see world/Origin). */
+  shift(dx: number, dy: number): void {
+    this.base += dy;
+    this.world?.shift(dx, dy);
+    this.reach = this.reach.map((x) => x + dx);
+    this.viewL += dx;
+    this.viewR += dx;
+  }
+
   private bucketOf(x: number): number {
     return Math.floor((x - WORLD.left) / BUCKET);
   }
@@ -690,6 +751,8 @@ export class Environment {
    * map of any size.
    */
   groundAt(x: number, y: number): number {
+    // (the World's ground has one top at each x, and nothing under it but more ground)
+    if (this.world) return this.world.heightAt(x);
     let best = this.base;
     const list = this.buckets[this.bucketOf(x)];
     if (!list) return best;
@@ -704,6 +767,16 @@ export class Environment {
 
   /** The piece of ground at a point (or within `margin` m of it), the last laid if several; null if there's none. */
   groundPieceAt(x: number, y: number, margin = 0): Ground | null {
+    if (this.world) {
+      const h = this.world.heightAt(x);
+      if (y > h + margin) return null;
+      const g = this.worldPiece;
+      g.mat = this.world.rockAt(x) ? 'rock' : 'ground';
+      g.x0 = x - SAMPLE_W;
+      g.x1 = x + SAMPLE_W;
+      g.y1 = h;
+      return g;
+    }
     const list = this.buckets[this.bucketOf(x)];
     if (!list) return null;
     for (let k = list.length - 1; k >= 0; k--) {
@@ -716,14 +789,25 @@ export class Environment {
 
   /** Is there ground at a point? */
   solidAt(x: number, y: number): boolean {
+    if (this.world) return y < this.world.heightAt(x);
     return this.groundPieceAt(x, y) !== null;
   }
+
+  /**
+   * The World's ground where it's asked about (see groundPieceAt()): no outline, a
+   * stretch either side of the point and down for ever. One object, handed out again.
+   */
+  private worldPiece: Ground = { pts: [], mat: 'ground', x0: 0, x1: 0, y0: -Infinity, y1: 0 };
 
   /**
    * Where a thing at (x, y) has to stand: on top of the ground y is inside (and
    * of any piled on that), else on the highest ground below y.
    */
   standAt(x: number, y: number): number {
+    if (this.world) {
+      const h = this.world.heightAt(x);
+      return y < h ? h + 1e-4 : h;
+    }
     let top = y;
     for (let k = 0; k < 8; k++) {
       const g = this.groundPieceAt(x, top);
@@ -734,6 +818,6 @@ export class Environment {
   }
 
   isEnvironment(c: RAPIER.Collider): boolean {
-    return this.handles.has(c.handle);
+    return this.handles.has(c.handle) || (this.world !== null && this.world.handles.has(c.handle));
   }
 }

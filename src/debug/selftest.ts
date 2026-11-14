@@ -648,6 +648,8 @@ export function makeSelfTest(game: Game, controls: Controls) {
       const tm = kit.spawn('timer', -1, 0.3) as Timer;
       const g2 = kit.spawn('pistol', 1, 0.3) as Firearm;
       kit.advance(0.3);
+      // (held still: kicked round by its recoil, it would shoot through its own wire)
+      g2.setFrozen(true);
       wire(tm, g2, 6 / 32, 0);
       tm.interval = 0.5;
       tm.activate();

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { sendFirst } from './Uploads';
 
 /** Side of an atlas page in texels. */
 const PAGE = 2048;
@@ -17,11 +18,11 @@ attribute vec4 iXform;   // x, y, z, angle
 attribute vec2 iSize;    // world width (negative when mirrored), height
 attribute vec4 iRect;    // atlas rectangle in texels: x, y, w, h
 attribute vec4 iTint;    // r, g, b, flash
-attribute vec4 iFx;      // charred, outline, outline color packed as 0xRRGGBB, unused
+attribute vec4 iFx;      // charred, outline, outline color packed as 0xRRGGBB, glow (heat)
 varying vec2 vUv;
 varying vec4 vRect;
 varying vec4 vTint;
-varying vec2 vFx;
+varying vec3 vFx;
 varying vec3 vOutline;
 void main() {
   vec2 p = position.xy * iSize;
@@ -32,7 +33,7 @@ void main() {
   vUv = uv;
   vRect = iRect;
   vTint = iTint;
-  vFx = iFx.xy;
+  vFx = vec3(iFx.xy, iFx.w);
   float o = iFx.z;
   vOutline = vec3(floor(o / 65536.0), mod(floor(o / 256.0), 256.0), mod(o, 256.0)) / 255.0;
 }`;
@@ -44,7 +45,7 @@ uniform float page;
 varying vec2 vUv;
 varying vec4 vRect;
 varying vec4 vTint;
-varying vec2 vFx;
+varying vec3 vFx;
 varying vec3 vOutline;
 // one texel of the sprite, clamped to its own rectangle (row 0 is the image's top)
 vec4 at(vec2 t) {
@@ -63,6 +64,13 @@ void main() {
   }
   vec3 col = c.rgb * vTint.rgb;
   col = mix(col, col * vec3(0.16, 0.13, 0.11), vFx.x);
+  // red hot to white hot (see Part.temp): the glow adds over the colour, brightest pixels most
+  if (vFx.z > 0.0) {
+    float g = vFx.z;
+    vec3 hot = mix(vec3(0.75, 0.08, 0.0), vec3(1.0, 0.55, 0.12), smoothstep(0.25, 0.65, g));
+    hot = mix(hot, vec3(1.0, 0.95, 0.8), smoothstep(0.7, 1.0, g));
+    col = mix(col, hot, min(1.0, g * 1.4) * (0.55 + 0.45 * dot(c.rgb, vec3(0.33))));
+  }
   col = mix(col, vec3(1.0, 0.97, 0.9), vTint.a);
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -132,12 +140,7 @@ class Batch {
 
   flush(): void {
     this.geo.instanceCount = this.count;
-    for (const [name, size] of ATTRS) {
-      const a = this.attrs[name];
-      a.clearUpdateRanges();
-      a.addUpdateRange(0, this.count * size);
-      a.needsUpdate = true;
-    }
+    for (const [name] of ATTRS) sendFirst(this.attrs[name], this.count);
   }
 }
 
@@ -279,6 +282,8 @@ export class Sprite {
   b = 1;
   flash = 0;
   charred = 0;
+  /** 0..1: red hot to white hot (see Part.temp). */
+  glow = 0;
   outline = false;
   outlineColor = 0xf2d16b;
 
@@ -324,7 +329,7 @@ export class Sprite {
     d.iFx[o] = this.charred;
     d.iFx[o + 1] = this.outline ? 1 : 0;
     d.iFx[o + 2] = this.outlineColor;
-    d.iFx[o + 3] = 0;
+    d.iFx[o + 3] = this.glow;
     o = i * 2;
     d.iSize[o] = this.w;
     d.iSize[o + 1] = this.h;

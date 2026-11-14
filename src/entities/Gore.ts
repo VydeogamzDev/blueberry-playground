@@ -9,6 +9,7 @@ import type { Entity } from '../world/Entity';
 import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
 import type { EntityConfig, ItemDef, SpawnOptions } from '../world/types';
+import type { Debris } from './Debris';
 
 /** What a piece is: torn flesh (a person's or an animal's), or an android's plating. */
 export type GoreKind = 'flesh' | 'plating';
@@ -25,27 +26,49 @@ export interface GoreConfig extends EntityConfig {
 /** Plating torn off an android: it's a machine's. */
 const PLATE: PhysMaterial = { ...MAT.robot, name: 'Plating' };
 
-/** The biggest piece kept whole (px a side): a body's parts are well within it. */
-const MAX_SIDE = 48;
+/**
+ * The biggest piece kept whole (px a side) when one's read from a save, a paste or a
+ * guest: the biggest animals' parts are well within it (at 48, a big one's was cut
+ * down to a scrap when loaded).
+ */
+const MAX_SIDE = 96;
 
 /** The pixels of the configs made by goreConfig(), which only read them out of base64 for a save. */
 const artOfConfig = new WeakMap<object, PixelArt>();
 
-/** A config from a save or a paste, made safe: a known kind, a size within limits, pixels to match (a scrap of flesh if not). */
-export function readGoreConfig(c: EntityConfig | undefined): GoreConfig {
+/** A piece's pixels in a config: its size, and its pixels (RGB and 255 where solid, base64). */
+export interface PixelsConfig {
+  w: number;
+  h: number;
+  px: string;
+}
+
+/**
+ * The size and pixels of a config from a save, a paste or a guest, if they're safe:
+ * within `maxSide` a side, and as many pixels as that, some solid (null if not).
+ */
+export function readPixels(c: EntityConfig | undefined, maxSide: number): PixelsConfig | null {
   // (one made here is safe as it is)
-  if (c && artOfConfig.has(c)) return c as GoreConfig;
-  const kind: GoreKind = c?.kind === 'plating' ? 'plating' : 'flesh';
+  if (c && artOfConfig.has(c)) return c as unknown as PixelsConfig;
   const w = Math.round(Number(c?.w));
   const h = Math.round(Number(c?.h));
-  if (w >= 1 && h >= 1 && w <= MAX_SIDE && h <= MAX_SIDE && typeof c?.px === 'string') {
+  if (w >= 1 && h >= 1 && w <= maxSide && h <= maxSide && typeof c?.px === 'string') {
     try {
       const b = fromBase64(c.px);
-      if (b.length === w * h * 4 && b.some((v, i) => i % 4 === 3 && v)) return { w, h, px: c.px, kind };
+      if (b.length === w * h * 4 && b.some((v, i) => i % 4 === 3 && v)) return { w, h, px: c.px };
     } catch {
-      // (not base64: the scrap below)
+      // (not base64)
     }
   }
+  return null;
+}
+
+/** A config from a save or a paste, made safe: a known kind, a size within limits, pixels to match (a scrap of flesh if not). */
+export function readGoreConfig(c: EntityConfig | undefined): GoreConfig {
+  if (c && artOfConfig.has(c)) return c as GoreConfig;
+  const kind: GoreKind = c?.kind === 'plating' ? 'plating' : 'flesh';
+  const px = readPixels(c, MAX_SIDE);
+  if (px) return { ...px, kind };
   const art = new PixelArt(3, 3).rect(0, 0, 3, 3, kind === 'flesh' ? 0x8e1a1a : 0x3a3f46);
   return goreConfig(art, kind);
 }
@@ -55,8 +78,14 @@ export function readGoreConfig(c: EntityConfig | undefined): GoreConfig {
  * when it's first read, for a save or a copy (a blast tears off dozens of pieces at once).
  */
 export function goreConfig(art: PixelArt, kind: GoreKind): GoreConfig {
+  return pixelsConfig(art, { kind }) as GoreConfig;
+}
+
+/** A config with these pixels and `extra` (see goreConfig()). */
+export function pixelsConfig<T extends object>(art: PixelArt, extra: T): T & PixelsConfig {
   let px: string | undefined;
-  const cfg: GoreConfig = {
+  const cfg = {
+    ...extra,
     w: art.w,
     h: art.h,
     get px() {
@@ -74,13 +103,13 @@ export function goreConfig(art: PixelArt, kind: GoreKind): GoreConfig {
       }
       return px;
     },
-    kind,
   };
   artOfConfig.set(cfg, art);
   return cfg;
 }
 
-function artOf(cfg: GoreConfig): PixelArt {
+/** A config's pixels as art (made once for one made here). */
+export function artOf(cfg: PixelsConfig): PixelArt {
   const made = artOfConfig.get(cfg);
   if (made) return made;
   const a = new PixelArt(cfg.w, cfg.h);
@@ -90,7 +119,7 @@ function artOf(cfg: GoreConfig): PixelArt {
 }
 
 /** Its collider: the convex hull of its pixels (from its middle, y up), counter-clockwise. */
-function hullOf(art: PixelArt): ShapeSpec & { kind: 'poly' } {
+export function hullOf(art: PixelArt, most = Infinity): ShapeSpec & { kind: 'poly' } {
   // (of each row's first and last pixels' corners: those between are inside it)
   // Each corner is one number, x then y (in half pixels, made positive), sorted by
   // x then y as a typed array sorts numbers: pairs sorted with a comparison were a
@@ -129,7 +158,24 @@ function hullOf(art: PixelArt): ShapeSpec & { kind: 'poly' } {
     while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], i) <= 0) upper.pop();
     upper.push(i);
   }
-  return { kind: 'poly', pts: lower.slice(0, -1).concat(upper.slice(0, -1)).map((i): [number, number] => [xs[i], ys[i]]) };
+  const pts = lower.slice(0, -1).concat(upper.slice(0, -1)).map((i): [number, number] => [xs[i], ys[i]]);
+  // (no more than `most` corners: each time the one whose loss takes least away)
+  while (pts.length > Math.max(3, most)) {
+    let worst = 0;
+    let least = Infinity;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[(i + pts.length - 1) % pts.length];
+      const b = pts[i];
+      const c = pts[(i + 1) % pts.length];
+      const area = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]));
+      if (area < least) {
+        least = area;
+        worst = i;
+      }
+    }
+    pts.splice(worst, 1);
+  }
+  return { kind: 'poly', pts };
 }
 
 /** How long a fresh piece of flesh drips (s), and how fast at first (drops a second). */
@@ -230,6 +276,21 @@ export class Gore extends Prop {
   onBullet(hit: Parameters<Prop['onBullet']>[0]): void {
     if (this.kind === 'flesh') this.game.particles.blood(hit.point.x, hit.point.y, -hit.dir.x, -hit.dir.y + 0.3, 6, 2.5, hit.part.body);
     super.onBullet(hit);
+  }
+
+  /** Flesh and plating go to bits, not to pieces of their own. */
+  protected breakApart(): Debris[] {
+    const p = this.main;
+    const g = this.game;
+    const n = Math.min(60, Math.round((p.w * p.h) / 10));
+    for (let i = 0; i < n; i++) {
+      const ix = Math.floor(Math.random() * p.w);
+      const iy = Math.floor(Math.random() * p.h);
+      if (!p.solidAt(ix, iy)) continue;
+      const w = p.pixelToWorld(ix, iy);
+      g.particles.debris(w.x, w.y, (Math.random() - 0.5) * 2, 1, 1, p.mat.debrisColor, 3);
+    }
+    return [];
   }
 
   shatter(point?: V2): void {

@@ -80,6 +80,20 @@ export class ConnectTool {
   /** Where the anchors that would be made go, for the overlay's rings (the ends of every ghost). */
   ends: Anchor[] = [];
 
+  /** The floating origin moved (see world/Origin): the ends being made move with the world. */
+  shift(dx: number, dy: number): void {
+    const p = this.pending;
+    if (p) {
+      p.a = { ...p.a, world: { x: p.a.world.x + dx, y: p.a.world.y + dy }, local: p.a.part ? p.a.local : { x: p.a.local.x + dx, y: p.a.local.y + dy } };
+    }
+    if (this.cut) {
+      this.cut.x0 += dx;
+      this.cut.y0 += dy;
+    }
+    this.hover = null;
+    this.ends = [];
+  }
+
   constructor(private c: Controls) {
     this.preview = new ConnectionPreview(c.game);
   }

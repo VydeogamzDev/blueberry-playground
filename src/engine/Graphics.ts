@@ -16,6 +16,8 @@ export interface Graphics {
   particles: number;
   /** Spent cases left lying about at most (the oldest go first). */
   cases: number;
+  /** Broken pieces (scrap, splinters, shards, rubble) left lying about at most (the oldest go first). */
+  debris: number;
   /** Physics solver iterations: more hold stacks, joints and contraptions stiffer, for more time a step. */
   iterations: number;
   /** Physics steps: short ones while the scene allows ('auto'), or always the long one ('long': half as many). */
@@ -33,10 +35,10 @@ export type PresetName = 'potato' | 'medium' | 'high' | 'max';
  * stiffer physics and more cases about, within reason (a battle still runs).
  */
 export const PRESETS: Record<PresetName, Graphics> = {
-  potato: { resolution: 0.5, lights: 0, particles: 0.25, cases: 20, iterations: 4, step: 'long', fps: 30 },
-  medium: { resolution: 0.75, lights: 6, particles: 0.5, cases: 80, iterations: 5, step: 'auto', fps: 60 },
-  high: { resolution: 1, lights: 16, particles: 1, cases: 240, iterations: 6, step: 'auto', fps: 'display' },
-  max: { resolution: 1, lights: 16, particles: 1, cases: 400, iterations: 12, step: 'auto', fps: 'display' },
+  potato: { resolution: 0.5, lights: 0, particles: 0.25, cases: 20, debris: 40, iterations: 4, step: 'long', fps: 30 },
+  medium: { resolution: 0.75, lights: 6, particles: 0.5, cases: 80, debris: 120, iterations: 5, step: 'auto', fps: 60 },
+  high: { resolution: 1, lights: 16, particles: 1, cases: 240, debris: 250, iterations: 6, step: 'auto', fps: 'display' },
+  max: { resolution: 1, lights: 16, particles: 1, cases: 400, debris: 500, iterations: 12, step: 'auto', fps: 'display' },
 };
 
 export const PRESET_NAMES: { id: PresetName; label: string }[] = [
@@ -52,6 +54,7 @@ export const GRAPHICS_RANGE = {
   lights: [0, 4, 8, 16],
   particles: [0.25, 0.5, 0.75, 1],
   cases: [0, 20, 80, 240, 400],
+  debris: [40, 120, 250, 500],
   iterations: { min: 1, max: 50 },
   fps: ['display', 30, 60, 75, 90, 120, 144, 165, 240, 360, 'unlimited'] as FpsCap[],
 };
@@ -98,6 +101,7 @@ export function loadGraphics(): Graphics {
     g.lights = nearest(R.lights, s.lights, g.lights);
     g.particles = nearest(R.particles, s.particles, g.particles);
     g.cases = nearest(R.cases, s.cases, g.cases);
+    g.debris = nearest(R.debris, s.debris, g.debris);
     if (typeof s.iterations === 'number' && s.iterations >= R.iterations.min && s.iterations <= R.iterations.max) g.iterations = Math.round(s.iterations);
     if (s.step === 'auto' || s.step === 'long') g.step = s.step;
     if (R.fps.includes(s.fps as FpsCap)) g.fps = s.fps as FpsCap;

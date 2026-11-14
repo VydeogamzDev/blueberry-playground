@@ -27,6 +27,31 @@ const PAINT = { pp: 'paintPixel', pa: 'paintAtPixel', pc: 'carve', pr: 'repair' 
 
 type Wrapped = { target: object; name: string; own: boolean; orig: unknown };
 
+/** Where each effect's place is in its arguments: x's index (y's is the next). A beam has two ends. */
+const AT: Record<string, number[]> = { pe: [2], pb: [1], pl: [2], ps: [1], pd: [1], pk: [1], pf: [1], px: [1], la: [1], bf: [1], bm: [1, 3], st: [1], ce: [1] };
+
+/**
+ * An effect moved by (dx, dy), in place: the floating origin moved (see world/Origin)
+ * between its being recorded and played. Paint is part-local and stays as it is.
+ */
+export function shiftFx(fx: Fx, dx: number, dy: number): void {
+  const a = fx as unknown[];
+  if (fx[0] === 'sp') {
+    const o = a[2] as { x?: number } | undefined;
+    if (o && typeof o.x === 'number') a[2] = { ...o, x: o.x + dx };
+    return;
+  }
+  for (const i of AT[fx[0]] ?? []) {
+    if (typeof a[i] === 'number') a[i] = (a[i] as number) + dx;
+    if (typeof a[i + 1] === 'number') a[i + 1] = (a[i + 1] as number) + dy;
+  }
+}
+
+/** A held loop's place moved by dx (see shiftFx()). */
+function shiftHold(h: Hold, dx: number): void {
+  if (h[3] !== null) h[3] += dx;
+}
+
 /** The part (and so the entity) a rigid body belongs to. */
 function partOfBody(game: Game, b: RAPIER.RigidBody | null | undefined): Part | null {
   if (!b || !b.isValid() || b.numColliders() === 0) return null;
@@ -141,6 +166,12 @@ export class FxRecorder {
     }
   }
 
+  /** What's recorded and not yet sent, moved with the floating origin (see world/Origin): the tick that takes it is from the new one. */
+  shift(dx: number, dy: number): void {
+    for (const f of this.list) shiftFx(f, dx, dy);
+    for (const h of this.holds.values()) shiftHold(h, dx);
+  }
+
   /** The effects since the last call, and the loops held meanwhile. */
   take(): { fx: Fx[]; holds: Hold[] } {
     const fx = this.list;
@@ -246,6 +277,11 @@ export class FxPlayer {
 
   clear(): void {
     this.holds.clear();
+  }
+
+  /** The loops held, moved with the floating origin (see world/Origin). */
+  shift(dx: number): void {
+    for (const { h } of this.holds.values()) shiftHold(h, dx);
   }
 }
 

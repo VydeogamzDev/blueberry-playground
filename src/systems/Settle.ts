@@ -33,6 +33,14 @@ const LIGHT_LINK = 0.02;
 const SLOW_DIST = 0.1;
 const SLOW_SPEED = 4;
 const SLOW_CHECKS = 16;
+/**
+ * But the whole of it (its mass's mean velocity, m/s) going faster than this isn't
+ * creeping, whatever its links do: something long at rest, kicked just now (a blast,
+ * a shove) and not yet gone anywhere by the check, isn't put back to sleep.
+ */
+const SLOW_WHOLE = 0.5;
+/** Found drifting in the sea within this long (s), something doesn't count as at rest (see Entity.adriftAt). */
+const ADRIFT_HOLD = 0.6;
 
 /**
  * Marks entities whose parts have had no net movement for two checks in a row
@@ -44,14 +52,24 @@ export function restCheck(entities: Entity[]): void {
     if (e.destroyed) continue;
     const parts = e.parts.filter((p) => !p.destroyed && !p.frozen);
     const ref = e.restRef;
-    let still = ref.length === parts.length * 3 && e.canRest();
+    // (sinking or rising in the sea, however slowly, it isn't at rest: put to sleep, it would hang there)
+    let still = ref.length === parts.length * 3 && e.canRest() && e.game.time - e.adriftAt > ADRIFT_HOLD;
     let slow = still;
     let awake = false;
     const mass = parts.length > 1 ? parts.reduce((m, p) => m + p.mass, 0) : 0;
+    let mx = 0;
+    let my = 0;
+    let mm = 0;
     for (let i = 0; i < parts.length && slow; i++) {
       const p = parts[i];
       if (!awake && !p.body.isSleeping()) awake = true;
-      const v = Math.hypot(p.vx, p.vy);
+      // (as this step left it: vx is a step behind, and blind to a blast at the end of the last one)
+      const vx = p.stepVx;
+      const vy = p.stepVy;
+      mx += vx * p.mass;
+      my += vy * p.mass;
+      mm += p.mass;
+      const v = Math.hypot(vx, vy);
       if (v > SLOW_SPEED) slow = false;
       if (v > REST_SPEED) still = false;
       if (mass && p.mass < mass * LIGHT_LINK) continue;
@@ -61,6 +79,7 @@ export function restCheck(entities: Entity[]): void {
       if (d > REST_DIST || r > REST_DIST * 1.5) still = false;
       if (d > SLOW_DIST || r > SLOW_DIST) slow = false;
     }
+    if (slow && mm > 0 && Math.hypot(mx, my) > SLOW_WHOLE * mm) slow = false;
     still &&= slow;
     e.restChecks = still ? e.restChecks + 1 : 0;
     e.slowChecks = slow ? e.slowChecks + 1 : 0;

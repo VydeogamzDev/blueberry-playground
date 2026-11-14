@@ -43,6 +43,10 @@ export interface PartSpec {
   textureKey?: string;
   /** Points connections snap to (a motor's axle, a gate's ports: see tools/AnchorSnap). */
   attach?: AttachPoint[];
+  /** How deep (m) it is front to back, for the air (see systems/Aero): a parachute's canopy is deep. */
+  depth?: number;
+  /** There's air in it (a barrel, a float, a car's cabin): water holds it up by its looks, not what it's made of (see Fluid floatShare()). */
+  hollow?: boolean;
 }
 
 /** What an attach point is for: the place to fix a machine by, to fix things to it, or a wire's way in or out. */
@@ -102,6 +106,8 @@ export class Part {
   burning = 0;
   /** 0..1 visual char amount. */
   charred = 0;
+  /** 0..1: how hot it glows, red to white (see systems/Heat). */
+  glow = 0;
   /** Oil soaked in (0..1): makes anything burn. */
   oil = 0;
   frozen = false;
@@ -109,6 +115,20 @@ export class Part {
   weightless = false;
   /** How much more than its size water holds it up (see Fluid, Water): an air-filled tube's more. */
   buoyancy = 1;
+  /** Its temperature (°C): the air's unless something heated or chilled it (see systems/Heat). */
+  temp = 20;
+  /** How deep (m) it is front to back, if its spec says (see systems/Aero). */
+  readonly depth: number | undefined;
+  /** There's air in it: water holds it up by its looks (see PartSpec.hollow). */
+  readonly hollow: boolean;
+  /** Is what the air makes of its shape still right (see systems/Aero)? Not once its mass or colliders change. */
+  aeroFresh = false;
+  /**
+   * Its body's linear damping as made (the air's settling hold on it), and what it's
+   * set to now: up high on the World it fades with the air (see systems/Altitude).
+   */
+  readonly linDamp: number;
+  linDampNow: number;
   /** Self-collision group: parts with the same non-zero group never collide. */
   get group(): number {
     return this._group;
@@ -176,6 +196,13 @@ export class Part {
   vx = 0;
   vy = 0;
   av = 0;
+  /**
+   * Its velocity as this step's physics left it (read with its pose, see poseFrom()).
+   * vx and vy are a step behind until syncAll(), and miss what a blast at the end of
+   * the last step gave it.
+   */
+  stepVx = 0;
+  stepVy = 0;
 
   constructor(entity: Entity, spec: PartSpec) {
     this.entity = entity;
@@ -191,12 +218,16 @@ export class Part {
     this.spriteOffset = spec.spriteOffset ?? { x: 0, y: 0 };
     this.attach = spec.attach;
     this.gravity = spec.gravityScale ?? 1;
+    this.depth = spec.depth;
+    this.hollow = spec.hollow ?? false;
+    this.temp = entity.game.air.tempAt(spec.y);
+    this.linDamp = this.linDampNow = spec.linearDamping ?? 0.05;
 
     const world = entity.game.physics.world;
     const bd = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(spec.x, spec.y)
       .setRotation(spec.angle ?? 0)
-      .setLinearDamping(spec.linearDamping ?? 0.05)
+      .setLinearDamping(this.linDamp)
       .setAngularDamping(spec.angularDamping ?? 0.15)
       .setCcdEnabled(spec.ccd ?? false)
       .setGravityScale(spec.gravityScale ?? 1);
@@ -292,6 +323,7 @@ export class Part {
     const phys = this.entity.game.physics;
     const col = phys.world.createCollider(desc, this.body);
     this.massStep = -1;
+    this.aeroFresh = false;
     this.entity.massChanged();
     col.setContactFilter(this._group, this._noCollide !== null);
     this.colliders.push(col);
@@ -423,6 +455,7 @@ export class Part {
       this.flash = Math.max(0, this.flash - 0.08);
     } else s.flash = 0;
     s.charred = this.charred * 0.85;
+    s.glow = this.glow;
     s.write();
     if (this.texDirty) {
       this.sprites.upload(this.region, this.image);
@@ -478,12 +511,27 @@ export class Part {
   /** Its pose as read with everyone's (see Physics.readPoses()): six numbers at `k` (see syncFrom()). */
   poseFrom(s: Float32Array, k: number): void {
     // (its body gone: read as it would be)
-    if (s[k] === s[k]) this.setPose(s[k], s[k + 1], s[k + 2]);
+    if (s[k] !== s[k]) return;
+    this.setPose(s[k], s[k + 1], s[k + 2]);
+    this.stepVx = s[k + 3];
+    this.stepVy = s[k + 4];
   }
 
   /** Its body was put somewhere (body.setTranslation(), setRotation()): bodyX and the rest read it again. */
   moved(): void {
     this.poseStep = -1;
+  }
+
+  /**
+   * The floating origin moved (see world/Origin): its body was moved by (dx, dy) along
+   * with everything's, and so are the poses it's drawn between.
+   */
+  shifted(dx: number, dy: number): void {
+    this.x += dx;
+    this.y += dy;
+    this.px += dx;
+    this.py += dy;
+    this.moved();
   }
 
   // (as rotate() turns them, with the angle's cosine and sine worked out once a step)
@@ -655,13 +703,24 @@ export class Part {
   /** The share of its picture carved away (0..1). */
   lost(): number {
     if (!this.holeCount) return 0;
+    const n = this.filledPx();
+    return n ? this.holeCount / n : 0;
+  }
+
+  /** Its picture's solid pixels, as drawn (see solidPx()). */
+  private filledPx(): number {
     let n = filledCount.get(this.art);
     if (n === undefined) {
       n = 0;
       for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) if (this.art.filled(x, y)) n++;
       filledCount.set(this.art, n);
     }
-    return n ? this.holeCount / n : 0;
+    return n;
+  }
+
+  /** Its solid pixels: its picture's, less what's carved away. */
+  solidPx(): number {
+    return Math.max(0, this.filledPx() - this.holeCount);
   }
 
   /**
@@ -747,6 +806,7 @@ export class Part {
       if (t === RAPIER.ShapeType.RoundCuboid) c.setRoundRadius(r);
       c.setTranslationWrtParent({ x: (bx0 + bx1) / 2, y: (by0 + by1) / 2 });
       c.setDensity((base * (W * H)) / Math.max(1e-9, (W - 2 * r) * (H - 2 * r)));
+      this.aeroFresh = false;
     }
   }
 
@@ -764,6 +824,7 @@ export class Part {
     if (this.destroyed) return;
     this.hp = this.maxHp;
     this.entity.game.fire.extinguish(this);
+    this.entity.game.heat.reset(this);
     this.charred = 0;
     this.oil = 0;
     if (this.holes) {
@@ -778,6 +839,7 @@ export class Part {
       }
       this.fitFrom = null;
       this.massStep = -1;
+      this.aeroFresh = false;
       this.entity.massChanged();
     }
     if (this.ownsImage) {

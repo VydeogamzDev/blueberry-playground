@@ -7,6 +7,9 @@ import type { Game } from '../world/Game';
 import { MAT, type PhysMaterial } from '../world/Materials';
 import type { ItemDef, SpawnOptions } from '../world/types';
 import { baconLinkArt, BACON_LINKS, BACON_LINK_W } from '../art/bacon';
+import type { V2 } from '../engine/math';
+import type { DamageKind } from '../world/types';
+import { BLAST_K, HP_PER_MPA, blastShare } from './Prop';
 
 /** Cooked meat: burns like meat, but doesn't bleed. */
 export const BACON: PhysMaterial = { ...MAT.flesh, name: 'Bacon', bleeds: false, debrisColor: 0x9a4a2c };
@@ -40,6 +43,8 @@ export class Bacon extends Entity {
         linearDamping: 0.1,
         textureKey: `bacon:${i}`,
       });
+      // (as strong as meat is, for its size: a round or a blast near it tears a link off)
+      p.maxHp = p.hp = Math.max(4, BACON.strength * p.solidPx() * PX * PX * HP_PER_MPA);
       // light links get extra inertia so they don't buzz when squeezed under something (as animals' paws do)
       p.body.setAdditionalMassProperties(0, { x: 0, y: 0 }, p.body.principalInertia() * 2, true);
       if (prev) {
@@ -51,5 +56,23 @@ export class Bacon extends Entity {
       }
       prev = p;
     }
+  }
+
+  /**
+   * A link torn to bits by a round, a blade or a blast (or burnt away), as meat is:
+   * before, bacon had no hit points that did anything, and a nuke going off on it left
+   * it whole.
+   */
+  damage(part: Part, amount: number, kind: DamageKind, _point?: V2, _dir?: V2): void {
+    if (part.destroyed || this.destroyed) return;
+    part.hp -= amount * (kind === 'explosion' ? BLAST_K * blastShare(part) : kind === 'fire' ? 0.3 : 1);
+    if (part.hp > 0) return;
+    const g = this.game;
+    for (let i = 0; i < 8; i++) {
+      const w = part.pixelToWorld(Math.random() * part.w, Math.random() * part.h);
+      g.particles.debris(w.x, w.y, (Math.random() - 0.5) * 2, 1, 1, BACON.debrisColor, 3);
+    }
+    g.sound.squish(0.4, part.x, 0.6);
+    this.removePart(part);
   }
 }

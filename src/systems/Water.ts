@@ -3,7 +3,9 @@ import { PX, WORLD } from '../engine/constants';
 import { UNIT_QUAD } from '../engine/Renderer';
 import { PK } from './Particles';
 import { liquidSound, LIQUID_COLORS, Liquid } from './Liquids';
-import { carriedMass, quadDrag, LIVE_FLICKER } from './Fluid';
+import { carriedMass, quadDrag, floatShare, LIVE_FLICKER } from './Fluid';
+import { isLiving } from './Fighting';
+import type { V2 } from '../engine/math';
 import type { Game } from '../world/Game';
 import type { MapSpec } from '../world/Maps';
 import type { Part } from '../world/Part';
@@ -23,6 +25,27 @@ const SPLASH_SPEED = 3;
 const FALL_EVERY = 0.5;
 /** How far (m) below where the floor would be, in the void, fallen things are taken away. */
 const FALL_DEPTH = 40;
+/**
+ * Held up harder or less hard than it's weighed down by more than this share of its
+ * weight, something in the sea isn't floating still: drifting, unless it rests on something.
+ */
+const UNBALANCED = 0.1;
+/** The same for something all under (it has no level to float at: see step()). */
+const UNBALANCED_UNDER = 0.01;
+/** Slower than this (m/s), something drifting might be taken for at rest: it's looked at. */
+const SLOW = 0.3;
+/** How often (s) what's slow in the sea is looked at, and what's asleep in it. */
+const CHECK_EVERY = 0.25;
+const CHECK_ASLEEP = 1;
+/**
+ * Bobbing on the surface, a float makes waves, and they carry its bobbing away: so much of
+ * what would stop it dead (by how stiffly the water holds it at its level, and its weight).
+ * The water's drag alone, by how much of it is under, left a light float riding high bobbing
+ * for ever. All under, it has no waterline to make waves at, and none of this.
+ */
+const HEAVE_DAMP = 0.25;
+/** Points a side in the grid over a hollow thing's box (see boxOf()). */
+const BOX_GRID = 10;
 
 const WATER_FRAG = /* glsl */ `
 uniform float uLevel;
@@ -76,6 +99,11 @@ export class Water {
   private drawn: MapSpec | null = null;
   private t = 0;
   private fallT = 0;
+  /** Grids over hollow things' boxes (see boxOf()). */
+  private boxes = new WeakMap<Part, { art: unknown; pts: Float32Array }>();
+  /** Till the next look at what's slow in the sea, and at what's asleep in it (s). */
+  private checkT = 0;
+  private sleepT = 0;
   /** What moves with each thing in the sea, as of this step (see carriedMass()). */
   private carried = new Map<Entity, number>();
 
@@ -127,8 +155,16 @@ export class Water {
     if (!w) return;
     const up = -g.gravity;
     this.carried.clear();
+    // (what's slow, or asleep, in it is looked at now and then: drifting, or resting?)
+    this.checkT -= dt;
+    const look = this.checkT <= 0;
+    if (look) this.checkT = CHECK_EVERY;
+    this.sleepT -= dt;
+    const lookAsleep = this.sleepT <= 0;
+    if (lookAsleep) this.sleepT = CHECK_ASLEEP;
     for (const e of g.entities) {
       if (e.destroyed) continue;
+      const living = isLiving(e);
       for (const p of e.parts) {
         if (p.destroyed || p.frozen || p.x < w.x0 || p.x > w.x1) continue;
         // how far down it reaches, turned as it is
@@ -136,21 +172,135 @@ export class Water {
         const bottom = p.y - hy;
         if (bottom >= w.level) continue;
         const b = p.body;
-        // (at rest on the bed, or floating still: left asleep)
-        if (b.isSleeping()) continue;
-        const under = Math.min(1, (w.level - bottom) / (2 * hy));
-        if (p.vy < -SPLASH_SPEED && p.py - hy >= w.level) this.splash(p, w.level, -p.vy);
+        const asleep = b.isSleeping();
+        // (at rest on the bed, or floating still, it's left asleep: only now and then is it
+        // looked at, whether it's hanging in the water instead)
+        if (asleep && !lookAsleep) continue;
+        const sunk = this.under(p, w.level, hy, living);
+        if (!sunk) continue;
+        const { under } = sunk;
         const m = p.mass;
-        const lift = p.weightless ? 0 : DENSITY * p.buoyancy * p.w * p.h * PX * PX * under * up;
+        const gs = b.gravityScale();
+        const lift = p.weightless ? 0 : sunk.lift * up;
+        // neither held up as hard as it's weighed down nor resting on anything, it's drifting:
+        // never at rest, however slowly it goes (see Entity.adriftAt), and if asleep, woken
+        // (floating, a little either way is only bobbing about where it floats; all under, it
+        // floats nowhere: as little as a hundredth either way, and it's on its way down or up)
+        const unbalanced = Math.abs(lift - m * up * gs) > (under < 0.999 ? UNBALANCED : UNBALANCED_UNDER) * m * up;
+        if (asleep) {
+          if (unbalanced && !this.touching(p)) b.wakeUp();
+          continue;
+        }
+        if (look && unbalanced && p.vx * p.vx + p.vy * p.vy < SLOW * SLOW && !this.touching(p)) e.adriftAt = g.time;
+        if (p.vy < -SPLASH_SPEED && p.py - hy >= w.level) this.splash(p, w.level, -p.vy);
         const k = Math.min(1, DRAG * under * dt);
         const mm = carriedMass(g, p, this.carried);
-        const uy = p.vy + (lift / mm + g.gravity * b.gravityScale()) * dt;
-        const q = quadDrag(p, p.vx, uy, under, dt, mm);
-        b.applyImpulse({ x: -p.vx * (m * k + q), y: lift * dt - p.vy * m * k - uy * q }, true);
-        b.setAngvel(p.av * (1 - Math.min(1, SPIN_DRAG * under * dt)), true);
+        const uy = p.vy + (lift / mm + g.gravity * gs) * dt;
+        // (the water in its way as thick through as it is: a pistol's no thicker than it weighs, see floatShare())
+        const q = quadDrag(p, p.vx, uy, under * sunk.share, dt, mm);
+        // (and its bobbing, carried off by the waves it makes: see HEAVE_DAMP)
+        let heave = 0;
+        if (sunk.stiff > 0) {
+          const a = (2 * HEAVE_DAMP * Math.sqrt(sunk.stiff * up * mm) * dt) / mm;
+          // (of what the drag left: together never more than stops it)
+          heave = ((mm - q) * a) / (1 + a);
+        }
+        b.applyImpulse({ x: -p.vx * (m * k + q), y: -p.vy * m * k - uy * (q + heave) }, true);
+        // held up at the middle of what's under (so a plank lies flat on the water and what's
+        // top-heavy rolls over), or for living things (their lungs: see Breath), at their middle
+        if (sunk.at) b.applyImpulseAtPoint({ x: 0, y: lift * dt }, sunk.at, true);
+        else b.applyImpulse({ x: 0, y: lift * dt }, true);
+        b.setAngvel(b.angvel() * (1 - Math.min(1, SPIN_DRAG * under * dt)), true);
         if (p.burning > 0 && under > 0.3) g.fire.douse(p, 1);
       }
     }
+  }
+
+  /**
+   * How much of a part is under the sea at `level`, how hard (per m/s² of gravity) the
+   * water holds it up, and where (null: at its middle). A living thing's limbs by their
+   * size, as Breath has them float; anything else by its solid pixels under the surface,
+   * as much as what it's made of floats (see floatShare()): not its whole picture's box,
+   * which held up a chair's gaps and a pistol's empty corners and set them on the water.
+   */
+  private under(p: Part, level: number, hy: number, living: boolean): { under: number; lift: number; share: number; stiff: number; at: V2 | null } | null {
+    if (living) {
+      const under = Math.min(1, (level - (p.y - hy)) / (2 * hy));
+      return { under, lift: DENSITY * p.buoyancy * p.w * p.h * PX * PX * under, share: 1, stiff: 0, at: null };
+    }
+    const s = this.game.fluid.sampled(p);
+    // (with air in it, its whole picture's box: what's inside its walls is air, and holds it up too)
+    const pts = p.hollow ? this.boxOf(p) : s.pts;
+    const c = Math.cos(p.a);
+    const sn = Math.sin(p.a);
+    // each point stands for a cell round it, and counts as much of that as is under: counted
+    // whole, what's under went up in steps as rows of them crossed the surface (a plank's one
+    // row: all or nothing), and a light float bounced for ever between them
+    const cw = p.hollow ? (p.w * PX) / BOX_GRID : Math.sqrt(s.area);
+    const ch = p.hollow ? (p.h * PX) / BOX_GRID : cw;
+    const tall = Math.max(1e-4, cw * Math.abs(sn) + ch * Math.abs(c));
+    let n = 0;
+    let ux = 0;
+    let uy = 0;
+    // (the cells the surface crosses: how much more goes under as it goes down, see stiff)
+    let wet = 0;
+    for (let k = 0; k < pts.length; k += 2) {
+      const y = p.y + pts[k] * sn + pts[k + 1] * c;
+      const f = (level - y) / tall + 0.5;
+      if (f <= 0) continue;
+      let w = 1;
+      if (f < 1) {
+        w = f;
+        wet++;
+      }
+      n += w;
+      ux += (p.x + pts[k] * c - pts[k + 1] * sn) * w;
+      uy += y * w;
+    }
+    if (n <= 0) return null;
+    const under = n / (pts.length / 2);
+    const share = floatShare(p, s);
+    const area = p.hollow ? p.w * p.h * PX * PX : s.area * (s.pts.length / 2) * share;
+    const lift = DENSITY * p.buoyancy * area;
+    // (stiff: how much harder it's held up for each metre further down, per m/s² of gravity)
+    return { under, lift: lift * under, share, stiff: (lift * wet) / (tall * (pts.length / 2)), at: { x: ux / n, y: uy / n } };
+  }
+
+  /** A part's picture's box, a grid of points over it (body-local m): what's under of something hollow. */
+  private boxOf(p: Part): Float32Array {
+    let b = this.boxes.get(p);
+    if (b && b.art === p.art) return b.pts;
+    const n = BOX_GRID;
+    const pts = new Float32Array(n * n * 2);
+    let k = 0;
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const l = p.pixelToLocal(((i + 0.5) / n) * p.w - 0.5, ((j + 0.5) / n) * p.h - 0.5);
+        pts[k++] = l.x;
+        pts[k++] = l.y;
+      }
+    }
+    b = { art: p.art, pts };
+    this.boxes.set(p, b);
+    return pts;
+  }
+
+  /** Is it touching anything (resting on the bed, or on something else)? */
+  private touching(p: Part): boolean {
+    const world = this.game.physics.world;
+    let hit = false;
+    for (const c of p.colliders) {
+      world.contactPairsWith(c, (o) => {
+        if (hit) return;
+        const ob = o.parent();
+        if (!ob || ob.handle === p.body.handle) return;
+        world.contactPair(c, o, (man) => {
+          if (man.numContacts() > 0) hit = true;
+        });
+      });
+      if (hit) return true;
+    }
+    return false;
   }
 
   /** Water thrown up where something comes down into it, and its sound. */

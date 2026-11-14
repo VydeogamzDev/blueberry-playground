@@ -6,12 +6,13 @@ import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
 import { MAT, type PhysMaterial } from '../world/Materials';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
-import { limbArt, faceColors, EYE, MOUTH, HUMAN_SKIN, type BodyKind, type LimbKey, type Skin } from '../art/human';
+import { limbArt, faceColors, EYE, MOUTH, HUMAN_SKIN, GRANT_SKIN, type BodyKind, type Build, type LimbKey, type Skin } from '../art/human';
 import { ramp } from '../art/palette';
 import type { Item, Holder } from './Item';
 import { adrenalineRush, type Drug } from './Syringe';
 import { washBlood } from './Medical';
 import { Tendons } from '../systems/Tendons';
+import { Jolt } from '../systems/Jolt';
 import { FLESH, PLATING, breakUp, blastEnergy, gibNow, sliceLimb, takeChunk } from '../systems/Chunks';
 import { isFighter, isLiving, land, onFeet, stillUp, strikePoint, type Fighter } from '../systems/Fighting';
 import { allies, blastClear, bombNear, dress, dye, enemies, isTeamId, isTeamMachine, lyingNear, nearestEnemy, nearestFoe, onSide, TEAMS, undead, type TeamId } from '../systems/Teams';
@@ -78,6 +79,8 @@ export const meeting = (m: number, behind: number): number => (m === Infinity ? 
 
 /** The limbs of the trunk: a knock to one has the whole body behind it (see Human.backing()). */
 const TRUNK = new Set<string>(['upperTorso', 'midTorso', 'lowerTorso']);
+/** (m/s) What a person's body bears stopped all at once (a 10 m fall's landing): see systems/Jolt. */
+const JOLT_BEARS = 14;
 
 /** Failed attempts to stand before lying still until something changes. */
 const GIVE_UP = 4;
@@ -96,14 +99,57 @@ export const GAIT = {
   walk: 1.15, run: 2.2, swing: 0.36, runSwing: 0.45, lift: 0.8, runLift: 1.1,
   bend: 0.2, runBend: 0.35, drive: 5, accel: 2.5, runAccel: 4, top: 2.4,
 };
-/** Hip height above the soles (m). */
-const HIP_Y = 22.5 * PX;
-/** The trunk's center of mass above the soles, standing (m). */
-const TRUNK_Y = 32 * PX;
-
 /** Figure center height (px) used as the spawn reference point. */
 const MID_Y = 27.25;
 export const HUMAN_HALF_HEIGHT = MID_Y * PX;
+
+/**
+ * Grant is built different (see VARIANTS.grant): whatever harms him does a twentieth of
+ * the harm (`harm`), and he's half as dense again as anyone (`density`). He gets his
+ * blood back (`blood`, a second), his wounds close (`clot`, 1/s) and he heals (`heal`,
+ * of each limb's health a second) by himself. Nothing stops his heart, no virus takes
+ * hold of him, Bone Eating can't get into his bones, and he holds his breath five times
+ * as long. His blows hit as hard as anyone's on Ultra Strength, and send people flying.
+ */
+const GRIT = { harm: 20, density: 1.5, blood: 1, clot: 0.5, heal: 0.02 };
+
+/** Grant's limbs, where they differ from anyone's (see SPECS: the keys without F or B). */
+const GRANT_LIMBS: Record<string, Partial<LimbSpec>> = {
+  upperTorso: { cy: 27, shape: box(10, 10, 1.5, 0, -1) },
+  head: { cy: 38, jy: 33 },
+  midTorso: { cy: 20, shape: box(9, 5, 1), jy: 22 },
+  lowerTorso: { cy: 15, shape: box(10, 8, 1.5), jy: 18 },
+  upperLeg: { cy: 10, shape: box(5, 6, 1.6), jy: 12.5 },
+  lowerLeg: { cy: 5, shape: box(4.5, 6, 1.5), jy: 7.5 },
+  upperArm: { cy: 27.25, shape: box(4, 7.5, 1.4), jy: 30.5 },
+  lowerArm: { cy: 20.75, shape: box(4, 6.5, 1.4), jy: 23.75 },
+  hand: { cy: 16, jy: 18 },
+  // (his feet a little further back under him: his middle is over them, as anyone's is over theirs)
+  foot: { cx: 0.5 },
+};
+/**
+ * Grant: about 1.36 m tall, his arms and legs short, his head anyone's, his chest and hips
+ * broad (see art/human's GRANT_LAYOUT); his muscles as much stronger as he is denser, to
+ * hold him up as anyone's hold them (weaker, he sags back on his heels, and shuffles).
+ */
+const GRANT_SPECS: LimbSpec[] = SPECS.map((s) => ({ ...s, density: s.density * GRIT.density, muscle: s.muscle * GRIT.density, ...GRANT_LIMBS[s.key.replace(/[FB]$/, '')] }));
+
+/** A body's make: its limbs, and the heights (art px above the soles, standing) the rest of it goes by. */
+interface Frame {
+  specs: LimbSpec[];
+  /** The figure's middle (where it's spawned from), its hips, and its trunk's center of mass. */
+  midY: number;
+  hipY: number;
+  trunkY: number;
+  /** Shoulder to elbow, and elbow to palm (px). */
+  arm: [number, number];
+}
+const STANDARD: Frame = { specs: SPECS, midY: MID_Y, hipY: 22.5, trunkY: 32, arm: [10, 12] };
+const GRANT: Frame = { specs: GRANT_SPECS, midY: 21.75, hipY: 12.5, trunkY: 21, arm: [6.75, 8.75] };
+export const GRANT_HALF_HEIGHT = GRANT.midY * PX;
+
+/** Hands, legs and feet: not the upper body (the trunk, the head and the arms), which a knock to hurts more, and knocks them over. */
+const LOW = /^(hand|upperLeg|lowerLeg|foot)/;
 
 type Pose = Partial<Record<LimbKey, number>>;
 
@@ -113,6 +159,8 @@ type Pose = Partial<Record<LimbKey, number>>;
  */
 export interface Seat {
   readonly pose: Partial<Record<LimbKey, number>>;
+  /** What it's in (a car, a cockpit): selected, they stand for it (see Controls.vehicles(), flown()). */
+  readonly vehicle?: Entity;
   /** Gets them out, onto their feet beside it ("Get out" in their menu). */
   leave(): void;
   /** A limb of theirs was taken hold of (pulled hard, they come out), or let go of (null). */
@@ -153,6 +201,10 @@ const JUMP = { vy: 3.4, crouch: 0.22 };
 const SETTLE_T = 0.5;
 /** The most the knees may be bent (rad) to straighten up again from a stumble without lying down first (see catching()). */
 const KNEE_CATCH = 1.4;
+/** Down longer than this (s), someone found on their feet gets up properly rather than straightening straight up (see catching()). */
+const CATCH_DOWN = 1.2;
+/** Going down from standing with the feet no further than this (m) over something, they tipped over rather than fell (see catching()). */
+const TIP_DROP = 0.6;
 /** How far past its joint's limits a broken bone lets a limb bend (rad). */
 const BROKEN_GIVE = 1.1;
 /** Going from one pose to the next, climbing or jumping (s): snapped, the feet whip round at 30-40 m/s. */
@@ -163,6 +215,8 @@ const POSE_EASE = 0.15;
  * their face at the surface (and with no air left in them, sink).
  */
 const LUNGFUL: Lungful = { hold: 18, holdOut: 8, last: 8, tread: 30, full: 2, empty: 1 };
+/** Grant's: five times as long, all of it (see GRIT). */
+const GRANT_LUNGFUL: Lungful = { ...LUNGFUL, hold: 90, holdOut: 40, last: 40, tread: 150 };
 /** Swimming for the shore (m/s), and how far (m) under the middle of the head the mouth is. */
 const SWIM = 0.7;
 /** In water this shallow (m), under their knees, they can get up in it (deeper, it lifts them off their feet). */
@@ -482,14 +536,25 @@ interface Variant {
   /** Damage multiplier. */
   toughness: number;
   bleeds: boolean;
+  /** How the body is made (see Frame). */
+  build: Build;
+  frame: Frame;
+  /** How much less anything harms them (1: as it does anyone; Grant's, see GRIT). */
+  grit: number;
 }
 
 export const VARIANTS: Record<string, Variant> = {
-  human: { kind: 'human', skin: HUMAN_SKIN, skinKey: 'default', material: MAT.flesh, toughness: 1, bleeds: true },
-  android: { kind: 'android', skin: HUMAN_SKIN, skinKey: 'default', material: MAT.robot, toughness: 0.45, bleeds: false },
+  human: { kind: 'human', skin: HUMAN_SKIN, skinKey: 'default', material: MAT.flesh, toughness: 1, bleeds: true, build: 'standard', frame: STANDARD, grit: 1 },
+  android: { kind: 'android', skin: HUMAN_SKIN, skinKey: 'default', material: MAT.robot, toughness: 0.45, bleeds: false, build: 'standard', frame: STANDARD, grit: 1 },
+  grant: { kind: 'human', skin: GRANT_SKIN, skinKey: 'grant', material: MAT.flesh, toughness: 1, bleeds: true, build: 'grant', frame: GRANT, grit: GRIT.harm },
 };
 
 export class Human extends Entity implements Holder {
+  // (a skydiver's drag: about 50 m/s flat out; 30 m down, about 22 m/s)
+  dragShare = 0.3;
+  /** Whole-body trauma (see systems/Jolt, jolted()). */
+  private readonly jolt = new Jolt();
+  private trunkParts: Part[] | null = null;
   readonly variant: Variant;
   readonly limbs = new Map<LimbKey, Limb>();
   private order: Limb[] = [];
@@ -516,6 +581,8 @@ export class Human extends Entity implements Holder {
   private getupProgressT = 0;
   /** Just let go of (s left): whether they've landed on their feet is checked every step meanwhile. */
   private catchT = 0;
+  /** Went down from standing with the feet on something, and still near it (tipped over, not fallen from a height, thrown, nor given up getting up: see catching()). */
+  private tipped = false;
   /** Shuffling off someone they're lying on top of: which way, for how long, and how many goes so far. */
   private crawlDir = 0;
   private crawlT = 0;
@@ -667,6 +734,25 @@ export class Human extends Entity implements Holder {
   private detourX = 0;
   private detourY = 0;
   private detourT = 0;
+
+  /** The floating origin moved (see world/Origin): what it keeps of where things are in the world moves too. */
+  shifted(dx: number, dy: number): void {
+    super.shifted(dx, dy);
+    if (this.gaveUp) this.gaveUp = { x: this.gaveUp.x + dx, y: this.gaveUp.y + dy };
+    this.crawlX += dx;
+    this.targetX += dx;
+    this.fleeFrom += dx;
+    this.evadeX += dx;
+    this.detourX += dx;
+    this.detourY += dy;
+    const c = this.climbing;
+    if (c) {
+      c.x0 += dx;
+      c.y0 += dy;
+      c.x1 += dx;
+      c.y1 += dy;
+    }
+  }
   /** A stumble would take them over a drop: they stand it out instead (see think()). */
   private edgeStep = false;
 
@@ -694,11 +780,12 @@ export class Human extends Entity implements Holder {
   constructor(game: Game, def: ItemDef, variant: Variant, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
     this.variant = variant;
+    this.breath = new Breath(this.hardy ? GRANT_LUNGFUL : LUNGFUL);
     this.f = this.flipped ? -1 : 1;
     const f = this.f;
     const ang = opts.angle ?? 0;
-    for (const s of SPECS) {
-      const off = rotate(s.cx * f * PX, (s.cy - MID_Y) * PX, ang);
+    for (const s of variant.frame.specs) {
+      const off = rotate(s.cx * f * PX, (s.cy - variant.frame.midY) * PX, ang);
       const part = this.makePart(s, x + off.x, y + off.y, ang);
       const limb: Limb = {
         spec: s, part, joint: null, parent: null, children: [], a1: { x: 0, y: 0 }, a2: { x: 0, y: 0 },
@@ -723,7 +810,7 @@ export class Human extends Entity implements Holder {
     const variant = this.variant;
     const part = this.addPart({
       name: s.name,
-      art: limbArt(variant.kind, s.key, variant.skin, variant.skinKey),
+      art: limbArt(variant.kind, s.key, variant.skin, variant.skinKey, variant.build),
       material: variant.material,
       x,
       y,
@@ -878,7 +965,7 @@ export class Human extends Entity implements Holder {
   /** Seconds left out cold from a jolt (see stun()). */
   stunned = 0;
   /** Their breath, in water (see breathe()). */
-  readonly breath = new Breath(LUNGFUL);
+  readonly breath: Breath;
 
   /**
    * Knocked out for `secs` (a stun gun's jolt): down at once and coming round after,
@@ -894,9 +981,20 @@ export class Human extends Entity implements Holder {
     return (this.alive ? adrenalineRush(this.drugs.adrenaline) : 1) * (this.zombie ? ZOMBIE.pace : 1);
   }
 
-  /** How much stronger Ultra Strength has them (1: no stronger; see MIGHT). */
+  /** How much stronger Ultra Strength has them (1: no stronger; see MIGHT). Grant is always that strong. */
   private get might(): number {
-    return this.alive && this.drugs.strength > 0 ? MIGHT.muscle : 1;
+    return this.alive && (this.drugs.strength > 0 || this.hardy) ? MIGHT.muscle : 1;
+  }
+
+  /** How far their arms reach, against anyone's (Grant's are short). */
+  private get armSpan(): number {
+    const [a, b] = this.variant.frame.arm;
+    return (a + b) / (STANDARD.arm[0] + STANDARD.arm[1]);
+  }
+
+  /** Built different (Grant: see GRIT): nothing stops his heart (see Electric, LiveWater). */
+  get hardy(): boolean {
+    return this.variant.grit > 1;
   }
 
   /** Not infected, nor undead: a zombie goes for them (people, androids too; see Teams). */
@@ -921,8 +1019,9 @@ export class Human extends Entity implements Holder {
     const d = this.drugs;
     switch (drug) {
       case 'death':
-        // the heart stops there and then
-        this.die();
+        // the heart stops there and then (Grant's doesn't: it puts him out for a while)
+        if (this.hardy) d.knockout = Math.max(d.knockout, dose * 20);
+        else this.die();
         break;
       case 'coagulation':
         d.coagulation = Math.min(60, d.coagulation + dose * 30);
@@ -1196,7 +1295,7 @@ export class Human extends Entity implements Holder {
 
   /** Infected with the zombie virus (a Zombie syringe, a zombie's bite): it takes hold over the next few seconds, and they turn (see rise()). */
   infect(): void {
-    if (!this.variant.bleeds || this.zombie || this.infection > 0) return;
+    if (!this.variant.bleeds || this.hardy || this.zombie || this.infection > 0) return;
     this.infection = 1e-3;
   }
 
@@ -1346,7 +1445,7 @@ export class Human extends Entity implements Holder {
     }
     if (d.bone > 0) {
       d.bone = Math.max(0, d.bone - dt);
-      if ((this.boneT -= dt) <= 0) {
+      if (!this.hardy && (this.boneT -= dt) <= 0) {
         this.boneT = 0.6 + Math.random() * 0.6;
         if (!this.eatBone()) d.bone = 0;
       }
@@ -1418,6 +1517,9 @@ export class Human extends Entity implements Holder {
     if (this.state === s) return;
     const wasUp = this.state === 'stand' || this.state === 'getup';
     const wasGettingUp = this.state === 'getup';
+    // (a get-up given up on isn't a stumble: still flailing, or not up yet; and
+    // a stumble's feet may leave the floor, but not by much)
+    if (s === 'down') this.tipped = this.state === 'stand' && this.grounded(false, TIP_DROP);
     this.state = s;
     this.stateT = 0;
     this.feetT = 0;
@@ -1670,14 +1772,14 @@ export class Human extends Entity implements Holder {
    * Are the feet on something? With `solid`, other ragdolls don't count (people
    * can't get up while lying on a pile of bodies).
    */
-  private grounded(solid = false): boolean {
+  private grounded(solid = false, reach = 0.16): boolean {
     const world = this.game.physics.world;
     const ray = new RAPIER.Ray({ x: 0, y: 0 }, { x: 0, y: -1 });
     for (const k of ['footF', 'footB'] as LimbKey[]) {
       const l = this.L(k);
       if (l.gone || !l.attached) continue;
       ray.origin = { x: l.part.x, y: l.part.y };
-      const hit = world.castRay(ray, 0.16, true, undefined, undefined, undefined, undefined, (c) => {
+      const hit = world.castRay(ray, reach, true, undefined, undefined, undefined, undefined, (c) => {
         const p = this.game.physics.partOf(c);
         if (!p) return true;
         if (p.entity === this) return false;
@@ -1831,6 +1933,8 @@ export class Human extends Entity implements Holder {
       this.crawlCheck -= dt;
       const look = this.crawlCheck <= 0;
       if (look) this.crawlCheck = 0.25;
+      // (thrown clear of the floor since tipping over, it's a fall they'll land from: see catching())
+      if (look && this.tipped && !this.grounded(false, TIP_DROP)) this.tipped = false;
       // (in water too deep to stand in, they swim, and that's all; with a shore to make
       // for, they swim and crawl right out of it: lying in the shallows, the water drags
       // at them too much to get up. See breathe())
@@ -1853,10 +1957,14 @@ export class Human extends Entity implements Holder {
         this.stateT = Math.min(this.stateT, 1);
       } else if ((look || this.catchT > 0) && this.catching(str)) {
         // still on their feet, more or less (let go of upright, or caught mid-tip):
-        // straighten up again instead of lying down first
+        // straighten up again instead of lying down first. But found on their feet
+        // after a fall (crouched where it landed them) or down a while, they get up as
+        // from the floor, the muscles coming in as they rise: snapped to standing, an
+        // arm still swinging locks and vaults them off the floor, or the folded legs
+        // spring them up, a metre or more
         const tilt = Math.abs(column().theta);
         // (on their feet and tipping, they can step to catch it: see stumbleSpeed())
-        if (tilt < 0.45) {
+        if (tilt < 0.45 && (this.catchT > 0 || (this.tipped && this.stateT < CATCH_DOWN))) {
           this.setState('stand');
           this.easeFrom(SETTLE_T);
         } else {
@@ -1979,6 +2087,12 @@ export class Human extends Entity implements Holder {
     if (lean && !this.edgeStep && (Math.sign(lean) === this.f || this.goal === 'fight' || this.turn())) {
       this.stumbling = true;
       this.speed = Math.sign(lean) === this.f ? Math.abs(lean) : -Math.abs(lean);
+      // (stumbling past the weapon they were going for, as dropping what they held tips them: they grab it)
+      const it = this.fetch;
+      if (it && this.goal === 'fight' && !it.destroyed && !it.holder && Math.abs(it.main.x - c.x) < 0.9) {
+        this.fetch = null;
+        this.take(it);
+      }
       return;
     }
     this.stumbling = false;
@@ -2387,7 +2501,15 @@ export class Human extends Entity implements Holder {
       this.dropAll();
       for (const h of held) for (const p of h.parts) if (!p.destroyed && !p.frozen) p.body.setLinvel({ x: -Math.sign(dx) * 2.5, y: 1.5 }, true);
     }
-    if (Math.abs(dx) > 0.4) return Math.sign(dx) * GAIT.run * this.rush;
+    // (reached for from a step off: run on to something lying on the floor and they trip
+    // over it. Gone past it, they step back to it still facing the foe, not turning their back)
+    if (Math.abs(dx) > 0.9) {
+      if (Math.sign(dx) !== this.f) {
+        this.backstep = true;
+        return Math.sign(dx) * GAIT.walk * this.rush;
+      }
+      return Math.sign(dx) * GAIT.run * this.rush;
+    }
     // (stooping for it is left out: it's in hand)
     this.fetch = null;
     this.take(it);
@@ -2403,7 +2525,7 @@ export class Human extends Entity implements Holder {
    * another way down if there is one. Returns the speed wanted.
    */
   private melee(held: Item | null, foe: Entity, ad0: number, dir: number, dt: number): number {
-    const strike = held ? this.strikeRange(held, foe) : FIGHT.reach;
+    const strike = held ? this.strikeRange(held, foe) : FIGHT.reach * this.armSpan;
     const ready = strike + FIGHT.stepOut;
     // (standing higher or lower than them, up on a box or down off a ledge: further to go)
     const up = this.standsAbove(foe);
@@ -2802,7 +2924,7 @@ export class Human extends Entity implements Holder {
     const vary = (0.85 + Math.random() * 0.3) / this.rush;
     // too low for a fist to reach (an animal's head): a kick, if both legs will bear it; and now and then anyway
     const low = this.foe && strikePoint(this.foe).y < this.L('upperTorso').part.y - 0.5;
-    if (!held && (low || (this.foe && Math.random() < FIGHT.kicks))) {
+    if (!held && (low || (this.foe && Math.random() < FIGHT.kicks && this.kickReaches()))) {
       if (['upperLegF', 'lowerLegF', 'footF', 'upperLegB', 'lowerLegB'].every((k) => this.ok(k as LimbKey))) {
         this.blow = { t: 0, dur: FIGHT.kick * vary, side: 'F', item: null, kick: true, landed: false, wind: FIGHT.wind, out: FIGHT.out, aim: 'chest' };
         return;
@@ -2823,7 +2945,23 @@ export class Human extends Entity implements Holder {
     // (at the head or the body: a weapon either, a fist mostly the head)
     this.blow = held
       ? { t: 0, dur: FIGHT.swing * vary, side, item: held, kick: false, landed: false, wind: FIGHT.swingWind, out: FIGHT.swingOut, aim: Math.random() < 0.5 ? 'head' : 'chest' }
-      : { t: 0, dur: FIGHT.punch * vary, side, item: null, kick: false, landed: false, wind: FIGHT.wind, out: FIGHT.out, aim: Math.random() < 0.65 ? 'head' : 'chest' };
+      : { t: 0, dur: FIGHT.punch * vary, side, item: null, kick: false, landed: false, wind: FIGHT.wind, out: FIGHT.out, aim: !this.overHead() && Math.random() < 0.65 ? 'head' : 'chest' };
+  }
+
+  /** A kick of theirs reaches the foe's chest: from the hips, as far as a leg (Grant's short legs don't reach anyone's: he punches). */
+  private kickReaches(): boolean {
+    const foe = this.foe;
+    if (!foe) return false;
+    const chest = foe.parts.find((p) => !p.destroyed && p.name === 'Upper torso');
+    const y = chest ? chest.y : strikePoint(foe).y;
+    return y - this.L('lowerTorso').part.y < this.variant.frame.hipY * PX;
+  }
+
+  /** The foe's head is higher than a fist of theirs reaches (Grant's, at anyone's): they punch at the body. */
+  private overHead(): boolean {
+    const shoulder = this.L('upperTorso').part;
+    const [a, b] = this.variant.frame.arm;
+    return !!this.foe && strikePoint(this.foe).y - shoulder.y > (a + b) * PX * 0.9;
   }
 
   /** Where a blow is aimed: the foe's head or chest (an animal's head; whatever's left of them, once that's gone). */
@@ -3434,7 +3572,7 @@ export class Human extends Entity implements Holder {
       for (const h of [0.25, 0.8, 1.4]) if (this.probe(c.x, topY + h, f, 0, x1 + 0.2)) return false;
       // (to full standing height up there, however crouched they set off: lower
       // and the legs would straighten into the top)
-      this.climbing = { kind: 'up', t: 0, dur: 0.45 + dh * 0.95, x0: c.x, y0: c.y, x1: c.x + f * x1, y1: topY + TRUNK_Y + 0.03, peak: 0 };
+      this.climbing = { kind: 'up', t: 0, dur: 0.45 + dh * 0.95, x0: c.x, y0: c.y, x1: c.x + f * x1, y1: topY + this.variant.frame.trunkY * PX + 0.03, peak: 0 };
     } else {
       // over it: something narrow, with floor at the same height on the far side and room to land
       if (dh > 0.6) return false;
@@ -3476,7 +3614,7 @@ export class Human extends Entity implements Holder {
     // room down there to stand
     for (const h of [0.25, 0.8, 1.4]) if (this.probe(c.x + f * edge, groundY - drop + h, f, 0, x1 - edge + 0.2)) return false;
     // (standing tall down there: crouched, the legs would spring them back up off the floor)
-    this.climbing = { kind: 'down', t: 0, dur: 0.4 + drop * 0.45, x0: c.x, y0: c.y, x1: c.x + f * x1, y1: groundY - drop + TRUNK_Y + 0.02, peak: 0.04 };
+    this.climbing = { kind: 'down', t: 0, dur: 0.4 + drop * 0.45, x0: c.x, y0: c.y, x1: c.x + f * x1, y1: groundY - drop + this.variant.frame.trunkY * PX + 0.02, peak: 0.04 };
     this.startClimb();
     return true;
   }
@@ -3792,7 +3930,7 @@ export class Human extends Entity implements Holder {
     this.pace = w ? clamp(v + 0.4, 0.5 * Math.min(w, GAIT.walk), w) : Math.max(0, v);
     const run = clamp((this.pace - GAIT.walk) / (GAIT.run - GAIT.walk), 0, 1);
     // each leg carries the body one sweep per half stride (stepping back, the stride runs backwards)
-    const sweep = 2 * HIP_Y * Math.sin((GAIT.swing + (GAIT.runSwing - GAIT.swing) * run) * this.reach);
+    const sweep = 2 * this.variant.frame.hipY * PX * Math.sin((GAIT.swing + (GAIT.runSwing - GAIT.swing) * run) * this.reach);
     const turn = 2 * Math.PI;
     this.stride = (((this.stride + back * turn * Math.max(0.8, this.pace / (2 * sweep)) * dt) % turn) + turn) % turn;
     if (!grounded || this.state !== 'stand' || this.climbing || this.jumping) return;
@@ -3937,10 +4075,11 @@ export class Human extends Entity implements Holder {
    */
   private balance(col: Column, kp: number, kd: number, amax: number, dt: number): void {
     // the feet support the body passively while the center of mass stays over them,
-    // so only push back once the body actually starts to tip (deadband)
+    // so only push back once the body actually starts to tip (deadband: wider for a
+    // shorter body, Grant's, over feet as long as anyone's)
     const theta = col.theta;
     const omega = col.omega;
-    const dead = this.state === 'getup' || this.gaitAmt > 0 ? 0 : BALANCE.dead;
+    const dead = this.state === 'getup' || this.gaitAmt > 0 ? 0 : (BALANCE.dead * STANDARD.trunkY) / this.variant.frame.trunkY;
     const err = Math.sign(theta) * Math.max(0, Math.abs(theta) - dead);
     const alpha = clamp(-kp * err - kd * omega, -amax, amax);
     if (BALANCE.torqueOnly && this.state === 'stand') {
@@ -3985,6 +4124,7 @@ export class Human extends Entity implements Holder {
 
   postStep(dt: number): void {
     this.updateGrips(dt);
+    this.jolted();
     // ---- joint stress: limbs tear off when stretched too far
     for (const l of this.order) {
       if (!l.joint || l.severed || !l.joint.isValid() || !l.parent) continue;
@@ -3998,7 +4138,7 @@ export class Human extends Entity implements Holder {
       const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
       const hpF = l.part.hp / l.part.maxHp;
       // (on Ultra Strength the joints hold together against the muscles pulling on them)
-      const limit = (0.11 + 0.12 * clamp(hpF, 0, 1)) * (this.variant.kind === 'android' ? 1.6 : 1) * (this.drugs.strength > 0 ? 1.4 : 1);
+      const limit = (0.11 + 0.12 * clamp(hpF, 0, 1)) * (this.variant.kind === 'android' || this.hardy ? 1.6 : 1) * (this.drugs.strength > 0 ? 1.4 : 1);
       if (d > limit) {
         l.stress += dt;
         if (l.stress > 0.03) this.rupture(l);
@@ -4037,7 +4177,7 @@ export class Human extends Entity implements Holder {
       }
       if (d.painkiller > 0) this.pain = 0;
       // poison drains the blood from the inside (and shows, greener the worse it gets: see tone())
-      if (d.poison > 0) this.blood -= dt * 2.4;
+      if (d.poison > 0) this.blood -= (dt * 2.4) / this.variant.grit;
       // (and under water, their breath runs out)
       const breathes = this.breathes;
       if (breathes) this.breathe(dt);
@@ -4051,12 +4191,13 @@ export class Human extends Entity implements Holder {
       if (this.pain > 0.9) target = Math.min(target, 0.4);
       if (d.knockout > 0 || this.stunned > 0) target = Math.min(target, 0.05);
       target = clamp(target, 0, 1);
-      // consciousness drops fast, recovers slowly (quickly on adrenaline, and for a zombie)
+      // consciousness drops fast, recovers slowly (quickly on adrenaline, for a zombie, and for Grant)
       // (rates per step at 120 steps a second, the same at any step length)
-      const up = d.adrenaline > 0 || this.zombie ? 0.03 : 0.004;
+      const up = d.adrenaline > 0 || this.zombie || this.hardy ? 0.03 : 0.004;
       const rate = target < this.consciousness ? 0.2 : up;
       this.consciousness += (target - this.consciousness) * (1 - Math.pow(1 - rate, dt * 120));
       this.shock = Math.max(0, this.shock - dt * 0.01);
+      if (this.hardy) this.toughOut(dt);
       if (this.consciousness < 0.15 && this.state !== 'down') this.setState('down');
       this.checkDeath();
     } else {
@@ -4064,6 +4205,18 @@ export class Human extends Entity implements Holder {
       // part of a Life dose wears off (a fifth of a syringe every ten seconds)
       // (a corpse's pallor comes over it: see tone())
       this.lifeDose = Math.max(0, this.lifeDose - dt * 0.02);
+    }
+  }
+
+  /** Grant, alive, by himself (see GRIT): his blood comes back, his wounds close up and he heals. */
+  private toughOut(dt: number): void {
+    this.blood = Math.min(100, this.blood + dt * GRIT.blood);
+    const clot = Math.exp(-dt * GRIT.clot);
+    for (const l of this.order) {
+      if (l.gone) continue;
+      const p = l.part;
+      if (p.hp < p.maxHp) p.hp = Math.min(p.maxHp, p.hp + p.maxHp * GRIT.heal * dt);
+      for (const w of l.wounds) w.rate *= clot;
     }
   }
 
@@ -4112,7 +4265,7 @@ export class Human extends Entity implements Holder {
     else {
       let trauma = 0;
       // (a mangled limb counts as badly as a lost one, however far below nothing its health went)
-      for (const l of this.order) if (!l.gone) trauma += clamp(1 - l.part.hp / l.part.maxHp, 0, 1.5) * (l.spec.cy > 24 ? 1.2 : 0.6);
+      for (const l of this.order) if (!l.gone) trauma += clamp(1 - l.part.hp / l.part.maxHp, 0, 1.5) * (LOW.test(l.spec.key) ? 0.6 : 1.2);
       if (trauma > (this.zombie ? ZOMBIE.trauma : 6.5)) cause = 'trauma';
     }
     if (cause) this.die();
@@ -4133,7 +4286,7 @@ export class Human extends Entity implements Holder {
     const head = this.L('head');
     if (head.gone) return;
     const p = head.part;
-    const fc = faceColors(this.variant.kind, this.variant.skin);
+    const fc = faceColors(this.variant.kind, this.variant.skin, this.variant.build);
     if (this.variant.kind === 'android') {
       const c = !this.alive ? fc.eyeDead : this.consciousness < 0.3 ? fc.eyeDim! : fc.eye;
       p.paintPixel(EYE.x - 1, EYE.y, c);
@@ -4225,13 +4378,38 @@ export class Human extends Entity implements Holder {
     this.updateMotors(true);
   }
 
+  /**
+   * Stopped (or flung) all at once harder than the body bears (see systems/Jolt): a long
+   * fall, a crash, a blast. It's hurt inside, whatever hit first: the chest (the heart,
+   * the great vessels torn loose) and the head (the brain knocked against the skull).
+   * Not while held by the hand, which moves them as it likes.
+   */
+  private jolted(): void {
+    const chest = this.limbs.get('upperTorso')!;
+    if (!this.alive || this.held || chest.part.frozen || chest.part.body.isSleeping()) {
+      this.jolt.reset();
+      return;
+    }
+    const trunk = (this.trunkParts ??= [...TRUNK].map((k) => this.limbs.get(k as LimbKey)!.part));
+    const h = this.jolt.step(trunk, this.game.time, this.game.gravity, JOLT_BEARS * Math.sqrt(this.variant.grit));
+    if (h <= 0) return;
+    this.injure(chest, h * 0.85 * chest.spec.hp, 'blunt', undefined, undefined, false);
+    const head = this.limbs.get('head')!;
+    if (!head.gone && this.alive) this.injure(head, Math.min(h * 0.3 * head.spec.hp, Math.max(0, head.part.hp)), 'blunt', undefined, undefined, false);
+  }
+
+  setVelocity(vx: number, vy: number, av = 0): void {
+    super.setVelocity(vx, vy, av);
+    this.jolt.reset();
+  }
+
   onImpact(info: ImpactInfo): void {
     const l = this.limbOf(info.part);
     if (!l || l.gone) return;
     // arms and legs knocking against the foe's in a fight: what blows do is worked
     // out where they land (see strike()), fists and shins clashing don't break them
     if (this.foe && info.other?.entity === this.foe && /^(hand|lowerArm|upperArm|foot|lowerLeg)/.test(l.spec.key)) return;
-    const mEff = info.part.mass * (l.spec.cy > 24 ? 2.6 : 2.2);
+    const mEff = info.part.mass * (LOW.test(l.spec.key) ? 2.2 : 2.6);
     // energy from this limb's own motion (falling onto something; not their own
     // feet set down climbing, nor the fist or foot of a blow they're throwing:
     // see strike()), at most a little over what the body as a whole carries (a
@@ -4245,7 +4423,7 @@ export class Human extends Entity implements Holder {
     const blunt = (info.other?.entity as { blunt?: number } | undefined)?.blunt ?? 1;
     const whole = l.attached ? Math.max(mEff, this.totalMass() * 0.8) : mEff;
     const v2 = info.otherSpeed * info.otherSpeed * blunt;
-    const frag = l.spec.fragility / this.variant.toughness;
+    const frag = l.spec.fragility / (this.variant.toughness * this.variant.grit);
     const E0 = (24 * mEff) / frag;
     // (most knocks in a heap don't come near, backed by the whole body or not)
     if (Eself + 0.5 * meeting(info.otherMass, whole) * v2 <= E0) return;
@@ -4260,7 +4438,7 @@ export class Human extends Entity implements Holder {
     else this.game.sound.impact('metal', frac, info.point.x);
     // a hard hit knocks a standing person over
     // (a lesser knock just shoves them: their balance decides whether they go over)
-    if ((frac > 0.2 || Eother > 400) && this.state === 'stand' && l.spec.cy > 24) this.setState('down');
+    if ((frac > 0.2 || Eother > 400) && this.state === 'stand' && !LOW.test(l.spec.key)) this.setState('down');
   }
 
   /**
@@ -4298,7 +4476,7 @@ export class Human extends Entity implements Holder {
   onBullet(hit: BulletHit): void {
     const l = this.limbOf(hit.part);
     if (!l || l.gone) return;
-    let dmg = hit.damage / this.variant.toughness;
+    let dmg = hit.damage / (this.variant.toughness * this.variant.grit);
     if (l.spec.key === 'head') dmg *= 2.2;
     const p = l.part;
     p.flash = 0.6;
@@ -4317,20 +4495,22 @@ export class Human extends Entity implements Holder {
     // a heavy round takes a chunk out where it comes out, and a nick where it goes in
     // (shot to pieces, or clean through, the limb may go: see Chunks)
     const look = this.variant.bleeds ? FLESH : PLATING;
-    takeChunk(this, l, hit.point, hit.dir, hit.energy, hit.exit ? 'in' : 'stop', look, hit.round);
-    if (hit.exit) takeChunk(this, l, hit.exit, hit.dir, hit.energy, 'out', look, hit.round);
+    const energy = hit.energy / this.variant.grit;
+    takeChunk(this, l, hit.point, hit.dir, energy, hit.exit ? 'in' : 'stop', look, hit.round);
+    if (hit.exit) takeChunk(this, l, hit.exit, hit.dir, energy, 'out', look, hit.round);
     if (l.gone) return;
     // a bullet through the brain (not a stray fragment or a spent pellet: those
-    // wound and stun, and kill only when they add up)
-    if (l.spec.key === 'head' && hit.damage > 16 && this.variant.kind === 'human') {
+    // wound and stun, and kill only when they add up; and Grant's skull stops all but
+    // a twentieth of any round)
+    if (l.spec.key === 'head' && hit.damage / this.variant.grit > 16 && this.variant.kind === 'human') {
       this.injure(l, dmg, 'bullet', hit.point, hit.dir);
       p.hp = Math.min(p.hp, 0);
       this.die();
       return;
     }
     if (l.spec.key === 'upperTorso') {
-      this.addBleedTo(l, 0.8);
-      this.shock = Math.min(1, this.shock + 0.15);
+      this.addBleedTo(l, 0.8 / this.variant.grit);
+      this.shock = Math.min(1, this.shock + 0.15 / this.variant.grit);
     }
     this.injure(l, dmg, 'bullet', hit.point, hit.dir);
     // heavy hits to the body or legs make people collapse
@@ -4343,7 +4523,7 @@ export class Human extends Entity implements Holder {
   damage(part: Part, amount: number, kind: DamageKind, point?: V2, dir?: V2): void {
     const l = this.limbOf(part);
     if (!l || l.gone) return;
-    const amt = amount / this.variant.toughness;
+    const amt = amount / (this.variant.toughness * this.variant.grit);
     if (kind === 'fire') {
       part.hp -= amt * 0.55;
       this.pain = Math.min(1.5, this.pain + amt * 0.025);
@@ -4418,10 +4598,11 @@ export class Human extends Entity implements Holder {
   slice(part: Part, amount: number, point: V2, dir: V2, depth: number, back?: number): void {
     const l = this.limbOf(part);
     if (!l || l.gone) return;
-    const amt = amount / this.variant.toughness;
+    const tough = this.variant.toughness * this.variant.grit;
+    const amt = amount / tough;
     this.addWound(l, point.x, point.y, -dir.x, -dir.y, 0.25 + amt * 0.03, false, dir);
     this.injure(l, amt, 'cut', point, dir, false);
-    if (!l.gone) sliceLimb(this, l, point, dir, depth / this.variant.toughness, this.variant.bleeds ? FLESH : PLATING, back);
+    if (!l.gone) sliceLimb(this, l, point, dir, depth / tough, this.variant.bleeds ? FLESH : PLATING, back);
   }
 
   /** Applies trauma to a limb and handles fractures, gibbing and death (and, for a cut, `sever`s a limb with nothing left at its joint: a stab only wounds). */
@@ -4519,7 +4700,8 @@ export class Human extends Entity implements Holder {
         }
       }
     }
-    if (total > 0) this.blood = Math.max(0, this.blood - total * dt * 0.5);
+    // (Grant hardly loses any: see GRIT)
+    if (total > 0) this.blood = Math.max(0, this.blood - (total * dt * 0.5) / this.variant.grit);
   }
 
   /** Detaches a limb (and its sub-chain) from its parent. */
@@ -4977,12 +5159,15 @@ export class Human extends Entity implements Holder {
     return out;
   }
 
-  /** Where the hand holding an item goes (relative to the shoulder: see armIK()): out in front, tucked in for a two-handed one. */
+  /** Where the hand holding an item goes (relative to the shoulder: see armIK()): out in front, tucked in for a two-handed one (Grant's, nearer: his arms are short). */
   private holdReach(g: Grip): V2 {
     const g1 = g.item.gripLocal();
     const g2 = g.support ? g.item.gripLocal(true) : null;
     const span = g1 && g2 ? Math.abs(g2.x - g1.x) : 0;
-    return { x: this.f * (g2 ? clamp(0.6 - span, 0.24, 0.6) : 0.64), y: g2 ? -0.1 : -0.03 };
+    const k = this.armSpan;
+    // (short arms hold a long gun nearer in still, for the other hand to reach its second grip)
+    const least = Math.max(0.05, 0.24 * k - (1 - k) * span);
+    return { x: this.f * (g2 ? clamp(0.6 * k - span, least, 0.6 * k) : 0.64 * k), y: (g2 ? -0.1 : -0.03) * k };
   }
 
   private shoulder(side: 'F' | 'B'): V2 | null {
@@ -5002,8 +5187,8 @@ export class Human extends Entity implements Holder {
     const upper = this.L(('upperArm' + side) as LimbKey);
     if (upper.gone || !upper.attached) return null;
     const f = this.f;
-    const L1 = 10 * PX;
-    const L2 = 12 * PX;
+    const L1 = this.variant.frame.arm[0] * PX;
+    const L2 = this.variant.frame.arm[1] * PX;
     const d = clamp(Math.hypot(dx, dy), Math.abs(L1 - L2) + 0.01, L1 + L2 - 0.002);
     const alpha = Math.acos(clamp((L1 * L1 + d * d - L2 * L2) / (2 * L1 * d), -1, 1));
     const gamma = Math.acos(clamp((L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2), -1, 1));
@@ -5059,14 +5244,14 @@ export class Human extends Entity implements Holder {
 
   /** The sprite a part wears on a team (or on none). */
   private teamArt(k: LimbKey, team: TeamId | null): PixelArt {
-    const { kind } = this.variant;
+    const { kind, build } = this.variant;
     // (a zombie in the clothes they had on, its skin grey-green)
     const skin = this.zombie && kind === 'human' ? { ...this.variant.skin, skin: ZOMBIE_SKIN } : this.variant.skin;
     const skinKey = this.zombie && kind === 'human' ? `${this.variant.skinKey}+zombie` : this.variant.skinKey;
-    if (!team) return limbArt(kind, k, skin, skinKey);
-    if (kind === 'human') return limbArt(kind, k, { ...skin, shirt: TEAMS[team].ramp }, `${skinKey}+${team}`);
+    if (!team) return limbArt(kind, k, skin, skinKey, build);
+    if (kind === 'human') return limbArt(kind, k, { ...skin, shirt: TEAMS[team].ramp }, `${skinKey}+${team}`, build);
     // (an android has no shirt: its chest panel, and a band round each shoulder)
-    const base = limbArt(kind, k, skin, skinKey);
+    const base = limbArt(kind, k, skin, skinKey, build);
     if (k === 'upperTorso') return dye(`${kind}:${skinKey}:${k}`, base, team, 4, 8, 2, 8);
     if (k === 'upperArmF' || k === 'upperArmB') return dye(`${kind}:${skinKey}:${k}`, base, team, 2, 5);
     return base;

@@ -1,4 +1,5 @@
 import { Prop, type PropConfig } from './Prop';
+import { PX } from '../engine/constants';
 import { Liquid } from '../systems/Liquids';
 import type { PixelArt } from '../art/PixelArt';
 import type { Game } from '../world/Game';
@@ -88,8 +89,10 @@ export class Flask extends Prop {
   shatter(point?: V2): void {
     if (this.amount > 0 && !this.destroyed) {
       const p = this.main;
-      // the whole content splashes out (a pour is ~270 drops)
-      this.game.particles.liquid(this.liquid, p.x, p.y, 0, 1, Math.round(20 + this.amount * 200), 2.2, Math.PI, p.body);
+      // the whole content splashes out (a pour is ~270 drops), from its outline: inside it
+      // they'd land on its own shards (see Prop.shatter())
+      const rim = (Math.max(p.w, p.h) / 2 + 1) * PX;
+      this.game.particles.liquid(this.liquid, p.x, p.y, 0, 1, Math.round(20 + this.amount * 200), 2.2, Math.PI, p.body, rim);
       this.game.sound.play('liquid/splash', { gain: 0.5 + this.amount * 0.4, x: p.x });
       // (once: it's only taken away at the end of the step, and the rest of a
       // shotgun's pellets, or the heat of another flame, may break it again meanwhile)

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { sendFirst } from '../engine/Uploads';
 import { RAPIER } from '../engine/Physics';
 import { PX } from '../engine/constants';
 import { lerp, type V2 } from '../engine/math';
@@ -36,6 +37,8 @@ interface WiredDevice {
    * reaches runs backwards (a reversing switch set to reverse; see recomputePower()).
    */
   flips?(): boolean;
+  /** The share of the power it lets through (or powers alone with): a throttle lever's. 1 if not said. */
+  passes?(): number;
 }
 
 export interface Connection {
@@ -72,6 +75,10 @@ export interface Connection {
   burn?: { lo: number; hi: number };
   /** Its settings from its menu (hidden, colliding, how strong...); none: the usual. */
   opts?: ConnOpts;
+  /** A weld's, hinge's or pin's load, as a share of what it holds (see Connections.strain()); 1: it gives way. */
+  load?: number;
+  /** What it holds (see HOLD), worked out once. */
+  holds?: { f: number; t: number };
 }
 
 /**
@@ -93,6 +100,63 @@ export interface ConnOpts {
 export const PHYSICAL_KINDS = new Set<ConnKind>(['rope', 'weld', 'spring', 'hinge', 'pin', 'fuse']);
 /** The kinds that pin a point of one part to the other (re-made where things are moved to: see rebaseFor()). */
 export const RIGID_KINDS = new Set<ConnKind>(['weld', 'hinge', 'pin']);
+
+/**
+ * The cords: what a blade, a round, a blast or a fire can cut (see cutAcross(), cutNear(),
+ * burnThrough()). Welds, hinges, pins and springs are steel, and give way to force alone.
+ */
+const CORDS = new Set<ConnKind>(['wire', 'rope', 'fuse']);
+/** Of the cords a round crosses as drawn, the share it cuts: a cord is thin, and mostly a round passes it by in depth. */
+export const ROUND_CUTS = 0.3;
+/** Seconds a wire's insulation (a rope: itself) stands in a fire before it burns through. */
+const WIRE_BURNS = 2;
+const ROPE_BURNS = 3.5;
+
+/** Where segment p→q crosses r→s: the fraction of the way along r→s (-1: it doesn't). */
+function crossAt(px: number, py: number, qx: number, qy: number, rx: number, ry: number, sx: number, sy: number): number {
+  const ux = qx - px;
+  const uy = qy - py;
+  const vx = sx - rx;
+  const vy = sy - ry;
+  const den = ux * vy - uy * vx;
+  if (Math.abs(den) < 1e-12) return -1;
+  const wx = rx - px;
+  const wy = ry - py;
+  const t = (wx * vy - wy * vx) / den;
+  const u = (wx * uy - wy * ux) / den;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? u : -1;
+}
+
+/**
+ * What a weld, a hinge or a pin holds before it gives way (see Connections.strain()):
+ * the force (N) along it, `g` times the weight of the lighter of its two parts and at
+ * least `floor` (a car hung from a little hook holds), and the twist (N·m) a weld takes
+ * (and a hinge at its stops), that force times `arm`. A blast flings a part off what it's
+ * welded to (C4 beside one gives it a few thousand g); a crash or a fall a few metres
+ * down doesn't.
+ */
+const HOLD = {
+  weld: { g: 60, floor: 20000, arm: 0.15 },
+  hinge: { g: 50, floor: 15000, arm: 0.1 },
+  pin: { g: 40, floor: 12000, arm: 0.1 },
+} as const;
+/**
+ * Seconds a joint's load is averaged over (see Connections.strain()): a knock's sharp
+ * peak spread as a real joint's give would spread it (rigid bodies stop dead in a step).
+ */
+const STRAIN_T = 0.04;
+/**
+ * Seconds a blast's push lasts (see Connections.blastLoad()): its pressure on a thing
+ * is over in a few milliseconds, far quicker than a step, so a joint between two parts
+ * it kicks unequally takes all of the difference in that time.
+ */
+const BLAST_T = 0.004;
+/**
+ * (m) Pressed this far into something, a part is being pushed out of an overlap
+ * (a copy made on top of the original, something dropped into another), not loaded
+ * by anything real: what its weld takes then doesn't count (see overlapping()).
+ */
+const OVERLAP = 0.02;
 
 /** How far (m) a connection's ends may be pulled apart before it snaps, as made (see create()). */
 function baseBreak(kind: ConnKind, rest: number, stiffness = 1): number {
@@ -240,8 +304,8 @@ export class LineBatch {
 
   end(): void {
     this.geo.setDrawRange(0, this.n * 6);
-    (this.geo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-    (this.geo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
+    sendFirst(this.geo.getAttribute('position') as THREE.BufferAttribute, this.n * 4);
+    sendFirst(this.geo.getAttribute('color') as THREE.BufferAttribute, this.n * 4);
   }
 }
 
@@ -282,6 +346,14 @@ export class Connections {
   private fireT = 0;
   /** `t` along the cord of the point nearestOn() last found. */
   private nearT = 0;
+  /** The cords (see CORDS), as of `cordsAt` (the list's version). */
+  private cordList: Connection[] = [];
+  private cordsAt = -1;
+  /** Cords in a fire, and for how long (see burnThrough()). */
+  private scorched = new Map<Connection, number>();
+  /** The welds, hinges and pins watched for strain this step, and their joints' handles (see strain()). */
+  private strained: Connection[] = [];
+  private strainHandles = new Float64Array(64);
   /** Connections taken away so far (see postStep()). */
   private removals = 0;
   /** Goes up whenever a connection is made, taken away or re-made (what's joined to what may have changed). */
@@ -899,6 +971,20 @@ export class Connections {
     for (const c of [...this.list]) this.remove(c);
   }
 
+  /**
+   * Everything moved by (dx, dy): the floating origin moved (see world/Origin). What's
+   * held to the background keeps its world point here (the joints' anchors on the
+   * environment's body were moved with every other joint's there).
+   */
+  shift(dx: number, dy: number): void {
+    for (const c of this.list) {
+      if (c.b) continue;
+      c.lb = { x: c.lb.x + dx, y: c.lb.y + dy };
+      if (c.end) c.end = { x: c.end.x + dx, y: c.end.y + dy };
+    }
+    this.version++;
+  }
+
   // ---- electrical ---------------------------------------------------------
 
   roleOf(e: Entity, c: Connection): WireRole {
@@ -979,6 +1065,8 @@ export class Connections {
    */
   recomputePower(): void {
     const next = new Set<Entity>();
+    // (how much of the power reaches each: see passes())
+    const level = new Map<Entity, number>();
     const queue: Entity[] = [];
     const alone: Entity[] = [];
     for (const e of this.game.entities) {
@@ -986,6 +1074,7 @@ export class Connections {
       if (this.jammed.has(e)) continue;
       if (src.isPowerSource?.()) {
         next.add(e);
+        level.set(e, 1);
         queue.push(e);
       } else if (src.powersAlone?.()) alone.push(e);
     }
@@ -1015,6 +1104,7 @@ export class Connections {
         for (const e of circuit) {
           if (!(e as Entity & WiredDevice).powersAlone?.() || next.has(e)) continue;
           next.add(e);
+          level.set(e, 1);
           queue.push(e);
         }
       }
@@ -1032,6 +1122,7 @@ export class Connections {
         const d = e as Entity & WiredDevice;
         if (d.conducts && !d.conducts() && !d.isPowerSource?.()) continue;
         const rev = back.has(e) !== !!d.flips?.();
+        const out = (level.get(e) ?? 1) * (d.passes?.() ?? 1);
         for (const { c, n } of this.wiresOf(e)) {
           if (this.roleOf(e, c) === 'in') continue;
           const rn = this.roleOf(n, c);
@@ -1040,11 +1131,15 @@ export class Connections {
           (rev ? backWires : fwdWires).add(c);
           if (rn === 'in') continue;
           if (next.has(n)) {
-            // (reached forward in the same wave as backward: forward it is)
-            if (!rev && fresh.has(n)) back.delete(n);
+            // (reached forward in the same wave as backward: forward it is; and the most power that reaches it)
+            if (fresh.has(n)) {
+              if (!rev) back.delete(n);
+              if (out > (level.get(n) ?? 0)) level.set(n, out);
+            }
             continue;
           }
           next.add(n);
+          level.set(n, out);
           fresh.add(n);
           if (rev) back.add(n);
           following.push(n);
@@ -1066,6 +1161,7 @@ export class Connections {
     for (const e of next) {
       // (before it hears of the power, so it starts the right way)
       e.reversed = back.has(e);
+      e.powerLevel = level.get(e) ?? 1;
       if (this.powered.has(e)) continue;
       e.setPowered(true);
       if (setOff && e.id <= this.settled && this.firedByPower(e)) reached.push(e);
@@ -1262,10 +1358,235 @@ export class Connections {
     return bd;
   }
 
+  // ---- cutting --------------------------------------------------------------
+
+  /** The cords there are (see CORDS). */
+  private cords(): Connection[] {
+    if (this.cordsAt !== this.version) {
+      this.cordsAt = this.version;
+      this.cordList = this.list.filter((c) => CORDS.has(c.kind));
+    }
+    return this.cordList;
+  }
+
+  /** Are there any cords to cut (a cheap check before the work)? */
+  get hasCords(): boolean {
+    return this.cords().length > 0;
+  }
+
+  /** A cord's sag as drawn (see frame()). */
+  private drawnSag(c: Connection, pa: V2, pb: V2): number {
+    return c.kind === 'wire' ? Math.hypot(pb.x - pa.x, pb.y - pa.y) * 0.08 : this.sagOf(c, pa, pb);
+  }
+
+  /**
+   * Cuts the cords a blade's edge, a round or a shard crosses from (x0, y0) to (x1, y1):
+   * each it crosses (as drawn), with `chance` (see ROUND_CUTS), where it crosses; not
+   * those tied to `own` (a chainsaw run off a wire doesn't cut its own). Returns how many it cut.
+   */
+  cutAcross(x0: number, y0: number, x1: number, y1: number, chance = 1, own: Entity | null = null): number {
+    const list = this.cords();
+    if (!list.length) return 0;
+    const lx = Math.min(x0, x1);
+    const hx = Math.max(x0, x1);
+    const ly = Math.min(y0, y1);
+    const hy = Math.max(y0, y1);
+    let cut: { c: Connection; t: number }[] | null = null;
+    for (const c of list) {
+      if (own && (c.a.entity === own || c.b?.entity === own)) continue;
+      const pa = this.anchorWorld(c, 'a');
+      const pb = this.anchorWorld(c, 'b');
+      if (Math.max(pa.x, pb.x) < lx || Math.min(pa.x, pb.x) > hx || Math.max(pa.y, pb.y) < ly) continue;
+      const sag = this.drawnSag(c, pa, pb);
+      if (Math.min(pa.y, pb.y) - sag > hy) continue;
+      const n = sag > 0.02 ? 4 : 1;
+      let rx = pa.x;
+      let ry = pa.y;
+      for (let k = 1; k <= n; k++) {
+        const t = k / n;
+        const sx = pa.x + (pb.x - pa.x) * t;
+        const sy = pa.y + (pb.y - pa.y) * t - sag * 4 * t * (1 - t);
+        const u = crossAt(x0, y0, x1, y1, rx, ry, sx, sy);
+        if (u >= 0) {
+          if (Math.random() < chance) (cut ??= []).push({ c, t: (k - 1 + u) / n });
+          break;
+        }
+        rx = sx;
+        ry = sy;
+      }
+    }
+    for (const { c, t } of cut ?? []) this.cutAt(c, t);
+    return cut?.length ?? 0;
+  }
+
+  /**
+   * A blast at (x, y) cuts the wires passing within `r` of it, ropes within less (fuse
+   * cords are lit by it instead: see igniteNear()).
+   */
+  cutNear(x: number, y: number, r: number): void {
+    const list = this.cords();
+    if (!list.length) return;
+    let cut: { c: Connection; t: number }[] | null = null;
+    for (const c of list) {
+      if (c.kind === 'fuse') continue;
+      if (this.nearestOn(c, x, y) <= (c.kind === 'wire' ? r : r * 0.6)) (cut ??= []).push({ c, t: this.nearT });
+    }
+    for (const { c, t } of cut ?? []) this.cutAt(c, t);
+  }
+
+  /** Cuts a cord `t` of the way along it: a live wire sparks there, a rope's ends fall loose. */
+  private cutAt(c: Connection, t: number): void {
+    if (!this.list.includes(c)) return;
+    const w = this.cordPoint(c, t);
+    if (c.kind === 'wire') {
+      this.game.particles.sparks(w.x, w.y, 0, 1, 6, 3);
+      this.game.sound.spark(w.x);
+    } else this.game.sound.snap(w.x);
+    this.scorched.delete(c);
+    this.remove(c);
+  }
+
+  /**
+   * A wire or a rope in a fire (where it's tied to something burning, or where flames
+   * reach it along the way): a wire's insulation melts and it shorts out, a rope
+   * burns through, after a while in it (see WIRE_BURNS). Checked every quarter
+   * second (see postStep()); did it go?
+   */
+  private burnThrough(c: Connection): boolean {
+    let at = -1;
+    if (c.a.burning > 0.2) at = 0;
+    else if (c.b && c.b.burning > 0.2) at = 1;
+    else {
+      const n = Math.min(8, Math.ceil(c.rest / 0.5));
+      for (let k = 1; k < n; k++) {
+        const w = this.cordPoint(c, k / n);
+        // (flames lick up from what burns: a fire under it reaches it)
+        if (this.game.fire.near(w.x, w.y - 0.4, 0.7)) {
+          at = k / n;
+          break;
+        }
+      }
+    }
+    if (at < 0) {
+      this.scorched.delete(c);
+      return false;
+    }
+    const t = (this.scorched.get(c) ?? 0) + 0.25;
+    if (t < (c.kind === 'wire' ? WIRE_BURNS : ROPE_BURNS)) {
+      this.scorched.set(c, t);
+      return false;
+    }
+    this.cutAt(c, at);
+    return true;
+  }
+
+  // ---- strain ---------------------------------------------------------------
+
+  /** What a weld, a hinge or a pin holds (see HOLD): a weak one a quarter of it. */
+  private holdOf(c: Connection): { f: number; t: number } {
+    const h = HOLD[c.kind as keyof typeof HOLD];
+    const m = Math.min(c.a.mass, c.b ? c.b.mass : Infinity);
+    const f = Math.max(h.floor, h.g * 9.81 * m) * (c.opts?.strength === 'weak' ? 0.25 : 1);
+    return { f, t: f * h.arm };
+  }
+
+  /**
+   * A weld, a hinge or a pin pulled apart (or a weld twisted) past what it holds gives
+   * way (see HOLD): its load from what its joint gave in the step (one call into the
+   * physics for them all), averaged over STRAIN_T. (Stretched past breakAt, it snaps
+   * too: see postStep().)
+   */
+  private strain(dt: number): void {
+    const list = this.strained;
+    list.length = 0;
+    for (const c of this.list) if (c.joint && RIGID_KINDS.has(c.kind) && c.breakAt !== Infinity && c.joint.isValid()) list.push(c);
+    if (!list.length) return;
+    if (this.strainHandles.length < list.length) this.strainHandles = new Float64Array(list.length * 2);
+    const hs = this.strainHandles.subarray(0, list.length);
+    for (let i = 0; i < list.length; i++) hs[i] = list[i].joint!.handle;
+    const imp = this.game.physics.world.jointImpulsesOf(hs);
+    // (the impulses kept are the last substep's: a force over the substep's time)
+    const h = dt / this.game.physics.world.integrationParameters.numSolverIterations;
+    const k = Math.min(1, dt / STRAIN_T);
+    let gone: Connection[] | null = null;
+    for (let i = 0; i < list.length; i++) {
+      const ix = imp[i * 3];
+      if (!Number.isFinite(ix)) continue;
+      const c = list[i];
+      const hold = (c.holds ??= this.holdOf(c));
+      const f = Math.hypot(ix, imp[i * 3 + 1]) / h;
+      const t = c.kind === 'weld' || c.limit !== undefined ? Math.abs(imp[i * 3 + 2]) / h : 0;
+      const s = Math.max(f / hold.f, t / hold.t);
+      const load = (c.load ?? 0) + (s - (c.load ?? 0)) * k;
+      c.load = load;
+      if (load > 1) (gone ??= []).push(c);
+    }
+    for (const c of gone ?? []) {
+      // (being pushed out of an overlap isn't a load: it holds)
+      if (this.overlapping(c.a) || (c.b && this.overlapping(c.b))) c.load = Math.min(c.load ?? 0, 0.9);
+      else this.giveWay(c);
+    }
+  }
+
+  /** Is the part pressed deep into something (OVERLAP), being pushed out of it rather than loaded? */
+  private overlapping(p: Part): boolean {
+    if (p.destroyed) return false;
+    const world = this.game.physics.world;
+    let deep = false;
+    for (const col of p.colliders) {
+      world.contactPairsWith(col, (other) => {
+        if (deep) return;
+        world.contactPair(col, other, (m) => {
+          for (let i = 0; i < m.numContacts() && !deep; i++) if (m.contactDist(i) < -OVERLAP) deep = true;
+        });
+      });
+      if (deep) break;
+    }
+    return deep;
+  }
+
+  /**
+   * A blast kicked `kicked` parts (their change in velocity): a weld, a hinge or a pin
+   * between two it kicked unequally (or one it kicked and one it didn't, or the
+   * background) took the push that keeps them together, over BLAST_T, and gives way
+   * past what it holds. The physics can't tell: a joint's load is read at the end of
+   * the step (see strain()), long after a blast's few milliseconds.
+   */
+  blastLoad(kicked: ReadonlyMap<Part, { x: number; y: number }>): void {
+    let gone: Connection[] | null = null;
+    for (const c of this.list) {
+      if (!c.joint || !RIGID_KINDS.has(c.kind) || c.breakAt === Infinity) continue;
+      const ka = kicked.get(c.a);
+      const kb = c.b ? kicked.get(c.b) : undefined;
+      if (!ka && !kb) continue;
+      const ma = c.a.frozen ? Infinity : c.a.mass;
+      const mb = !c.b || c.b.frozen ? Infinity : c.b.mass;
+      // (the reduced mass: of the part on its own against the background or a frozen one)
+      const mu = ma === Infinity ? mb : mb === Infinity ? ma : (ma * mb) / (ma + mb);
+      if (!(mu < Infinity)) continue;
+      const dv = Math.hypot((ka?.x ?? 0) - (kb?.x ?? 0), (ka?.y ?? 0) - (kb?.y ?? 0));
+      const hold = (c.holds ??= this.holdOf(c));
+      const s = (mu * dv) / BLAST_T / hold.f;
+      if (s > 1) (gone ??= []).push(c);
+      else c.load = Math.max(c.load ?? 0, s);
+    }
+    for (const c of gone ?? []) this.giveWay(c);
+  }
+
+  /** A weld, a hinge or a pin gives way under load: it snaps (and a weld sparks). */
+  private giveWay(c: Connection): void {
+    if (!this.list.includes(c)) return;
+    const at = this.anchorWorld(c, 'a');
+    this.game.sound.snap(at.x);
+    if (c.kind === 'weld') this.game.particles.sparks(at.x, at.y, 0, 1, 6, 3);
+    this.remove(c);
+  }
+
   // ---- simulation -----------------------------------------------------------
 
   postStep(dt: number): void {
     this.settle();
+    if (!this.game.net?.guest) this.strain(dt);
     // now and then, fires touching unlit fuse cords light them
     this.fireT -= dt;
     const fireCheck = this.fireT <= 0 && this.game.fire.count > 0;
@@ -1284,7 +1605,7 @@ export class Connections {
       if (c.kind === 'fuse') {
         if (!c.burn) this.catchFire(c, fireCheck);
         if (c.burn && this.burnFuse(c, dt)) continue;
-      }
+      } else if (fireCheck && (c.kind === 'wire' || c.kind === 'rope') && this.burnThrough(c)) continue;
       if (c.breakAt === Infinity || !c.joint) continue;
       const pa = this.anchorWorld(c, 'a');
       const pb = this.anchorWorld(c, 'b');

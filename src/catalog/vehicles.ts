@@ -129,7 +129,7 @@ const TANK: CarConfig = {
   // the commander, down in the cupola's hatch with head and shoulders out (the front layer is the hull and turret only)
   seats: [{ at: [51, 13], pose: HATCH_POSE, recline: 0, band: 0 }], cabin: [36, 0, 48, 14], noBelts: true, ...burnt(tankArt, 23),
   // armour: crashes and blasts that wreck a car barely mark it
-  engine: [16, 14], fuel: [28, 16], armour: 0.08, blast: { power: 180, radius: 6.5, damage: 300 },
+  engine: [16, 14], fuel: [28, 16], armour: 0.08, blast: { power: 180, radius: 6.5, damage: 300 }, wholeShapes: [1],
   // (its team's stripe along the hull: the star's on the turret)
   band: [26, 15, 92, 18],
 };
@@ -180,7 +180,7 @@ function tankModel(d: V.TankDesign, s: TankStats): { cfg: CarConfig; cannon: Omi
     wheelDensity: 300, axles: d.axles, wheelR: d.r, speed: s.speed, torque: s.torque, headlight: d.lamp, pitch: s.pitch, blunt: 1.3,
     bodyName: 'Hull', wheelName: 'Road wheel',
     seats: [{ at: d.hatch, pose: HATCH_POSE, recline: 0, band: 0 }], cabin: d.cabin, noBelts: true, ...burnt(body, foot + 1),
-    engine: d.engine, fuel: d.fuel, armour: 0.06, blast: { power: 200, radius: 7, damage: 320 }, band: d.band,
+    engine: d.engine, fuel: d.fuel, armour: 0.06, blast: { power: 200, radius: 7, damage: 320 }, band: d.band, wholeShapes: [1],
   };
   const g = d.barrel;
   const shapes = [artRect(g.len, V.GUN_H, 0, 1, g.len, 5, 0.5)];

@@ -12,7 +12,7 @@ export type ActionId =
   | 'tool1' | 'tool2' | 'tool3' | 'tool4' | 'tool5' | 'tool6' | 'tool7' | 'tool8' | 'tool9' | 'toolPower'
   | 'menu' | 'toybox' | 'toggleUi' | 'help' | 'layout'
   | 'panLeft' | 'panRight' | 'panUp' | 'panDown' | 'zoomIn' | 'zoomOut' | 'recenter'
-  | 'driveLeft' | 'driveRight' | 'aimUp' | 'aimDown'
+  | 'driveLeft' | 'driveRight' | 'aimUp' | 'aimDown' | 'turnLeft' | 'turnRight'
   | 'com' | 'rewind' | 'layerFront' | 'layerBack' | 'gridSize' | 'angleStep';
 
 export interface ActionSpec {
@@ -81,10 +81,14 @@ export const ACTIONS: ActionSpec[] = [
   // (not People Playground's: its vehicles drive themselves; here W A S D drive what's selected, the arrows
   // being the camera's. While a vehicle is selected, and nothing's dragged, A and D drive it rather than turn
   // it, and S lowers a tank's gun rather than showing the detail view: see Controls.drives())
-  { id: 'driveLeft', label: 'Drive the selected vehicles left (forward or in reverse)', group: 'Vehicles', keys: ['KeyA'], shares: 'rotateLeft' },
-  { id: 'driveRight', label: 'Drive the selected vehicles right (forward or in reverse)', group: 'Vehicles', keys: ['KeyD'], shares: 'rotateRight' },
-  { id: 'aimUp', label: 'Aim the selected tanks up (raise their barrels)', group: 'Vehicles', keys: ['KeyW'] },
-  { id: 'aimDown', label: 'Aim the selected tanks down (lower their barrels)', group: 'Vehicles', keys: ['KeyS'], shares: 'detail' },
+  // (a build with engines in it, selected, is flown by the same keys: W and S its throttle, A and D move it,
+  // Q and E turn it, rather than spawning facing left or right: see systems/Piloting)
+  { id: 'driveLeft', label: 'Drive the selected vehicles left (forward or in reverse); move what you fly left', group: 'Vehicles', keys: ['KeyA'], shares: 'rotateLeft' },
+  { id: 'driveRight', label: 'Drive the selected vehicles right (forward or in reverse); move what you fly right', group: 'Vehicles', keys: ['KeyD'], shares: 'rotateRight' },
+  { id: 'aimUp', label: 'Aim the selected tanks up (raise their barrels); throttle up what you fly', group: 'Vehicles', keys: ['KeyW'] },
+  { id: 'aimDown', label: 'Aim the selected tanks down (lower their barrels); throttle down what you fly', group: 'Vehicles', keys: ['KeyS'], shares: 'detail' },
+  { id: 'turnLeft', label: 'Turn what you fly anticlockwise; tilt a vehicle in the air back', group: 'Vehicles', keys: ['KeyQ'], shares: 'spawnLeft' },
+  { id: 'turnRight', label: 'Turn what you fly clockwise; tilt a vehicle in the air forward', group: 'Vehicles', keys: ['KeyE'], shares: 'spawnRight' },
   // building (not People Playground's keys: it has no layers, grids or checkpoints to reach)
   { id: 'com', label: 'Hold: connection ends go at the centre of mass', group: 'Building', keys: ['KeyM'] },
   { id: 'rewind', label: 'Back to build (the scene as it was before Play; also Shift + Toggle time)', group: 'Building', keys: [] },

@@ -114,7 +114,7 @@ function registerAir(): void {
     ['fan', 'wind', 'blow', 'air', 'blower', 'electric']);
   const propShapes = rects(16, 30, [[0, 11, 12, 8], [12, 13, 2, 4]]);
   item('propeller', 'Propeller',
-    'Needs power. Pulls whatever it’s fixed to the way it faces: a few lift a contraption. Its blades cut what touches them. Set its speed in its menu; activate switches it off and on.',
+    'Needs power. Pulls whatever it’s fixed to the way it faces: a few lift a contraption, less the faster it goes and the thinner the air. Its blades cut what touches them. Set its speed in its menu; activate switches it off and on. Select what it’s built into to fly it: W and S throttle, A and D move, Q and E turn.',
     () => M.propellerArt(0), (game, def, x, y, opts) =>
       new Propeller(game, def, cfg(() => M.propellerArt(0), MAT.metal, propShapes, 4), M.propellerArt, M.PROP_BLADES, 600, x, y, opts),
     ['propeller', 'prop', 'rotor', 'fly', 'plane', 'helicopter', 'electric']);

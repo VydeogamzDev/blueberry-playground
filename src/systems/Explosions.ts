@@ -52,6 +52,15 @@ interface Nuke {
 
 const LOS_GROUPS = groups(GROUP.DEBRIS, GROUP.STATIC);
 
+/**
+ * How hard a blast is in air this thin (a share of the ground's: see Atmosphere): a
+ * blast wave is the air's, its overpressure going as the air's pressure to the 2/3; in a
+ * vacuum all that's left is what the explosive throws out itself, near it, a quarter.
+ */
+function blastAir(thin: number): number {
+  return 0.25 + 0.75 * Math.pow(Math.max(0, Math.min(1, thin)), 2 / 3);
+}
+
 /** The smallest and biggest yields (kt) a thermonuclear bomb can be set to. */
 export const NUKE_MIN_KT = 0.1;
 export const NUKE_MAX_KT = 50000;
@@ -66,12 +75,26 @@ export function nukeRadius(kt: number): number {
   return 12 * Math.pow(Math.min(NUKE_MAX_KT, Math.max(NUKE_MIN_KT, kt)) / NUKE_MIN_KT, 0.1925);
 }
 
+/**
+ * How far a nuke's EMP reaches, times its blast's reach (see nuke()): a real one's
+ * fries electronics well past where the blast does any harm.
+ */
+const EMP_REACH = 3;
+
 /** Parts a nuclear shock front may hit in one step; the rest wait for the next (a crowd mustn't stall a step). */
 const NUKE_HITS_PER_STEP = 40;
 /** How long a mushroom cloud keeps billowing (s). */
 const CLOUD_TIME = 7;
 /** The fastest a nuclear blast flings anything (m/s): any faster, it would go through the walls. */
 const NUKE_FLING = 45;
+
+/**
+ * The flash's heat (°C over the air) at the fireball's edge, and at its middle:
+ * past the edge it falls away with the square of the distance (300 °C at twice
+ * as far: wood catches; a hundred at the blast's reach).
+ */
+const FLASH_EDGE = 1200;
+const FLASH_CORE = 2000;
 
 export class Explosions {
   private game: Game;
@@ -81,6 +104,8 @@ export class Explosions {
   /** The point of a part nearest() last found nearest the blast. */
   private qx = 0;
   private qy = 0;
+  /** What this blast (or this step of a nuke's shock front) did to each part's velocity (see strike(), Connections.blastLoad()). */
+  private readonly kicked = new Map<Part, { x: number; y: number }>();
   /** A nuclear flash whiting out the screen: how white (0..1), how long it holds, then fades (s). */
   private white = 0;
   private whiteHold = 0;
@@ -136,6 +161,7 @@ export class Explosions {
     // oil on the floor nearby catches, and fuse cords in the blast
     if (y - WORLD.floor < R) g.puddles.igniteNear(x, Math.sqrt(Math.max(0, R * R - (y - WORLD.floor) ** 2)));
     g.connections.igniteNear(x, y, R * 0.8);
+    g.connections.cutNear(x, y, R * 0.3);
 
     // ---- visuals & audio
     this.visuals(x, y, o);
@@ -145,7 +171,8 @@ export class Explosions {
     const dCam = Math.hypot(x - r.camX, y - r.camY);
     r.shake(Math.max(0, (o.power / 50) * (1 - dCam / 60)));
 
-    // ---- physics: collect parts in range
+    // ---- physics: collect parts in range (high on the World, the thin air carries less of it)
+    const air = g.air.layered ? blastAir(g.air.thinness(y)) : 1;
     const parts = new Set<Part>();
     world.intersectionsWithShape({ x, y }, 0, new RAPIER.Ball(R), (c) => {
       const p = g.physics.partOf(c);
@@ -158,8 +185,9 @@ export class Explosions {
       if (d > R) continue;
       let f = 1 - d / R;
       f = f * f * (0.4 + 0.6 * f) + 0.04;
-      this.strike(p, x, y, f, o.power, o.damage, !!o.incendiary);
+      this.strike(p, x, y, f, o.power * air, o.damage * air, !!o.incendiary);
     }
+    this.loadJoints();
 
     // ---- shrapnel
     const n = o.shrapnel ?? 0;
@@ -216,14 +244,23 @@ export class Explosions {
     const mass = p.frozen ? 0 : p.mass;
     const mag = power * f * Math.pow(Math.max(0.05, mass), 0.6) * 0.35;
     if (!p.frozen) {
+      const v0 = p.body.linvel();
       p.body.applyImpulseAtPoint({ x: dirx * mag, y: (diry + 0.25) * mag }, { x: qx, y: qy }, true);
+      let v = p.body.linvel();
       if (fling < Infinity) {
-        const v = p.body.linvel();
         const s = Math.hypot(v.x, v.y);
-        if (s > fling) p.body.setLinvel({ x: (v.x / s) * fling, y: (v.y / s) * fling }, true);
+        if (s > fling) {
+          v = { x: (v.x / s) * fling, y: (v.y / s) * fling };
+          p.body.setLinvel(v, true);
+        }
         const av = p.body.angvel();
         if (Math.abs(av) > 40) p.body.setAngvel(Math.sign(av) * 40, true);
       }
+      const k = this.kicked.get(p);
+      if (k) {
+        k.x += v.x - v0.x;
+        k.y += v.y - v0.y;
+      } else this.kicked.set(p, { x: v.x - v0.x, y: v.y - v0.y });
     }
     p.entity.damage(p, damage * f, 'explosion', { x: qx, y: qy }, { x: dirx, y: diry });
     if ((incendiary || f > 0.6) && Math.random() < p.mat.flammability * f * 1.5) g.fire.ignite(p, 0.5 + f * 0.5);
@@ -314,14 +351,19 @@ export class Explosions {
       return true;
     });
     const near = [...found].map((p) => ({ p, d: Math.min(R, Math.hypot(p.x - x, p.y - y)) })).sort((a, b) => a.d - b.d);
+    this.flash(x, y, R * 0.3, near);
+    this.emp(x, y, R * EMP_REACH);
+    // (its shock is the air's: up high on the World, the less of it; the flash is the same)
+    const air = g.air.layered ? blastAir(g.air.thinness(y)) : 1;
     this.nukes.push({
-      x, y, R, fireball: R * 0.3, size, power: 260 + R * 4, damage: 3000, speed: 25 + R * 0.6, front: 0, t: 0,
+      x, y, R, fireball: R * 0.3, size, power: (260 + R * 4) * air, damage: 3000 * air, speed: 25 + R * 0.6, front: 0, t: 0,
       parts: near.map((n) => n.p), dist: near.map((n) => n.d), next: 0, heard: false,
     });
     // fuse cords and oil in the fireball catch
     const fb = R * 0.3;
     if (source) g.connections.lightFrom(source);
     g.connections.igniteNear(x, y, fb);
+    g.connections.cutNear(x, y, R * 0.5);
     if (y - WORLD.floor < fb) g.puddles.igniteNear(x, Math.sqrt(Math.max(0, fb * fb - (y - WORLD.floor) ** 2)));
     g.alarm(x, y, R * 3);
     // the flash whites out the whole screen, the longer the bigger it is
@@ -338,6 +380,56 @@ export class Explosions {
     this.scorch(x, y, fb * 1.2, 64);
   }
 
+  /**
+   * A nuke's EMP out to `r` (see EMP_REACH): whatever runs on power or makes it is
+   * fried, dead till it's repaired (see Entity.fry()); a wall between is no shield.
+   */
+  private emp(x: number, y: number, r: number): void {
+    const g = this.game;
+    const seen = new Set<Entity>();
+    g.physics.world.intersectionsWithShape({ x, y }, 0, new RAPIER.Ball(r), (c) => {
+      const p = g.physics.partOf(c);
+      if (p && !p.destroyed) seen.add(p.entity);
+      return true;
+    });
+    let any = false;
+    for (const e of seen) if (e.fry(false)) any = true;
+    if (any) g.connections.recomputePower();
+  }
+
+  /**
+   * The flash, at once (the shock front comes after: see stepNukes()): everything in
+   * sight of the blast heats by how near it is (see FLASH_EDGE) and how small, a tenth as
+   * much behind a wall. Steel in the fireball glows, small things in it melt, and softened
+   * it all gives way the sooner to the shock; wood and cloth catch further out; skin burns.
+   */
+  private flash(x: number, y: number, fb: number, near: { p: Part; d: number }[]): void {
+    const g = this.game;
+    const world = g.physics.world;
+    for (const { p, d } of near) {
+      if (p.destroyed) continue;
+      let dT = d <= fb ? FLASH_CORE - (FLASH_CORE - FLASH_EDGE) * (d / fb) : FLASH_EDGE * (fb / d) ** 2;
+      if (dT < 25) break;
+      // (a flash heats a thing's face: small, thin things through, a tank's hull hardly; in the
+      // fireball itself, though, everything bathes in it a while)
+      const thin = p.mat.bleeds ? 1 : Math.min(1, Math.cbrt(20 / Math.max(0.05, p.mass)));
+      dT *= d <= fb ? Math.max(0.5, thin) : thin;
+      if (dT < 25) continue;
+      if (d > 0.05) {
+        this.ray.origin = { x, y };
+        this.ray.dir = { x: (p.x - x) / d, y: (p.y - y) / d };
+        const hit = world.castRay(this.ray, d, true, undefined, LOS_GROUPS);
+        if (hit && hit.timeOfImpact < d - 0.1) dT *= 0.1;
+      }
+      const to = g.air.tempAt(p.y) + dT;
+      if (to > p.temp) g.heat.toward(p, to, 1);
+      if (p.mat.bleeds) {
+        p.entity.damage(p, dT * 0.04, 'fire');
+        p.charred = Math.min(1, p.charred + dT / 1500);
+      } else if (p.mat.flammability > 0 && dT > 280) p.charred = Math.min(1, p.charred + dT / 2000);
+    }
+  }
+
   private stepNukes(dt: number): void {
     const g = this.game;
     for (let i = this.nukes.length - 1; i >= 0; i--) {
@@ -352,6 +444,7 @@ export class Explosions {
         this.nukeHit(n, p);
         hits++;
       }
+      this.loadJoints();
       this.nukeVisuals(n, dt);
       if (!n.heard) {
         const r = g.renderer;
@@ -367,6 +460,13 @@ export class Explosions {
       }
       if (n.next >= n.parts.length && n.front >= n.R && n.t >= CLOUD_TIME) this.nukes.splice(i, 1);
     }
+  }
+
+  /** What the blast just did, the welds, hinges and pins between the parts it kicked take (see Connections.blastLoad()). */
+  private loadJoints(): void {
+    if (!this.kicked.size) return;
+    if (!this.game.net?.guest) this.game.connections.blastLoad(this.kicked);
+    this.kicked.clear();
   }
 
   /** The shock front reaches a part: all-out inside the fireball (which burns it), falling away to nothing at the edge. */
@@ -387,7 +487,8 @@ export class Explosions {
     const P = this.game.particles;
     const rnd = Math.random;
     const count = (perSec: number) => Math.floor(perSec * dt + rnd());
-    const floor = WORLD.floor;
+    // (the ground under it, on the World; the floor elsewhere)
+    const floor = this.game.env.world ? this.game.env.groundAt(n.x, n.y) : WORLD.floor;
     // the fireball swells, rises and cools
     if (n.t < 0.6 + 0.9 * n.size) {
       const rf = n.fireball * Math.min(1, 0.35 + n.t * 2.5);
@@ -477,6 +578,18 @@ export class Explosions {
     }
     el.style.opacity = String(this.white);
     el.style.display = this.white > 0.003 ? 'block' : 'none';
+  }
+
+  /** Everything here moved by (dx, dy): the floating origin moved (see world/Origin). */
+  shift(dx: number, dy: number): void {
+    for (const p of this.pending) {
+      p.x += dx;
+      p.y += dy;
+    }
+    for (const n of this.nukes) {
+      n.x += dx;
+      n.y += dy;
+    }
   }
 
   clear(): void {

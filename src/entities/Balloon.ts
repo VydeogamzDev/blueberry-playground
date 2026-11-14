@@ -44,6 +44,12 @@ const BURST_SPEED = 16;
 const BURST_HEAT = 0.3;
 /** How often (s) it feels round for sharp edges it's resting on. */
 const POKE_T = 0.1;
+/**
+ * Up in air this thin (a share of the ground's), it's swelled past what it can stretch
+ * to and bursts: about 700 m up on the World (the clouds), in the squeezed sky's terms
+ * the height a real one goes.
+ */
+const BURST_THIN = 0.45;
 
 /**
  * A balloon full of gas: it floats up, and lifts what it's tied to (tie a rope
@@ -52,6 +58,8 @@ const POKE_T = 0.1;
  * It bursts at a bullet, a blade, a flame, heat from below or a hard knock.
  */
 export class Balloon extends Prop {
+  // (its own drag and lift: see systems/Aero)
+  ownFlight = true;
   color: BalloonColor = 'red';
   readonly kind: BalloonKind;
   private heat = 0;
@@ -84,11 +92,17 @@ export class Balloon extends Prop {
     this.heat = Math.max(0, this.heat - dt * 0.5);
     // the air holding it back (on how fast it was going: the lift must be felt whole, or
     // it can't carry what it's tied to), then the gas's lift, at its top so the knot hangs under it
+    const thin = this.game.air.thinness(p.y);
+    if (thin < BURST_THIN) {
+      this.pop();
+      return;
+    }
     const v = p.body.linvel();
-    const k = Math.max(0, 1 - (this.kind.drag * dt) / p.mass);
+    const k = Math.max(0, 1 - (this.kind.drag * thin * dt) / p.mass);
     p.body.setLinvel({ x: v.x * k, y: v.y * k }, true);
     if (!p.weightless) {
-      const j = -this.game.gravity * this.kind.lift * dt;
+      // (it floats on the air it pushes aside: less of it, the thinner it is)
+      const j = -this.game.gravity * this.kind.lift * thin * dt;
       p.body.applyImpulseAtPoint({ x: 0, y: j }, p.pixelToWorld(this.kind.top[0], this.kind.top[1]), true);
     }
     this.pokeT -= dt;

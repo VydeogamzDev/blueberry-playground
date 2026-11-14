@@ -17,7 +17,7 @@ const SOLID = groups(GROUP.DEBRIS, GROUP.STATIC | GROUP.DYNAMIC);
 
 /** The floor's height under x (the ground's top, on a map with ground). */
 function floorAt(game: Game, x: number, y: number): number {
-  return game.env.ground.length ? game.env.groundAt(x, y) : WORLD.floor;
+  return game.env.hasGround ? game.env.groundAt(x, y) : WORLD.floor;
 }
 
 // ------------------------------------------------------------------ flare
@@ -238,6 +238,8 @@ export function fireworkBurst(game: Game, c: V2, color: FireworkColor, self: Ent
  * hits something on the way, or is shot; what's close to the burst is singed.
  */
 export class Firework extends Item {
+  // (its own drag and lift: see systems/Aero)
+  ownFlight = true;
   color: FireworkColor = 'red';
   state: RocketState = 'idle';
   /** Seconds of the fuse left, and of the flight so far. */

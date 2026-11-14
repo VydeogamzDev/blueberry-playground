@@ -17,6 +17,9 @@ const WELL = RUBBER[0];
 const SOOT = 0x1d1b1a;
 /** Glass that is seen through: the cab, and whoever sits in it, are behind it (see seeThrough()). */
 const PANE = new Set<Color>([GLASS[0], GLASS[1], GLASS[2], GLASS[3], SOOT]);
+/** Its windows' glass (and their glints), which shatters when the body is torn apart (see Car.dismantle()). */
+const GLAZED = new Set<Color>([GLASS[0], GLASS[1], GLASS[2], GLASS[3], GLASS[4]]);
+export const isGlass = (c: Color): boolean => GLAZED.has(c);
 
 /**
  * A window: the sky reflected along its top, the dark of the cab low down,

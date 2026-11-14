@@ -41,6 +41,12 @@ export interface MapSpec {
   water?: MapWater;
   /** Weather of its own, set as the map is switched to (the Snow map's snow; see systems/Weather). */
   weather?: MapWeather;
+  /**
+   * The World map's (see WORLD_MAP): ground made from this seed going on for ever
+   * every way (world/Terrain), and the sky over it thinning into space. Its width
+   * and height are only a window kept round the floating origin (world/Origin).
+   */
+  world?: { seed: number };
 }
 
 export interface MapWater {
@@ -134,7 +140,7 @@ export function cleanPieces(list: readonly unknown[], width: number, height: num
     const pts: Pt[] = [];
     for (const p of r.pts) {
       if (!Array.isArray(p) || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) break;
-      pts.push([round(clamp(p[0], -hw, hw)), round(clamp(p[1], WORLD.floor - BELOW, WORLD.floor + height))]);
+      pts.push([round(clamp(p[0], -hw, hw)), round(clamp(p[1], -BELOW, height))]);
     }
     if (pts.length !== r.pts.length) continue;
     const outline = cleanOutline(pts);
@@ -158,7 +164,8 @@ export function newMapId(): string {
 export function sameMap(a: MapSpec, b: MapSpec): boolean {
   return a === b || (a.id === b.id && a.name === b.name && a.width === b.width && a.height === b.height
     && a.theme === b.theme && JSON.stringify(a.terrain) === JSON.stringify(b.terrain)
-    && JSON.stringify(a.water ?? null) === JSON.stringify(b.water ?? null) && JSON.stringify(a.weather ?? null) === JSON.stringify(b.weather ?? null));
+    && JSON.stringify(a.water ?? null) === JSON.stringify(b.water ?? null) && JSON.stringify(a.weather ?? null) === JSON.stringify(b.weather ?? null)
+    && a.world?.seed === b.world?.seed);
 }
 
 /** A map's sea as read from a file, made safe: inside the map, its surface above the floor and under the ceiling (null: none). */
@@ -168,7 +175,7 @@ function cleanWater(raw: unknown, width: number, height: number): MapWater | nul
   const hw = width / 2;
   const x0 = round(clamp(Math.min(w.x0!, w.x1!), -hw, hw));
   const x1 = round(clamp(Math.max(w.x0!, w.x1!), -hw, hw));
-  const level = round(clamp(w.level!, WORLD.floor + 0.5, WORLD.floor + height - 1));
+  const level = round(clamp(w.level!, 0.5, height - 1));
   return x1 - x0 >= 1 ? { x0, x1, level } : null;
 }
 
@@ -205,6 +212,11 @@ export function validateMap(data: unknown): MapSpec | null {
   const name = (typeof d.name === 'string' && d.name.trim().slice(0, 40)) || 'Untitled map';
   const id = typeof d.id === 'string' ? d.id : '';
   const base = BUILTIN_MAPS.find((m) => m.id === id);
+  // (the World is only ever the built-in one, from its seed)
+  if (base?.world) {
+    const seed = (d.world as { seed?: unknown } | undefined)?.seed;
+    return typeof seed === 'number' && Number.isInteger(seed) && seed !== base.world.seed ? worldOf(seed) : base;
+  }
   // (the endless plate has nothing to change: past the limits, it is only ever the built-in one)
   if (base?.endless) return base;
   const spec: MapSpec = { id, name, width, height, theme, terrain: cleanPieces(Array.isArray(d.terrain) ? d.terrain : [], width, height) };
@@ -221,6 +233,8 @@ export function validateMap(data: unknown): MapSpec | null {
 export function applyBounds(spec: MapSpec): void {
   WORLD.left = -spec.width / 2;
   WORLD.right = spec.width / 2;
+  // (the World's floor is far down under its lowest valley, its ceiling out in space; the origin at (0, 0))
+  WORLD.floor = spec.world ? WORLD_FLOOR : 0;
   WORLD.ceiling = WORLD.floor + spec.height;
 }
 
@@ -415,6 +429,27 @@ export const ENDLESS_REACH = 16000;
  */
 export const ENDLESS: MapSpec = { id: 'endless', name: 'Endless plate', width: ENDLESS_REACH * 2, height: 120, theme: 'concrete', terrain: [], endless: true };
 
+/**
+ * How far (m) the World map's bounds reach either way of the floating origin (see
+ * world/Origin): a window that goes along with it. Whatever's further from every
+ * camera than this is long since parked (see world/Parking).
+ */
+export const WORLD_WINDOW = 16384;
+/** How far down (m, true) the World's floor is: under any valley, a last stop for what falls through the ground. */
+export const WORLD_FLOOR = -1000;
+
+/** The World map from a seed (see MapSpec.world). */
+export function worldOf(seed: number): MapSpec {
+  return seed === WORLD_MAP.world!.seed ? WORLD_MAP : { ...WORLD_MAP, world: { seed } };
+}
+
+/**
+ * The World: ground every way for ever, flat around the start and hills,
+ * mountains, mesas and valleys beyond (world/Terrain), under a sky that thins into
+ * space as you go up (world/Atmosphere).
+ */
+export const WORLD_MAP: MapSpec = { id: 'world', name: 'World', width: WORLD_WINDOW * 2, height: 1e7, theme: 'outdoors', terrain: [], endless: true, world: { seed: 1 } };
+
 /** A cramped room, 40 m across and 14 m high. */
 const TINY = builtin('tiny', 'Tiny', 40, 14, 'concrete', []);
 
@@ -494,7 +529,7 @@ const ABYSS = builtin('abyss', 'Abyss', 240, 140, 'outdoors', [
 ]);
 
 /** The maps that come with the game, the lab first. */
-export const BUILTIN_MAPS: MapSpec[] = [LAB, HANGAR, HILLS, ROOFTOPS, ARENA, ENDLESS, TINY, HUMONGOUS, SLANTED, TOWER, BLOCKS, VOID, SNOW, SEA, ABYSS];
+export const BUILTIN_MAPS: MapSpec[] = [LAB, HANGAR, HILLS, ROOFTOPS, ARENA, ENDLESS, WORLD_MAP, TINY, HUMONGOUS, SLANTED, TOWER, BLOCKS, VOID, SNOW, SEA, ABYSS];
 
 /** A built-in map by its id. */
 export function builtinMap(id: string): MapSpec | undefined {

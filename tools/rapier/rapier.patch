@@ -190,10 +190,10 @@ index 00000000..a1821e53
 @@ -0,0 +1 @@
 +export * from "../pkg/dist/rapier_wasm2d";
 diff --git a/bindings/typescript/src.ts/dynamics/impulse_joint_set.ts b/bindings/typescript/src.ts/dynamics/impulse_joint_set.ts
-index 46aafccc..03103c40 100644
+index 46aafccc..f9826607 100644
 --- a/bindings/typescript/src.ts/dynamics/impulse_joint_set.ts
 +++ b/bindings/typescript/src.ts/dynamics/impulse_joint_set.ts
-@@ -110,6 +110,16 @@ export class ImpulseJointSet {
+@@ -110,6 +110,27 @@ export class ImpulseJointSet {
          this.raw.forEachJointAttachedToRigidBody(handle, f);
      }
  
@@ -205,6 +205,17 @@ index 46aafccc..03103c40 100644
 +     */
 +    public bodyPairs(bodies: RigidBodySet): Float64Array {
 +        return this.raw.jointBodyPairs(bodies.raw);
++    }
++
++    /**
++     * The impulses each of these joints gave in the last step, in its own frame: three
++     * numbers a joint, along its two axes and then about its turning one (NaNs for one
++     * that's gone). One call for them all.
++     *
++     * @param handles - The joints' handles.
++     */
++    public impulsesOf(handles: Float64Array): Float32Array {
++        return this.raw.jointImpulsesOf(handles);
 +    }
 +
      /**
@@ -402,7 +413,7 @@ index b5854dc1..86b31cc6 100644
  
      public free() {
 diff --git a/bindings/typescript/src.ts/pipeline/world.ts b/bindings/typescript/src.ts/pipeline/world.ts
-index 2ece4757..a57a439f 100644
+index 2ece4757..e5782ce2 100644
 --- a/bindings/typescript/src.ts/pipeline/world.ts
 +++ b/bindings/typescript/src.ts/pipeline/world.ts
 @@ -282,6 +282,7 @@ export class World {
@@ -460,7 +471,7 @@ index 2ece4757..a57a439f 100644
      public castRayAndGetNormal(
          ray: Ray,
          maxToi: number,
-@@ -1291,6 +1323,24 @@ export class World {
+@@ -1291,6 +1323,33 @@ export class World {
          );
      }
  
@@ -480,6 +491,15 @@ index 2ece4757..a57a439f 100644
 +     */
 +    public jointBodyPairs(): Float64Array {
 +        return this.impulseJoints.bodyPairs(this.bodies);
++    }
++
++    /**
++     * The impulses each of these impulse joints gave in the last step, in its own frame:
++     * three numbers a joint, along its two axes and then about its turning one (NaNs for one
++     * that's gone). One call for them all.
++     */
++    public jointImpulsesOf(handles: Float64Array): Float32Array {
++        return this.impulseJoints.impulsesOf(handles);
 +    }
 +
      /**
@@ -560,7 +580,7 @@ index 00000000..3f0fde43
 +    }
 +}
 diff --git a/bindings/typescript/src/dynamics/impulse_joint_set.rs b/bindings/typescript/src/dynamics/impulse_joint_set.rs
-index b7ba1bf0..871b55f8 100644
+index b7ba1bf0..c99f7f44 100644
 --- a/bindings/typescript/src/dynamics/impulse_joint_set.rs
 +++ b/bindings/typescript/src/dynamics/impulse_joint_set.rs
 @@ -1,4 +1,4 @@
@@ -569,7 +589,7 @@ index b7ba1bf0..871b55f8 100644
  use crate::utils::{self, FlatHandle};
  use rapier::dynamics::{ImpulseJoint, ImpulseJointSet};
  use wasm_bindgen::prelude::*;
-@@ -79,6 +79,23 @@ impl RawImpulseJointSet {
+@@ -79,6 +79,37 @@ impl RawImpulseJointSet {
          }
      }
  
@@ -586,6 +606,20 @@ index b7ba1bf0..871b55f8 100644
 +                utils::flat_handle(joint.body2().0),
 +                flags as f64,
 +            ]);
++        }
++        out
++    }
++
++    /// The impulses each of these joints gave in the last step, in its own frame: three
++    /// numbers a joint, along its two axes and then about its turning one (NaNs for one
++    /// that's gone). One call for them all, as a joint's strain is watched step by step.
++    pub fn jointImpulsesOf(&self, handles: &[FlatHandle]) -> Vec<f32> {
++        let mut out = Vec::with_capacity(handles.len() * 3);
++        for &h in handles {
++            match self.0.get(utils::impulse_joint_handle(h)) {
++                Some(j) => out.extend_from_slice(&[j.impulses.x, j.impulses.y, j.impulses.z]),
++                None => out.extend_from_slice(&[f32::NAN; 3]),
++            }
 +        }
 +        out
 +    }
@@ -1230,10 +1264,71 @@ index 00000000..680bac9a
 +    POOL.get().cloned()
 +}
 diff --git a/src/dynamics/ccd/sweeps.rs b/src/dynamics/ccd/sweeps.rs
-index 3f576afd..a9520868 100644
+index 3f576afd..b411ed5d 100644
 --- a/src/dynamics/ccd/sweeps.rs
 +++ b/src/dynamics/ccd/sweeps.rs
-@@ -591,7 +591,9 @@ pub(super) fn sweep_fast_body(
+@@ -328,6 +328,21 @@ fn cast_collider_pair(
+     is_pseudo: bool,
+ ) -> Option<Real> {
+     let target_pose = target_collider_pose(co2, rb2);
++    // A moving (dynamic or kinematic) target is swept along its own motion over the step,
++    // as Box2D's continuous pass does, so only the motion *relative* to it can hit it.
++    // Held still at its end pose, a bullet riding on it (a person standing on a plank
++    // flown up faster than its thickness a step) started below that pose, was caught on
++    // its underside and driven through it.
++    let target_sweep = match (rb2, co2.parent.as_ref()) {
++        (Some(rb), Some(parent)) if !rb.is_fixed() => Sweep::from_poses(
++            &(rb.pos.position * parent.pos_wrt_parent),
++            &target_pose,
++            parent
++                .pos_wrt_parent
++                .inverse_transform_point(rb.mprops.local_mprops.local_com),
++        ),
++        _ => Sweep::constant(&target_pose, Vector::ZERO),
++    };
+ 
+     let sub_shapes: &[FastSubShape] = match &fast.kind {
+         FastShapeKind::Convex(sub) => core::slice::from_ref(sub),
+@@ -375,6 +390,7 @@ fn cast_collider_pair(
+             &target,
+             shape2,
+             &target_pose,
++            &target_sweep,
+             max_fraction,
+             linear_slop,
+             is_pseudo,
+@@ -393,16 +409,16 @@ fn cast_sub_shape(
+     target: &TargetKind,
+     shape2: &dyn Shape,
+     target_pose: &Pose,
++    target_sweep: &Sweep,
+     max_fraction: Real,
+     linear_slop: Real,
+     is_pseudo: bool,
+ ) -> Option<Real> {
+     let output = match target {
+         TargetKind::Proxy(target_proxy) => {
+-            let target_sweep = Sweep::constant(target_pose, Vector::ZERO);
+             sweep_time_of_impact(
+                 target_proxy,
+-                &target_sweep,
++                target_sweep,
+                 &sub.proxy,
+                 &sub.sweep,
+                 max_fraction,
+@@ -459,10 +475,9 @@ fn cast_sub_shape(
+         // so a body already touching a surface isn't pinned at fraction 0.
+         if let TargetKind::Proxy(target_proxy) = target {
+             let core = ToiProxy::point(sub.local_centroid, CORE_FRACTION * sub.min_extent);
+-            let target_sweep = Sweep::constant(target_pose, Vector::ZERO);
+             let output = sweep_time_of_impact(
+                 target_proxy,
+-                &target_sweep,
++                target_sweep,
+                 &core,
+                 &sub.sweep,
+                 max_fraction,
+@@ -591,7 +606,9 @@ pub(super) fn sweep_fast_body(
              if !tier_allows(rb1, rb2, co2) {
                  return;
              }

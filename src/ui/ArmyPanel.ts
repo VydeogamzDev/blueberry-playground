@@ -122,6 +122,9 @@ const probed = new WeakMap<ItemDef, Map<string, unknown>>();
  * sees a step), asks it `ask` and throws it away. The answer is kept (by `key`),
  * so each is only made the once.
  */
+/** How far either way of the middle (m) a battle on the World is lined up: well inside where things are parked (see world/Parking). */
+const WORLD_BATTLE = 1500;
+
 function probe<T>(game: Game, def: ItemDef, key: string, ask: (e: Entity) => T): T {
   let known = probed.get(def);
   if (!known) probed.set(def, (known = new Map()));
@@ -254,7 +257,10 @@ export function spawnBattle(game: Game, sides: Side[], at: { x: number; y: numbe
     plans.forEach((p, i) => (w[i % 2] += width(p, f) + (i >= 2 ? LINE.between : 0)));
     return w;
   };
-  const room = WORLD.right - WORLD.left - 2 * LINE.edge - LINE.gap;
+  // (on the World, within what's kept going round the view: further out, it'd be parked as it's made)
+  const left = game.map.world ? at.x - WORLD_BATTLE : WORLD.left;
+  const right = game.map.world ? at.x + WORLD_BATTLE : WORLD.right;
+  const room = right - left - 2 * LINE.edge - LINE.gap;
   const across = (f: number) => halves(f)[0] + halves(f)[1];
   let f = 1;
   while (across(f) > room && f > LINE.least / LINE.dog) f -= 0.05;
@@ -266,8 +272,8 @@ export function spawnBattle(game: Game, sides: Side[], at: { x: number; y: numbe
   }
   // (near a wall, the middle moves over till both halves fit)
   const [wl, wr] = halves(f);
-  const lo = WORLD.left + LINE.edge + wl + LINE.gap / 2;
-  const hi = WORLD.right - LINE.edge - wr - LINE.gap / 2;
+  const lo = left + LINE.edge + wl + LINE.gap / 2;
+  const hi = right - LINE.edge - wr - LINE.gap / 2;
   const cx = lo <= hi ? clamp(at.x, lo, hi) : (lo + hi) / 2;
   const out: Lineup = Object.assign([] as TeamMember[][], { tanks: [] as TeamMachine[][] });
   // (where the next side lines up, to the left and to the right)

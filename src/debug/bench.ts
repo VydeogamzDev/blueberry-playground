@@ -4,6 +4,7 @@ import type { Human } from '../entities/Human';
 import type { Firearm } from '../entities/Firearm';
 import type { Explosive } from '../entities/Explosive';
 import type { Part } from '../world/Part';
+import type { Entity } from '../world/Entity';
 import { makeTestKit } from './testkit';
 import { COARSE_DT, FIXED_DT } from '../engine/constants';
 
@@ -75,6 +76,25 @@ function makeScenes(kit: ReturnType<typeof makeTestKit>): Record<string, (n: num
         const k = Math.round(t / FIXED_DT);
         if (k % 12 === 0) for (const g of guns) if (!g.destroyed) g.fire();
         if (k % 180 === 0) (kit.spawn('grenade', (Math.random() - 0.5) * 40, 3) as Explosive).activate();
+      };
+    },
+    /** Tanks (one for every ten of n) in a row, the smallest nuke set off among them once they've settled: the wreckage after (a bigger one leaves nothing). */
+    nuke(n) {
+      const tanks = Math.max(1, Math.round(n / 10));
+      let first: Entity | null = null;
+      for (let i = 0; i < tanks; i++) {
+        const e = kit.spawn('tank', -40 + (80 * (i + 0.5)) / tanks, 1.2);
+        first ??= e;
+      }
+      let t = 0;
+      let done = false;
+      return (dt) => {
+        t += dt;
+        // (just after the 1.5 s settle: timed from the blast on)
+        if (!done && t >= 1.5 - dt / 2) {
+          done = true;
+          first?.game.explosions.nuke(0, 1, 0.1);
+        }
       };
     },
     /** Crates stacked in towers. */

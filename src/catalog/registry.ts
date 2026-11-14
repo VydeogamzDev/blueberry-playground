@@ -4,10 +4,12 @@ import { registerVehicles } from './vehicles';
 import { registerArsenal } from './arsenal';
 import { registerMissiles } from './missiles';
 import { registerMachines2 } from './machines2';
+import { registerFlight } from './flight';
 import { registerFloats } from './floats';
 import { registerPotions } from './potions';
-import { Human, VARIANTS, HUMAN_HALF_HEIGHT } from '../entities/Human';
-import { figurePreview } from '../art/human';
+import { Human, VARIANTS, HUMAN_HALF_HEIGHT, GRANT_HALF_HEIGHT } from '../entities/Human';
+import { figurePreview, GRANT_SKIN } from '../art/human';
+import { grantMode } from '../world/GrantMode';
 import { Creature, SPECIES, creaturePreview, creatureHalfHeight } from '../entities/Creature';
 import type { ItemDef } from '../world/types';
 
@@ -34,6 +36,18 @@ function registerCharacters(): void {
     halfHeight: HUMAN_HALF_HEIGHT,
     create: (game, x, y, opts) => new Human(game, android, VARIANTS.android, x, y, opts),
   });
+  // (in the toybox only in Grant mode: see world/GrantMode)
+  const grant: ItemDef = register({
+    id: 'grant', name: 'Grant', category: 'Characters', tags: ['person', 'ragdoll', 'man', 'short', 'tough'],
+    description: 'Grant. Short, broad and built different: near enough indestructible, he hits like a truck and heals by himself.',
+    preview: (() => {
+      let c: HTMLCanvasElement | null = null;
+      return () => (c ??= figurePreview('human', GRANT_SKIN, 'grant', 'grant'));
+    })(),
+    halfHeight: GRANT_HALF_HEIGHT,
+    create: (game, x, y, opts) => new Human(game, grant, VARIANTS.grant, x, y, opts),
+  });
+  Object.defineProperty(grant, 'hidden', { get: () => !grantMode.on, enumerable: true });
   const animals = [
     { id: 'dog', name: 'Dog', tags: ['animal', 'pet', 'ragdoll', 'creature'] as string[], description: 'A big, friendly dog. Stands on four legs, gets back up, bleeds and yelps.' },
     { id: 'cat', name: 'Cat', tags: ['animal', 'pet', 'ragdoll', 'creature'] as string[], description: 'A small, light cat. Twists round in the air and lands on its feet.' },
@@ -74,5 +88,6 @@ export function registerAll(): void {
   registerArsenal();
   registerMissiles();
   registerMachines2();
+  registerFlight();
   registerFloats();
 }

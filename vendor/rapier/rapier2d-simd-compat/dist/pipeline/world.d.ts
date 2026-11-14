@@ -531,6 +531,12 @@ export declare class World {
      */
     jointBodyPairs(): Float64Array;
     /**
+     * The impulses each of these impulse joints gave in the last step, in its own frame:
+     * three numbers a joint, along its two axes and then about its turning one (NaNs for one
+     * that's gone). One call for them all.
+     */
+    jointImpulsesOf(handles: Float64Array): Float32Array;
+    /**
      * Enumerates all the colliders intersecting the given colliders, assuming one of them
      * is a sensor.
      */

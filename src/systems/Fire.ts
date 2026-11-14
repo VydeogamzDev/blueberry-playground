@@ -71,6 +71,7 @@ export class Fire {
     p.burning = Math.min(1, Math.max(p.burning, amount));
     this.burning.add(p);
     this.heat.delete(p);
+    this.game.heat.track(p);
   }
 
   /** The nearest part burning within `r` m of (x, y), not counting `skip`'s own. */
@@ -102,6 +103,7 @@ export class Fire {
 
   /** Water on a part: damps its fire (out once it's low) and wets it, so it won't catch again until it dries. */
   douse(p: Part, amount: number): void {
+    this.game.heat.quench(p, amount);
     this.wet.set(p, Math.min(1, (this.wet.get(p) ?? 0) + amount * 3));
     this.heat.delete(p);
     if (p.burning <= 0) return;
@@ -131,6 +133,7 @@ export class Fire {
    */
   warm(q: Part, amount: number): void {
     if (q.destroyed || q.burning >= 0.05) return;
+    this.game.heat.fromFire(q, amount);
     (q.entity as Entity & Partial<Heatable>).onHeat?.(q, amount);
     // (what's burnt out already won't catch again)
     const fl = q.mat.flammability * (1 - q.charred) + q.oil * 1.5;
@@ -176,6 +179,7 @@ export class Fire {
     this.game.fxMute++;
     this.crackle();
     this.game.fxMute--;
+    const air = this.game.air;
     let k = 0;
     for (const p of this.burning) {
       if (p.destroyed) {
@@ -186,7 +190,9 @@ export class Fire {
       // hot; the flames grow toward what it can feed and die down as it runs out
       const wet = this.wet.get(p) ?? 0;
       const fuel = p.mat.flammability * (1 - p.charred) + p.oil * 0.9;
-      const target = fuel > 0.02 ? Math.min(1, 0.15 + fuel * 1.3) * (1 - wet) : 0;
+      // (and the air to feed it: high on the World it's too thin, and fire dies by about 1.5 km)
+      const o2 = air.layered ? Math.min(1, Math.max(0, (air.thinness(p.y) - 0.15) / 0.35)) : 1;
+      const target = fuel > 0.02 ? Math.min(1, 0.15 + fuel * 1.3) * (1 - wet) * o2 : 0;
       const rate = p.burning < target ? 0.4 + fuel : 0.35 + wet * 2;
       p.burning = Math.min(1, p.burning + (target - p.burning) * Math.min(1, dt * rate));
       if (p.burning <= 0.02) {
@@ -338,6 +344,15 @@ export class Fire {
       const s = size(p);
       const flicker = 0.85 + Math.random() * 0.3;
       this.game.renderer.addLight(p.x, p.y + 0.15, 1.4 + Math.min(2.6, s * 2.2), Math.min(0.55, 0.2 + s * 0.3) * flicker, 0xff9a40);
+    }
+  }
+
+  /** Everything here moved by (dx, dy): the floating origin moved (see world/Origin). */
+  shift(dx: number, dy: number): void {
+    const q = this.sparkQ;
+    for (let i = 0; i < q.length; i += 4) {
+      q[i] += dx;
+      q[i + 1] += dy;
     }
   }
 

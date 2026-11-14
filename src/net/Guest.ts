@@ -12,9 +12,10 @@ import type { EntityState } from '../world/types';
 import type { MapSpec } from '../world/Maps';
 import type { MusicPlan } from '../engine/Music';
 import { SpikeLauncher, type Sighted } from '../entities/Missiles';
-import { FxPlayer, type Fx, type PartRef } from './Effects';
+import { FxPlayer, shiftFx, type Fx, type PartRef } from './Effects';
+import { rebase } from '../world/Origin';
 import { Wire, type Link } from './Link';
-import { PART_FLAGS, type GuestOp, type HostMsg, type NetConn, type NetPuddles, type NetSeeker, type NetSight, type NetTime, type PlayerInfo, type Tick, type Welcome } from './protocol';
+import { GLOW_SHIFT, PART_FLAGS, type GuestOp, type HostMsg, type NetConn, type NetPuddles, type NetSeeker, type NetSight, type NetTime, type PlayerInfo, type Tick, type Welcome } from './protocol';
 import { VITALS } from './Host';
 
 /** How far behind the host's clock things are shown (ms): two ticks, so there's always a next pose to move towards. */
@@ -74,6 +75,7 @@ export class NetClient {
   private seeking = new Set<SpikeLauncher>();
   private role: { guest: true; me: number; pose: NetRole['pose'] };
   private frameHook: () => void;
+  private shiftHook = (dx: number, dy: number) => this.shift(dx, dy);
   private done = false;
 
   constructor(private game: Game, private controls: Controls, link: Link, name: string) {
@@ -95,6 +97,7 @@ export class NetClient {
     };
     game.net = this.role;
     game.frameHandlers.push(this.frameHook);
+    game.origin.listeners.push(this.shiftHook);
     controls.history.clear();
     controls.net = {
       send: (op) => this.wire.send(op),
@@ -126,6 +129,8 @@ export class NetClient {
     // (the music carries on from where the host's had got to, as this player's own)
     game.music.follow(null);
     game.frameHandlers = game.frameHandlers.filter((h) => h !== this.frameHook);
+    const k = game.origin.listeners.indexOf(this.shiftHook);
+    if (k >= 0) game.origin.listeners.splice(k, 1);
     this.fx.clear();
     this.wire.close();
     loadFromString(game, save, { camera: false });
@@ -160,6 +165,9 @@ export class NetClient {
     this.offset = Infinity;
     // (joining shows what the host is looking at; a scene loaded later leaves the view alone)
     const made = loadFromString(game, m.save, { camera: first });
+    // (what the host has parked is the host's to bring back: kept here too, it'd come back twice)
+    game.parking.clear();
+    this.wire.send({ op: 'origin', x: game.origin.x, y: game.origin.y });
     game.connections.clearAll();
     made.forEach((e, i) => {
       if (e) this.adopt(e, m.ids[i]);
@@ -172,6 +180,8 @@ export class NetClient {
   private tick(m: Tick): void {
     const now = performance.now();
     this.offset = Math.min(this.offset + OFFSET_CREEP, now - m.ht);
+    // (first: everything in this tick is from where the host's origin is now)
+    if (m.origin) this.follow(m.origin);
     if (m.spawn) this.spawn(m.spawn.ids, m.spawn.ents);
     const cut = m.grow ? this.regrow(m.grow, m.cut) : m.cut;
     if (m.extra) {
@@ -199,6 +209,32 @@ export class NetClient {
     }
     if (m.seekers) this.seekers(m.seekers);
     this.lastHt = m.ht;
+  }
+
+  /**
+   * The host's floating origin moved (the World map: see world/Origin): this game's
+   * moves to the same place, everything in it with it (see shift()), and the host's
+   * told, so that what's sent from here is read from there.
+   */
+  private follow([x, y]: [number, number]): void {
+    const g = this.game;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !g.map.world) return;
+    if (x === g.origin.x && y === g.origin.y) return;
+    rebase(g, x - g.origin.x, y - g.origin.y);
+    this.wire.send({ op: 'origin', x: g.origin.x, y: g.origin.y });
+  }
+
+  /** What's kept here of the host's (poses to move through, effects still to come, cursors) moved with the origin. */
+  private shift(dx: number, dy: number): void {
+    for (const s of this.samples.values()) {
+      for (let i = 0; i + 3 < s.length; i += 4) {
+        s[i + 1] += dx;
+        s[i + 2] += dy;
+      }
+    }
+    for (const d of this.due) if (d.fx) for (const f of d.fx) shiftFx(f, dx, dy);
+    this.fx.shift(dx);
+    for (const [id, c] of this.cursors) this.cursors.set(id, { x: c.x + dx, y: c.y + dy });
   }
 
   /**
@@ -297,7 +333,9 @@ export class NetClient {
       let c = this.conns.get(n.id);
       if (c && !cs.list.includes(c)) c = undefined;
       // (an end moved, or re-made where things were moved to while paused: made again)
-      const ends = `${n.kind}:${n.a}:${n.b}:${n.la.x.toFixed(4)},${n.la.y.toFixed(4)}:${n.lb.x.toFixed(4)},${n.lb.y.toFixed(4)}:${n.rest.toFixed(4)}:${n.opts?.damping ?? ''}`;
+      // (a background end where it truly is: the origin moving moves it, not where it's tied)
+      const o = n.b ? { x: 0, y: 0 } : this.game.origin;
+      const ends = `${n.kind}:${n.a}:${n.b}:${n.la.x.toFixed(4)},${n.la.y.toFixed(4)}:${(n.lb.x + o.x).toFixed(3)},${(n.lb.y + o.y).toFixed(3)}:${n.rest.toFixed(4)}:${n.opts?.damping ?? ''}`;
       if (c && this.connEnds.get(n.id) !== ends) {
         cs.remove(c);
         c = undefined;
@@ -347,6 +385,7 @@ export class NetClient {
       p.frozen = (f & PART_FLAGS.frozen) !== 0;
       const nc = (f & PART_FLAGS.noCollide) !== 0;
       if (nc !== p.noCollideAll) p.setNoCollideAll(nc);
+      p.glow = ((f >> GLOW_SHIFT) & 63) / 63;
       p.refreshTint();
     }
   }

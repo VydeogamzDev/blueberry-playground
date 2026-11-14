@@ -377,6 +377,8 @@ export class GrenadeLauncher extends Firearm {
  * a time fuze, bounces about until that runs out. A bullet or a blast sets it off.
  */
 export class LauncherRound extends Entity {
+  // (its own drag and lift: see systems/Aero)
+  ownFlight = true;
   readonly main: Part;
   mode: LauncherMode = 'impact';
   private blast: ExplosionOpts = blastFor(ROUND_BLAST.damage);
@@ -385,6 +387,12 @@ export class LauncherRound extends Entity {
   private flying = false;
   private spent = false;
   private start: V2 | null = null;
+
+  /** The floating origin moved (see world/Origin): what it keeps of where things are in the world moves too. */
+  shifted(dx: number, dy: number): void {
+    super.shifted(dx, dy);
+    if (this.start) this.start = { x: this.start.x + dx, y: this.start.y + dy };
+  }
   /** How far on (m, across) it goes through the side of the soldier who fired it (see launch()). */
   private passD = 0;
   /** That side, whose soldiers' bullets don't meet it (see Passing). */

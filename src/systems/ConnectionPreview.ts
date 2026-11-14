@@ -38,7 +38,10 @@ export class ConnectionPreview {
   private flashes: { at: V2; t: number }[] = [];
 
   constructor(game: Game) {
-    const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: 0.6, depthWrite: false });
+    // (in one pass: three.js draws a see-through two-sided material back faces first, then
+    // front, setting it up afresh for each, twice a frame even with nothing to draw; flat
+    // quads have nothing behind to sort)
+    const mat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: 0.6, depthWrite: false, forceSinglePass: true });
     this.lines = new LineBatch(512, 44.5, mat);
     game.renderer.scene.add(this.lines.mesh);
     game.frameHandlers.push((dt) => this.frame(dt));

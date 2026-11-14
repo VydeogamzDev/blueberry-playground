@@ -1,9 +1,10 @@
 import * as THREE from 'three';
+import { sendFirst } from '../engine/Uploads';
 import { RAPIER } from '../engine/Physics';
 import { GROUP, PX, WORLD, groups } from '../engine/constants';
 import type { Game } from '../world/Game';
 import type { Part } from '../world/Part';
-import { LineBatch } from './Connections';
+import { LineBatch, ROUND_CUTS } from './Connections';
 import { PK } from './Particles';
 import type { V2 } from '../engine/math';
 
@@ -49,6 +50,11 @@ interface Bullet {
   damage: number;
   push: number;
   ignore: RAPIER.RigidBody | null;
+  /**
+   * The wall of something hollow it just went through (a drum's, a hull's): on to
+   * its far wall, past any other of its shapes it's already inside (see unskipped).
+   */
+  through: RAPIER.Collider | null;
   life: number;
   tracer: boolean;
   bounces: number;
@@ -96,7 +102,11 @@ export class Projectiles {
   /** The parts the ray being cast goes through (a soldier's own side: see PastOwn), the side whose rounds it goes by, and the filter that skips them. */
   private skip: ReadonlySet<Part> | null = null;
   private side: string | null = null;
+  /** The body of the wall a round just went through, and where it came out (see Bullet.through). */
+  private inBody: RAPIER.RigidBody | null = null;
+  private from = { x: 0, y: 0 };
   private readonly unskipped = (c: RAPIER.Collider): boolean => {
+    if (this.inBody && c.parent() === this.inBody && c.containsPoint(this.from)) return false;
     const p = this.game.physics.partOf(c);
     return !p || !(this.skip?.has(p) || (this.side !== null && (p.entity as SideRound).firedFor === this.side));
   };
@@ -111,8 +121,9 @@ export class Projectiles {
     lines.position.z = 47;
     lines.renderOrder = 30;
     game.renderer.scene.add(lines);
+    // (forceSinglePass: see ConnectionPreview)
     this.beamBatch.mesh.material = new THREE.MeshBasicMaterial({
-      vertexColors: true, side: THREE.DoubleSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      vertexColors: true, side: THREE.DoubleSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, forceSinglePass: true,
     });
     this.beamBatch.mesh.renderOrder = 29;
     game.renderer.scene.add(this.beamBatch.mesh);
@@ -211,7 +222,7 @@ export class Projectiles {
     this.bullets.push({
       x, y, vx: (dx / l) * speed, vy: (dy / l) * speed,
       energy: o.energy, energy0: o.energy, damage: o.damage, push: o.push ?? 0.012,
-      ignore: o.ignore ?? null, life: o.life ?? 1.2, tracer: o.tracer ?? true, bounces: 0, past: o.past ?? null, x0: x, side: o.past?.side ?? null,
+      ignore: o.ignore ?? null, through: null, life: o.life ?? 1.2, tracer: o.tracer ?? true, bounces: 0, past: o.past ?? null, x0: x, side: o.past?.side ?? null,
     });
   }
 
@@ -234,9 +245,14 @@ export class Projectiles {
         this.ray.origin = { x: ox, y: oy };
         this.ray.dir = { x: dx, y: dy };
         const ign = b.ignore && b.ignore.isValid() ? b.ignore : undefined;
+        const wall = b.through && b.through.isValid() ? b.through : undefined;
         this.skip = skip;
         this.side = b.side;
-        const hit = world.castRayAndGetNormal(this.ray, remaining, true, undefined, BULLET_GROUPS, undefined, ign, this.skip || this.side ? this.unskipped : undefined);
+        this.inBody = wall ? wall.parent() : null;
+        this.from.x = ox;
+        this.from.y = oy;
+        const hit = world.castRayAndGetNormal(this.ray, remaining, true, undefined, BULLET_GROUPS, wall, ign, this.skip || this.side || wall ? this.unskipped : undefined);
+        this.inBody = null;
         if (!hit) {
           ox += dx * remaining;
           oy += dy * remaining;
@@ -310,6 +326,7 @@ export class Projectiles {
           oy = hy + ny * 0.01;
           remaining -= toi;
           b.ignore = null;
+          b.through = null;
           continue;
         }
         part.entity.onBullet({
@@ -327,7 +344,7 @@ export class Projectiles {
         const gone = part.destroyed;
         if (!gone) {
           this.impulse(part, hx, hy, dx, dy, absorbed * b.push);
-          this.materialFx(part, hx, hy, nx, ny, dx, dy, penetrates ? ex : null, ey);
+          this.materialFx(part, hx, hy, nx, ny, dx, dy, penetrates ? ex : null, ey, b.damage);
         }
         if (!penetrates) {
           alive = false;
@@ -343,8 +360,13 @@ export class Projectiles {
         remaining = Math.max(0, (remaining - toi - thickness) * k);
         ox = ex + dx * 0.003;
         oy = ey + dy * 0.003;
-        b.ignore = gone ? null : part.body;
+        // (on through a hollow thing to its far wall; through the rest of anything else)
+        const hollow = !gone && part.colliders.length > 1;
+        b.ignore = gone || hollow ? null : part.body;
+        b.through = hollow ? hit.collider : null;
       }
+      // (a round crossing a wire or a rope may cut it: see Connections.cutAcross())
+      if (!this.game.net?.guest && this.game.connections.hasCords) this.game.connections.cutAcross(b.x, b.y, ox, oy, ROUND_CUTS);
       b.x = ox;
       b.y = oy;
       b.life -= dt;
@@ -369,15 +391,17 @@ export class Projectiles {
     this.game.sound.bulletHit('stone', x);
   }
 
-  private materialFx(part: Part, x: number, y: number, nx: number, ny: number, dx: number, dy: number, ex: number | null, ey: number): void {
+  private materialFx(part: Part, x: number, y: number, nx: number, ny: number, dx: number, dy: number, ex: number | null, ey: number, damage: number): void {
     const p = this.game.particles;
     const m = part.mat;
     if (m.sparks) p.sparks(x, y, nx, ny, 5, 5);
     if (!m.bleeds) {
       p.debris(x, y, nx, ny, 3, m.debrisColor, 2.5);
       if (ex !== null) p.debris(ex, ey, dx, dy, 3, m.debrisColor, 3);
-      // scorch the entry point
-      part.paintAt(x - nx * PX * 0.5, y - ny * PX * 0.5, 0x1f1d1b, 0);
+      // a hole through what it went through, a dent in what stopped it (a body's
+      // wounds and chunks are its own: see systems/Chunks)
+      if ('limbs' in part.entity) part.paintAt(x - nx * PX * 0.5, y - ny * PX * 0.5, 0x1f1d1b, 0);
+      else this.game.structure.mark(part, { x, y }, { x: nx, y: ny }, { x: dx, y: dy }, ex === null ? null : { x: ex, y: ey }, damage > 60);
     }
     this.game.sound.bulletHit(m.sound, x);
   }
@@ -422,8 +446,23 @@ export class Projectiles {
       n++;
     }
     this.lineGeo.setDrawRange(0, n * 2);
-    (this.lineGeo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-    (this.lineGeo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
+    sendFirst(this.lineGeo.getAttribute('position') as THREE.BufferAttribute, n * 2);
+    sendFirst(this.lineGeo.getAttribute('color') as THREE.BufferAttribute, n * 2);
+  }
+
+  /** Everything here moved by (dx, dy): the floating origin moved (see world/Origin). */
+  shift(dx: number, dy: number): void {
+    for (const b of this.bullets) {
+      b.x += dx;
+      b.y += dy;
+      b.x0 += dx;
+    }
+    for (const b of this.beams) {
+      b.x0 += dx;
+      b.y0 += dy;
+      b.x1 += dx;
+      b.y1 += dy;
+    }
   }
 
   clear(): void {

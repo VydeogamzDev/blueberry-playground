@@ -1,4 +1,5 @@
 import { getItem } from '../catalog/items';
+import type { Car } from '../entities/Car';
 import type { Game } from './Game';
 
 /**
@@ -7,12 +8,13 @@ import type { Game } from './Game';
  * (injuries, gore, blood) and Rapier's (contacts and the solver in a dense heap) still being
  * compiled as it ran, and Rapier's memory still growing. So the game rehearses one while it
  * loads, under the loading screen: a pile of people, a slab slammed down on it, a few limbs
- * blown apart, a moment of it; then all of it is cleared away, as Clear does. `idle` is
+ * blown apart, a moment of it; then a tank torn apart; then all of it is cleared away, as Clear does. `idle` is
  * awaited now and then, to draw the loading screen.
  */
 export async function rehearseCrush(game: Game, idle: () => Promise<void>): Promise<void> {
   const human = getItem('human');
   const brick = getItem('brick');
+  const tank = getItem('tank');
   if (!human || !brick) return;
   const time = game.time;
   try {
@@ -34,6 +36,20 @@ export async function rehearseCrush(game: Game, idle: () => Promise<void>): Prom
       }
       if (i % 5 === 4) game.renderFrame(1 / 60, 1);
       if (i % 15 === 14) await idle();
+    }
+    // (and a tank torn apart, as a nuke does: the first nuke's pieces were being made, and
+    // their many-sided shapes landing on each other worked out, for the first time, at five
+    // times the cost of the next: 120 ms steps)
+    if (tank) {
+      game.resetEnvironment();
+      const t = game.spawn(tank, 0, 1.2) as Car | null;
+      for (let i = 0; i < 20; i++) game.step();
+      t?.dismantle({ x: -2, y: 1 }, { x: 1, y: 0.3 });
+      for (let i = 0; i < 60; i++) {
+        game.step();
+        if (i % 5 === 4) game.renderFrame(1 / 60, 1);
+        if (i % 20 === 19) await idle();
+      }
     }
   } catch (e) {
     console.warn('warm-up:', e);

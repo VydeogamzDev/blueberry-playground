@@ -2,6 +2,10 @@ import type { ImpactSound } from '../world/Materials';
 import { fetchAsset } from './assets';
 import { store } from './Store';
 
+/** The effects bus's low-pass in air as thick as the ground's (Hz: above hearing), and in a vacuum (a thump). */
+const AIR_OPEN = 20000;
+const AIR_SHUT = 220;
+
 export type GunSound = 'pistol' | 'revolver' | 'smg' | 'rifle' | 'shotgun' | 'sniper' | 'minigun' | 'laser'
   | 'battle' | 'burst' | 'lmg' | 'double' | 'flintlock' | 'launcher' | 'none';
 
@@ -122,6 +126,14 @@ export class Sound {
   private master: GainNode | null = null;
   /** Every sound but the interface's clicks goes through this, into the master. */
   private fx: GainNode | null = null;
+  /**
+   * The air the listener's in (high on the World: see setAir()), between the effects and
+   * the master bus: a low-pass and a gain, thinning out with it. The interface's own
+   * sounds and the music don't go through it.
+   */
+  private airLow: BiquadFilterNode | null = null;
+  private airGain: GainNode | null = null;
+  private airNow = 1;
   private manifest: Record<string, string[]> = {};
   private buffers = new Map<string, AudioBuffer>();
   private lastVariant = new Map<string, number>();
@@ -186,7 +198,13 @@ export class Sound {
     this.master = this.bus(this.ctx, this.muted ? 0 : this.volume);
     this.fx = this.ctx.createGain();
     this.fx.gain.value = this.effects;
-    this.fx.connect(this.master);
+    this.airLow = this.ctx.createBiquadFilter();
+    this.airLow.type = 'lowpass';
+    this.airLow.frequency.value = AIR_OPEN;
+    this.airLow.Q.value = Math.SQRT1_2;
+    this.airGain = this.ctx.createGain();
+    this.fx.connect(this.airLow).connect(this.airGain).connect(this.master);
+    this.airNow = 1;
     if (Object.keys(this.manifest).length) void this.loadAll();
     for (const f of this.onUnlock) f();
   }
@@ -416,6 +434,22 @@ export class Sound {
     v.gain.gain.setTargetAtTime(this.muted ? 0 : gain * att, t, 0.05);
     v.pan.pan.setTargetAtTime(pan, t, 0.05);
     v.src.playbackRate.setTargetAtTime(rate * this.timeRate(), t, 0.08);
+  }
+
+  /**
+   * How thick the air is where the listener is (the camera; a share of the ground's: see
+   * Atmosphere.thinness()). Thinner, sounds come duller and quieter; in a vacuum only
+   * their low thump is left (as if felt through what one's on), a fifth as loud.
+   * Set each frame; the bus is only touched when it's changed by a step of it.
+   */
+  setAir(thin: number): void {
+    const k = Math.round(Math.min(1, Math.max(0, thin)) * 40) / 40;
+    if (k === this.airNow || !this.ctx || !this.airLow || !this.airGain) return;
+    this.airNow = k;
+    const s = Math.pow(k, 0.3);
+    const t = this.ctx.currentTime;
+    this.airLow.frequency.setTargetAtTime(AIR_SHUT * Math.pow(AIR_OPEN / AIR_SHUT, s), t, 0.2);
+    this.airGain.gain.setTargetAtTime(0.2 + 0.8 * s, t, 0.2);
   }
 
   /** Fades out loops nobody is holding any more. Call once per frame. */

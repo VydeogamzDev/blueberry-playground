@@ -32,8 +32,9 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
   return [
     ['extra: maps: each built-in map switches: its bounds, crates stop at its end walls, things rest on its ground', () => {
       for (const m of BUILTIN_MAPS) {
-        // (the Void has no floor to throw crates along: see the world tests)
-        if (m.theme === 'void') continue;
+        // (the Void has no floor to throw crates along: see the world tests; the World has no
+        // end walls, nor a floor in reach, its ground streamed round the view: see world-infinite)
+        if (m.theme === 'void' || m.world) continue;
         kit.reset();
         game.setMap(m);
         if (game.map !== m) return `${m.id}: playing on ${game.map.id}`;

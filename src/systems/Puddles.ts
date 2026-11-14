@@ -199,7 +199,7 @@ export class Puddles {
   /** Marks the floor cells the map's ground stands on, where liquid can't go. */
   block(env: Environment): void {
     this.blocked.fill(0);
-    if (!env.ground.length && !env.floorless) return;
+    if (!env.hasGround && !env.floorless) return;
     const y = WORLD.floor + PX * 0.5;
     // (with no floor (the void), liquid lies only on ground whose top is where the floor would be)
     const under = WORLD.floor - PX * 0.5;

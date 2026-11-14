@@ -36,6 +36,7 @@ const MAT_PREVIEW: Partial<Record<TerrainMat, string>> = { concrete: '#6a6c70', 
 
 /** How big a map is, in words: "140 × 48 m" (the endless plate's length is how far it goes). */
 export function mapSize(spec: MapSpec): string {
+  if (spec.world) return 'Endless both ways, up into space';
   return spec.endless ? `${ENDLESS_REACH / 1000} km each way × ${spec.height} m` : `${spec.width} × ${spec.height} m`;
 }
 
@@ -46,6 +47,41 @@ export function mapPreview(spec: MapSpec, w = 156, h = 52): HTMLCanvasElement {
   cv.height = h;
   const g = cv.getContext('2d')!;
   const col = PREVIEW[spec.theme] ?? PREVIEW.concrete;
+  if (spec.world) {
+    // (hills running off both ways under a sky that darkens up into space)
+    const sky = g.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, '#04060d');
+    sky.addColorStop(0.5, '#28466f');
+    sky.addColorStop(1, '#93b9dc');
+    g.fillStyle = sky;
+    g.fillRect(0, 0, w, h);
+    g.fillStyle = '#e6ecfa';
+    for (let i = 0; i < 18; i++) g.fillRect((i * 37 + 11) % w, ((i * 13) % 12) + 1, 1, 1);
+    g.fillStyle = '#4c7536';
+    g.beginPath();
+    g.moveTo(0, h);
+    for (let x = 0; x <= w; x += 2) g.lineTo(x, h - 11 - 5 * Math.sin(x / 14) - 3 * Math.sin(x / 5.7 + 1));
+    g.lineTo(w, h);
+    g.closePath();
+    g.fill();
+    g.fillStyle = '#e6ecfa';
+    for (const s of [-1, 1]) {
+      const x = s < 0 ? 6 : w - 6;
+      g.beginPath();
+      g.moveTo(x, h - 6);
+      g.lineTo(x - s * 7, h - 10);
+      g.lineTo(x - s * 7, h - 2);
+      g.closePath();
+      g.fill();
+    }
+    g.beginPath();
+    g.moveTo(w / 2, 3);
+    g.lineTo(w / 2 - 4, 10);
+    g.lineTo(w / 2 + 4, 10);
+    g.closePath();
+    g.fill();
+    return cv;
+  }
   if (spec.endless) {
     // (no walls in sight: the hall and its floor run off both sides, arrows saying so)
     g.fillStyle = col.back;

@@ -115,6 +115,11 @@ export interface Tick {
   seekers?: NetSeeker[];
   /** The host's statistics of the game (see Stats), now and then as they change. */
   stats?: Record<string, number>;
+  /**
+   * Where the host's floating origin is (the World map: see world/Origin), when it
+   * moved: this tick's positions are from there, and the guest moves its own with it.
+   */
+  origin?: [number, number];
 }
 
 /** What a seeker's gate is on: a part (and the point on it, part-local m), a whole thing (its middle), or a point (world m). */
@@ -142,6 +147,8 @@ export type HostMsg = Welcome | Tick | PlayersMsg | ToastMsg;
 
 /** Part flags in a tick's part states. */
 export const PART_FLAGS = { frozen: 1, left: 2, noCollide: 4 } as const;
+/** Where a part's glow (0..63, see Part.glow) sits in its flags. */
+export const GLOW_SHIFT = 8;
 
 // ---- guest to host -----------------------------------------------------------------------
 
@@ -151,8 +158,13 @@ export const PART_FLAGS = { frozen: 1, left: 2, noCollide: 4 } as const;
  */
 export type GuestOp =
   | { op: 'hello'; name: string }
-  /** Where their cursor is, and their view's zoom (screen px per m: a seeker's gate covers as much as it does on their screen). */
-  | { op: 'cursor'; x: number; y: number; zoom?: number }
+  /**
+   * Where their cursor is, and their view's zoom (screen px per m: a seeker's gate covers as much as it does on their screen),
+   * and the middle of their view (on the World, the ground's laid and nothing's parked near it).
+   */
+  | { op: 'cursor'; x: number; y: number; zoom?: number; view?: [number, number] }
+  /** Where the guest's floating origin is now (see world/Origin): what they send from here on is from there. */
+  | { op: 'origin'; x: number; y: number }
   | { op: 'spawn'; def: string; x: number; y: number; left: boolean; config?: EntityConfig; frozen?: boolean; active?: boolean; angle?: number }
   | { op: 'place'; snap: Snapshot; dx: number; dy: number; label: string; frozen?: boolean; active?: boolean }
   /** Z: takes back the newest thing this guest spawned. */
@@ -160,8 +172,12 @@ export type GuestOp =
   | { op: 'delete' | 'freeze' | 'ignite' | 'duplicate' | 'flip' | 'jump' | 'weld' | 'activate' | 'release' | 'fightEach'; ids: number[] }
   | { op: 'weightless' | 'noCollide'; ids: number[]; on: boolean }
   | { op: 'rotate'; ids: number[]; angle: number }
-  /** The drive keys held for these vehicles (-1, 0 or 1: left/right on screen, a tank's barrel down/up), renewed while held. */
-  | { op: 'drive'; ids: number[]; x: number; aim: number }
+  /** The drive keys held for these vehicles (-1, 0 or 1: left/right on screen, a tank's barrel down/up, tilting back/forward in the air), renewed while held. */
+  | { op: 'drive'; ids: number[]; x: number; aim: number; r?: number }
+  /** A key trigger's key pressed or let go (see entities/Flight). */
+  | { op: 'key'; code: string; down: boolean }
+  /** Flying a build (see systems/Piloting): its keys (A/D, W/S, Q/E: -1, 0 or 1), renewed while it's selected. */
+  | { op: 'pilot'; ids: number[]; x: number; t: number; r: number }
   | { op: 'freezePart'; p: PartRef }
   | { op: 'rebuild'; id: number; config?: EntityConfig; at?: V2 }
   /** Takes hold of a part (`ids`: the selection, which moves with it; with time paused, their assemblies too, or with `alone` just them). */

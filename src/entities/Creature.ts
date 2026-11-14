@@ -17,6 +17,7 @@ import { FLESH, breakUp, blastEnergy, gibNow, sliceLimb, takeChunk } from '../sy
 import { isFighter, isLiving, land, onFeet, stillUp, type Fighter } from '../systems/Fighting';
 import { allies, dress, dye, enemies, isTeamId, nearestEnemy, undead, type TeamId } from '../systems/Teams';
 import { LUNGS } from '../systems/Fluid';
+import { Jolt } from '../systems/Jolt';
 import { Breath, HEAD_SINKS, shoreward, tread, type Lungful } from '../systems/Breath';
 import { castOff, closeStump, growth, keepApart, likeBody, nextMend, placeOf, REGEN, sprout, swapIn } from '../systems/Regrowth';
 
@@ -26,6 +27,11 @@ const LUNGFUL: Lungful = { hold: 15, holdOut: 8, last: 6, tread: 60, full: LUNGS
 const SWIM = 0.7;
 /** The limbs of the trunk: a knock to one has the whole body behind it (see Creature.backing()). */
 const TRUNK = new Set<string>(['chest', 'hips']);
+/**
+ * (m/s) What a 70 kg body bears stopped all at once (see systems/Jolt); a smaller one
+ * bears more (a cat walks away from a fall that would kill a person).
+ */
+const JOLT_BEARS = 14;
 
 interface CLimbSpec {
   key: string;
@@ -353,6 +359,10 @@ type State = 'stand' | 'down' | 'getup';
  * gets back up after a fall, bleeds, breaks, loses limbs and reacts to syringes.
  */
 export class Creature extends Entity {
+  dragShare = 0.6;
+  /** Whole-body trauma (see systems/Jolt, jolted()). */
+  private readonly jolt = new Jolt();
+  private trunkParts: Part[] | null = null;
   readonly species: Species;
   readonly limbs = new Map<string, Limb>();
   private order: Limb[] = [];
@@ -505,6 +515,15 @@ export class Creature extends Entity {
   private scanT = Math.random() * 0.3;
   /** A fright heard and not yet reacted to: where from, how long to run for, and until it bolts (s). */
   private startle: { x: number; secs: number; t: number } | null = null;
+
+  /** The floating origin moved (see world/Origin): what it keeps of where things are in the world moves too. */
+  shifted(dx: number, dy: number): void {
+    super.shifted(dx, dy);
+    if (this.gaveUp) this.gaveUp = { x: this.gaveUp.x + dx, y: this.gaveUp.y + dy };
+    this.targetX += dx;
+    this.fleeFrom += dx;
+    if (this.startle) this.startle.x += dx;
+  }
   /** Blown to bacon (or whatever its kind turns into): gone at the end of the step (see cook()). */
   private cooked = false;
 
@@ -645,6 +664,7 @@ export class Creature extends Entity {
   private setState(s: State): void {
     if (this.state === s) return;
     if (s === 'down' && this.state !== 'down') this.foldT = 0.6;
+    const was = this.state;
     this.state = s;
     this.stateT = 0;
     if (s === 'getup') {
@@ -653,6 +673,9 @@ export class Creature extends Entity {
         if (l.joint && l.parent && !l.gone) this.blendFrom.set(l, wrapAngle(l.part.body.rotation() - l.parent.part.body.rotation()));
       }
     } else this.blendFrom = null;
+    // up before the getup's blend into standing was done: the rest eased in, not snapped
+    // (at full strength, the legs kicked straight and flung a cow up and over onto its other side)
+    if (s === 'stand' && was === 'getup') this.startEase(0.4);
     const ang = s === 'stand' ? 14 : 0.7;
     for (const l of this.order) if (!l.gone) l.part.body.setAngularDamping(ang);
     this.updateMotors(true);
@@ -828,7 +851,7 @@ export class Creature extends Entity {
     const str = this.strength();
     const conscious = str > 0.15;
     const paws = this.pawsDown();
-    const { err } = this.tilt();
+    const { err, omega } = this.tilt();
     const tilt = Math.abs(err);
     // no paw on anything and touching nothing at all: falling (worked out below)
     let airborne = false;
@@ -875,7 +898,8 @@ export class Creature extends Entity {
           this.getupBest = tilt;
           this.getupProgressT = this.stateT;
         }
-        if (tilt < 0.25 && paws >= 2 && this.stateT > 0.5) this.setState('stand');
+        // (and not still rolling on over: up at 4 rad/s, it went on over onto its other side)
+        if (tilt < 0.25 && paws >= 2 && this.stateT > 0.5 && Math.abs(omega) < 1.5) this.setState('stand');
         else if (this.stateT - this.getupProgressT > 2.5 || this.stateT > 6) this.failGetup();
       }
     } else {
@@ -1961,6 +1985,7 @@ export class Creature extends Entity {
   }
 
   postStep(dt: number): void {
+    this.jolted();
     // ---- joint stress: limbs tear off when stretched too far
     for (const l of this.order) {
       if (!l.joint || l.severed || !l.joint.isValid() || !l.parent) continue;
@@ -2458,6 +2483,27 @@ export class Creature extends Entity {
   }
 
   // ---------------------------------------------------------------- damage
+
+  /** Stopped all at once harder than the body bears: hurt inside (see Human.jolted()). */
+  private jolted(): void {
+    const chest = this.L('chest');
+    if (!this.alive || this.held || chest.part.frozen || chest.part.body.isSleeping()) {
+      this.jolt.reset();
+      return;
+    }
+    const trunk = (this.trunkParts ??= [...this.limbs.values()].filter((l) => TRUNK.has(l.spec.key)).map((l) => l.part));
+    const bears = JOLT_BEARS * Math.pow(70 / Math.max(1, this.totalMass()), 1 / 6);
+    const h = this.jolt.step(trunk, this.game.time, this.game.gravity, bears);
+    if (h <= 0) return;
+    this.injure(chest, h * 0.85 * chest.spec.hp, 'blunt', undefined, undefined, false);
+    const head = this.L('head');
+    if (!head.gone && this.alive) this.injure(head, Math.min(h * 0.3 * head.spec.hp, Math.max(0, head.part.hp)), 'blunt', undefined, undefined, false);
+  }
+
+  setVelocity(vx: number, vy: number, av = 0): void {
+    super.setVelocity(vx, vy, av);
+    this.jolt.reset();
+  }
 
   onGrab(_p: Part, held: boolean): void {
     this.held = held;

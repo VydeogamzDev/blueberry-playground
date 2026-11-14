@@ -4,7 +4,8 @@ import { lerpAngle, rotate, wrapAngle, type V2 } from '../engine/math';
 import { fromBase64 } from '../engine/base64';
 import { Sprite, type Region } from '../engine/Sprites';
 import { Entity } from '../world/Entity';
-import { MAT } from '../world/Materials';
+import { MAT, softness } from '../world/Materials';
+import { isGlass } from '../art/vehicles';
 import { Human } from './Human';
 import { toggleRun, type HandSwitched } from './Machines';
 import type { PixelArt } from '../art/PixelArt';
@@ -61,8 +62,55 @@ export interface CarConfig {
   fuel: [number, number];
   /** How much of a crash, a blast or a shot gets through (1: a car; a tank's armour lets little through). */
   armour: number;
+  /**
+   * How much blast it takes to tear it apart (see Car.dismantle()): as a blast's
+   * damage at its middle, all its blasts together. Left out: by its armour (a car
+   * 1500, five C4s against it or a nuke's fireball; a tank 1.7 times that).
+   */
+  tough?: number;
+  /** Its shapes (by place in `shapes`) that come off in one piece when it's torn apart: a tank's turret. */
+  wholeShapes?: number[];
   /** Its fuel going up (see Explosions). */
   blast: { power: number; radius: number; damage: number };
+}
+
+/** Its body's sections (see Car.dismantle()), by config: each art pixel's shape, 1 on (0: in none). */
+const sections = new WeakMap<CarConfig, { map: Uint8Array; whole: Set<number> }>();
+
+function componentsOf(cfg: CarConfig, body: Part): { map: Uint8Array; whole: Set<number> } {
+  let c = sections.get(cfg);
+  if (c && c.map.length === body.w * body.h) return c;
+  const w = body.w;
+  const h = body.h;
+  const map = new Uint8Array(w * h);
+  // (each shape's corners in art pixels: they're kept from the middle, y up)
+  const polys = cfg.shapes.map((s) => (s.kind === 'poly' ? s.pts.map(([x, y]): [number, number] => [x + w / 2, h / 2 - y]) : null));
+  const inside = (pts: [number, number][], x: number, y: number) => {
+    let sign = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const [ax, ay] = pts[i];
+      const [bx, by] = pts[(i + 1) % pts.length];
+      const s = Math.sign((bx - ax) * (y - ay) - (by - ay) * (x - ax));
+      if (!s) continue;
+      if (!sign) sign = s;
+      else if (s !== sign) return false;
+    }
+    return true;
+  };
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      for (let i = 0; i < polys.length; i++) {
+        const pts = polys[i];
+        if (pts && inside(pts, x + 0.5, y + 0.5)) {
+          map[y * w + x] = Math.min(255, i + 1);
+          break;
+        }
+      }
+    }
+  }
+  c = { map, whole: new Set((cfg.wholeShapes ?? []).map((i) => i + 1)) };
+  sections.set(cfg, c);
+  return c;
 }
 
 /** A seat in a vehicle (see Car.takeIn()). */
@@ -136,6 +184,12 @@ const PULL = { reach: 0.25, t: 0.05 };
  * (over the network, with its delays), and a guest gone quiet lets go by itself.
  */
 const HAND_HOLD = 0.3;
+/** Driven by hand, how long (s) it takes the throttle to open all the way (see gas). */
+const GAS_UP = 0.7;
+/** Driven by hand the other way to how it's rolling (m/s faster than this), it brakes first. */
+const TURN_ROUND = 1;
+/** Tilted by hand in the air (Q, E): how fast it's turned (rad/s²), and the fastest it's turned to spin (rad/s). */
+const TILT = { acc: 6, top: 3 };
 /**
  * Drawing depth over the body (see Car.zBase): the riders' bands, each deep
  * enough for a person's layers, start this far above it; the front layer goes
@@ -203,7 +257,21 @@ export class Car extends Entity implements HandSwitched {
   protected handX = 0;
   protected handAim = 0;
   private handT = 0;
+  /** Tilted by hand in the air (1 back, anticlockwise; -1 forward). */
+  private handTurn = 0;
+  /** Driven by hand: how far its throttle has opened (0 to 1), and whether it's braking to turn round first. */
+  private gas = 0;
+  private turningRound = false;
   private crushed = new Map<Part, Crush>();
+
+  /** The floating origin moved (see world/Origin): what it keeps of where things are in the world moves too. */
+  shifted(dx: number, dy: number): void {
+    super.shifted(dx, dy);
+    for (const k of this.crushed.values()) {
+      k.x += dx;
+      k.y += dy;
+    }
+  }
   /** Who sits in each seat (CarConfig.seats). */
   private riders: (Rider | null)[];
   /**
@@ -221,6 +289,8 @@ export class Car extends Entity implements HandSwitched {
   private cruiseY = 0;
   /** Wheels the blast tore off their axles. */
   private loose = new Set<number>();
+  /** The blasts it has taken toward being torn apart (see dismantle()). */
+  strain = 0;
   private smokeT = 0;
   private front: FrontLayer | null = null;
   /** The body's look, other than its own art (a tank's team stripe: see dressBody()). */
@@ -240,6 +310,8 @@ export class Car extends Entity implements HandSwitched {
     this.body = this.addPart({
       name: cfg.bodyName ?? 'Body', art, material: MAT.metal, x, y, angle: opts.angle ?? 0, density: cfg.density,
       textureKey: def.id + ':body', layer: 1, shapes: cfg.shapes, ccd: true,
+      // (its cabin or hull is an air-filled shell: it floats, or sinks, by its looks)
+      hollow: true,
     });
     cfg.axles.forEach(([ax, ay], i) => {
       const l = this.body.pixelToLocal(ax, ay);
@@ -267,7 +339,7 @@ export class Car extends Entity implements HandSwitched {
 
   /** Driven with the keys, or switched on by hand or powered (unless stopped by hand meanwhile: see HandSwitched), and not a wreck. */
   get driving(): boolean {
-    return (this.handX !== 0 || ((this.on || this.powered) && !this.heldOff)) && !this.wrecked;
+    return (this.handX !== 0 || ((this.on || this.powered) && !this.heldOff)) && !this.wrecked && !this.fried;
   }
 
   /** Who sits in seat `i` (null: nobody). */
@@ -290,7 +362,8 @@ export class Car extends Entity implements HandSwitched {
   }
 
   private apply(): void {
-    const sig = `${this.driving}:${this.dir}:${this.gear}:${this.braking || this.parkBrake}:${this.handX}`;
+    const gas = this.handX ? Math.round(this.gas * 10) / 10 : 1;
+    const sig = `${this.driving}:${this.dir}:${this.gear}:${this.braking || this.parkBrake}:${this.handX}:${gas}:${this.turningRound}`;
     if (sig === this.applied) return;
     this.applied = sig;
     // a little more pull in the higher settings keeps them lively
@@ -303,9 +376,13 @@ export class Car extends Entity implements HandSwitched {
     const roll = held && (this.totalMass() * ROLL_DRAG * this.cfg.wheelR * PX) / held;
     for (const j of this.axles) {
       if (!j.isValid()) continue;
-      if (this.driving) {
-        // wheels turn clockwise to drive right
-        j.configureMotorVelocity(-spin * right, torque * 0.5);
+      if (this.driving && this.turningRound) {
+        // (driven by hand against the way it's rolling: it brakes before it goes the other way)
+        j.configureMotorVelocity(0, torque * 0.5);
+        j.setMotorMaxForce(torque);
+      } else if (this.driving) {
+        // wheels turn clockwise to drive right (by hand, as far as the throttle's open)
+        j.configureMotorVelocity(-spin * right * (0.25 + 0.75 * gas), torque * 0.5);
         j.setMotorMaxForce(torque);
       } else if (this.braking || this.parkBrake) {
         j.configureMotorVelocity(0, torque * 0.5);
@@ -322,7 +399,17 @@ export class Car extends Entity implements HandSwitched {
   preStep(dt: number): void {
     const b = this.body;
     // the keys stopped saying how to drive it (a guest gone quiet): let go
-    if (this.handT > 0 && (this.handT -= dt) <= 0) this.handX = this.handAim = 0;
+    if (this.handT > 0 && (this.handT -= dt) <= 0) this.handX = this.handAim = this.handTurn = 0;
+    // driven by hand: the throttle opens as the key's held, after braking if it's rolling the other way
+    if (this.handX && !b.destroyed) {
+      const rolling = b.vx * this.handX;
+      this.turningRound = rolling < -TURN_ROUND || (this.turningRound && rolling < -0.3);
+      this.gas = this.turningRound ? 0 : Math.min(1, this.gas + dt / GAS_UP);
+    } else {
+      this.gas = 0;
+      this.turningRound = false;
+    }
+    if (this.handTurn && !b.destroyed && !b.frozen) this.tilt(dt);
     // stopped by hand while powered: once the power's gone, the circuit has its say again
     if (this.heldOff && !this.powered) this.heldOff = false;
     if (this.driving) this.braking = true;
@@ -447,8 +534,17 @@ export class Car extends Entity implements HandSwitched {
    * blasts and knocks as much as its armour lets through, fire burning it down.
    * A big blast on a body already badly hurt sets the fuel off.
    */
-  damage(part: Part, amount: number, kind: DamageKind): void {
-    if (part !== this.body || this.wrecked) return;
+  damage(part: Part, amount: number, kind: DamageKind, point?: V2, dir?: V2): void {
+    if (part !== this.body || this.destroyed) return;
+    // blasts strain its frame, wreck or not (more, the hotter it is), until it tears apart
+    if (kind === 'explosion') {
+      this.strain += amount * softness(part.mat, part.temp);
+      if (this.strain >= this.toughness) {
+        this.dismantle(point, dir);
+        return;
+      }
+    }
+    if (this.wrecked) return;
     const a = this.cfg.armour;
     if (kind === 'explosion') {
       if (part.hp < 35 && amount * a > 40) this.explode();
@@ -502,6 +598,38 @@ export class Car extends Entity implements HandSwitched {
     this.game.particles.smoke(e.x, e.y, 1, 0.25 + bad * 0.3, b.hp < 35);
   }
 
+  /** How much blast tears it apart (see CarConfig.tough). */
+  get toughness(): number {
+    return this.cfg.tough ?? 1500 * this.cfg.armour ** -0.2;
+  }
+
+  /**
+   * Torn apart (a nuke's blast, enough C4): its body into pieces of itself, along
+   * its sections first (a tank's turret comes off whole, a car's cabin from its
+   * floor), its windows to shards of glass, and its wheels and gun off whole; the
+   * fuel catches, and whoever was in it falls out. The pieces share a break (see
+   * Debris.from: Repair puts it back together from them).
+   */
+  dismantle(at?: V2, dir?: V2): void {
+    const b = this.body;
+    if (this.destroyed || b.destroyed) return;
+    const g = this.game;
+    const from = g.structure.newBreak();
+    const force = Math.min(3, 1 + Math.max(0, this.strain - this.toughness) / this.toughness);
+    const c = componentsOf(this.cfg, b);
+    const pieces = g.structure.fracture(b, { at, dir, force, parts: c.map, whole: c.whole, glass: this.wrecked ? undefined : isGlass, from });
+    const rest = this.parts.filter((p) => p !== b).map((p) => g.structure.whole(p, { at, dir, force, from }));
+    g.structure.keep(this, [...pieces, ...rest]);
+    // (the fuel tank torn open: what's round it catches)
+    if (!this.wrecked) {
+      const fuel = b.pixelToWorld(this.cfg.fuel[0], this.cfg.fuel[1]);
+      for (const q of pieces) if (Math.hypot(q.main.x - fuel.x, q.main.y - fuel.y) < 1.4) g.fire.ignite(q.main, 0.7);
+    }
+    g.sound.play('explosion/debris', { gain: 0.9, x: b.x, vary: 0.1 });
+    g.sound.impact('metal', 1, b.x);
+    g.remove(this);
+  }
+
   /** The fuel goes up: a blast at the tank, and what's left is a burnt-out wreck (riders and all). */
   explode(): void {
     if (this.wrecked || this.destroyed || this.body.destroyed) return;
@@ -537,15 +665,22 @@ export class Car extends Entity implements HandSwitched {
   repair(): void {
     const b = this.body;
     if (b.destroyed) return;
-    if (this.wrecked) {
-      this.wrecked = false;
-      b.setArt(this.look ?? this.cfg.body());
-      this.front?.setArt(this.look ? this.cfg.frontOf(this.look) : this.cfg.front());
-    }
+    this.unwreck();
     super.repair();
+    this.strain = 0;
     for (const i of this.loose) this.remount(i);
     this.loose.clear();
     this.apply();
+  }
+
+  /** No longer a wreck: its own look back (see repair()). */
+  private unwreck(): void {
+    if (!this.wrecked) return;
+    const b = this.body;
+    this.wrecked = false;
+    if (b.destroyed) return;
+    b.setArt(this.look ?? this.cfg.body());
+    this.front?.setArt(this.look ? this.cfg.frontOf(this.look) : this.cfg.front());
   }
 
   /** A wheel torn off put back on its axle (unless it's gone altogether). */
@@ -610,7 +745,7 @@ export class Car extends Entity implements HandSwitched {
   private seat(h: Human, i: number): void {
     const s = this.cfg.seats[i];
     const b = this.body;
-    this.place(h, s);
+    placeInSeat(h, b, s);
     const hips = h.limbs.get('lowerTorso')!.part;
     const data = RAPIER.JointData.fixed(b.pixelToLocal(s.at[0], s.at[1]), s.recline * b.flip, { x: 0, y: 0 }, 0);
     const joint = this.game.physics.world.createImpulseJoint(data, b.body, hips.body, true);
@@ -619,6 +754,7 @@ export class Car extends Entity implements HandSwitched {
     this.riders[i] = r;
     h.sit({
       pose: s.pose,
+      vehicle: this,
       leave: () => this.riders[i] === r && this.release(i, 'out'),
       grabbed: (p) => {
         r.grabbed = p;
@@ -630,41 +766,6 @@ export class Car extends Entity implements HandSwitched {
     for (const p of h.parts) if (!p.destroyed) p.updateZ();
     this.ghost();
     this.showFront();
-  }
-
-  /**
-   * Puts someone in a seat's pose: every limb where the pose has it, worked down
-   * from the upper torso (turned so the hips lean back as the seat does) with
-   * the hips on the seat, moving along with the body.
-   */
-  private place(h: Human, s: SeatSpec): void {
-    const b = this.body;
-    const f = h.flipped ? -1 : 1;
-    const rel = (k: LimbKey) => (s.pose[k] ?? 0) * f;
-    const pose = new Map<Part, { x: number; y: number; a: number }>();
-    // (each joint's angle is the child's turn less its parent's)
-    const a0 = b.body.rotation() + s.recline * f - rel('lowerTorso') - rel('midTorso');
-    for (const l of h.limbs.values()) {
-      if (l.gone || !l.attached) continue;
-      const up = l.parent ? pose.get(l.parent.part) : undefined;
-      if (!l.parent) pose.set(l.part, { x: 0, y: 0, a: a0 });
-      if (!up) continue;
-      const a = up.a + rel(l.spec.key);
-      const j1 = rotate(l.a1.x, l.a1.y, up.a);
-      const j2 = rotate(l.a2.x, l.a2.y, a);
-      pose.set(l.part, { x: up.x + j1.x - j2.x, y: up.y + j1.y - j2.y, a });
-    }
-    const hips = pose.get(h.limbs.get('lowerTorso')!.part);
-    if (!hips) return;
-    const seat = b.pixelToWorld(s.at[0], s.at[1]);
-    const av = b.body.angvel();
-    for (const [p, q] of pose) {
-      const x = seat.x + q.x - hips.x;
-      const y = seat.y + q.y - hips.y;
-      p.teleport(x, y, q.a);
-      p.body.setLinvel(b.velocityAt(x, y), true);
-      p.body.setAngvel(av, true);
-    }
   }
 
   /**
@@ -879,11 +980,38 @@ export class Car extends Entity implements HandSwitched {
    * `aim` raises (1) or lowers (-1) a tank's barrel. It holds a moment
    * (HAND_HOLD) unless it's renewed.
    */
-  steer(x: number, aim = 0): void {
+  steer(x: number, aim = 0, turn = 0): void {
     this.handX = Math.sign(x);
     this.handAim = Math.sign(aim);
-    this.handT = this.handX || this.handAim ? HAND_HOLD : 0;
+    this.handTurn = Math.sign(turn);
+    this.handT = this.handX || this.handAim || this.handTurn ? HAND_HOLD : 0;
     this.apply();
+  }
+
+  /**
+   * Tilted by hand (Q, E) with its wheels off the ground: turned back or forward in
+   * the air, as a rider leans a bike over a jump. On the ground, nothing.
+   */
+  private tilt(dt: number): void {
+    const b = this.body;
+    const world = this.game.physics.world;
+    const mine = (o: RAPIER.Collider) => this.game.physics.partOf(o)?.entity === this;
+    const reach = this.cfg.wheelR * PX + 0.15;
+    for (const w of this.wheels) {
+      if (w.destroyed) continue;
+      const hit = world.castRay(new RAPIER.Ray({ x: w.x, y: w.y }, { x: 0, y: -1 }), reach, true, undefined, undefined, undefined, undefined, (o) => !mine(o));
+      if (hit) return;
+    }
+    const av = b.body.angvel();
+    if (av * this.handTurn >= TILT.top) return;
+    let inertia = 0;
+    for (const p of this.parts) {
+      if (p.destroyed) continue;
+      const dx = p.x - b.x;
+      const dy = p.y - b.y;
+      inertia += p.body.principalInertia() + p.mass * (dx * dx + dy * dy);
+    }
+    b.body.applyTorqueImpulse(this.handTurn * TILT.acc * inertia * dt, true);
   }
 
   /** Driven by its own crew (a tank on a side: see Tank): as steer() with the drive keys, the aim left be. */
@@ -939,8 +1067,13 @@ export class Car extends Entity implements HandSwitched {
     // (saves from before the setting drive at Normal)
     this.gear = GEARS.find((g) => g.id === x.gear)?.id ?? 'normal';
     this.belts = !!x.belts;
-    if (x.wrecked) this.wreck(false);
-    for (const i of (x.loose as number[] | undefined) ?? []) if (this.wheels[i]) this.shed(i);
+    // (a guest's copy is told again and again: a wreck the host repaired is whole again)
+    if (x.wrecked) {
+      if (!this.wrecked) this.wreck(false);
+    } else this.unwreck();
+    const loose = (x.loose as number[] | undefined) ?? [];
+    for (const i of loose) if (this.wheels[i] && !this.loose.has(i)) this.shed(i);
+    for (const i of [...this.loose]) if (!loose.includes(i)) this.loose.delete(i);
     this.apply();
   }
 
@@ -1063,5 +1196,39 @@ class FrontLayer {
     if (i >= 0) game.frameHandlers.splice(i, 1);
     this.sprite.dispose();
     game.renderer.sprites.release(this.region);
+  }
+}
+
+/**
+ * Puts someone in a seat's pose (a car's, a cockpit's: `b`'s): every limb where the pose has it, worked down
+ * from the upper torso (turned so the hips lean back as the seat does) with
+ * the hips on the seat, moving along with the body.
+ */
+export function placeInSeat(h: Human, b: Part, s: SeatSpec): void {
+  const f = h.flipped ? -1 : 1;
+  const rel = (k: LimbKey) => (s.pose[k] ?? 0) * f;
+  const pose = new Map<Part, { x: number; y: number; a: number }>();
+  // (each joint's angle is the child's turn less its parent's)
+  const a0 = b.body.rotation() + s.recline * f - rel('lowerTorso') - rel('midTorso');
+  for (const l of h.limbs.values()) {
+    if (l.gone || !l.attached) continue;
+    const up = l.parent ? pose.get(l.parent.part) : undefined;
+    if (!l.parent) pose.set(l.part, { x: 0, y: 0, a: a0 });
+    if (!up) continue;
+    const a = up.a + rel(l.spec.key);
+    const j1 = rotate(l.a1.x, l.a1.y, up.a);
+    const j2 = rotate(l.a2.x, l.a2.y, a);
+    pose.set(l.part, { x: up.x + j1.x - j2.x, y: up.y + j1.y - j2.y, a });
+  }
+  const hips = pose.get(h.limbs.get('lowerTorso')!.part);
+  if (!hips) return;
+  const seat = b.pixelToWorld(s.at[0], s.at[1]);
+  const av = b.body.angvel();
+  for (const [p, q] of pose) {
+    const x = seat.x + q.x - hips.x;
+    const y = seat.y + q.y - hips.y;
+    p.teleport(x, y, q.a);
+    p.body.setLinvel(b.velocityAt(x, y), true);
+    p.body.setAngvel(av, true);
   }
 }

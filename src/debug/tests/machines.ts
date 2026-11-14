@@ -1,7 +1,6 @@
 import type { Test, TestCtx } from './types';
 import type { Entity } from '../../world/Entity';
 import type { Human } from '../../entities/Human';
-import { THRUST_TOP } from '../../entities/Machines';
 import { saveToString, loadFromString } from '../../world/SaveLoad';
 
 export default function tests({ game, controls, kit }: TestCtx): Test[] {
@@ -67,15 +66,18 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       if (lamp.powered) return 'the first lever off: the lamp still lit (the second powered it alone)';
       return true;
     }],
-    ['extra: machines: a thruster alone tops out near its top speed; one lifts a person', () => {
+    ['extra: machines: a thruster alone is a rocket, speeding up until the air holds it back (no top speed of its own); one lifts a person', () => {
       kit.reset();
       const lone = kit.spawn('thruster', 0, 0.6, { angle: Math.PI / 2 });
       kit.advance(0.3);
       lone.activate();
-      kit.advance(1.2);
-      const v = Math.hypot(lone.parts[0].vx, lone.parts[0].vy);
-      if (v > THRUST_TOP * 1.05) return `alone it flies at ${v.toFixed(1)} m/s (top ${THRUST_TOP})`;
-      if (v < THRUST_TOP * 0.7) return `alone it reaches only ${v.toFixed(1)} m/s`;
+      kit.advance(0.25);
+      const speed = () => Math.hypot(lone.parts[0].vx, lone.parts[0].vy);
+      const v1 = speed();
+      kit.advance(0.1);
+      const v2 = speed();
+      if (v1 < 30) return `alone it reaches only ${v1.toFixed(1)} m/s in 0.25 s`;
+      if (v2 <= v1 + 1) return `it stopped speeding up at ${v1.toFixed(1)} m/s (${v2.toFixed(1)} 0.1 s on)`;
       kit.reset();
       const h = kit.spawn('human', 0, 1) as Human;
       kit.advance(1);

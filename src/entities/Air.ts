@@ -9,6 +9,10 @@ import type { Part } from '../world/Part';
 import type { Entity } from '../world/Entity';
 import type { Game } from '../world/Game';
 import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
+import type { V2 } from '../engine/math';
+import type { ValueEditor } from '../tools/Controls';
+import { setting, settingField } from './Machines';
+import { jobAction, pilotState, restorePilot, type Engine, type Job } from '../systems/Piloting';
 
 /** The speeds a fan or propeller can be set to, as shares of its own (the context menu's). */
 export const AIR_SPEEDS = [0.25, 0.5, 1, 1.5, 2];
@@ -128,13 +132,24 @@ export abstract class Airscrew extends Appliance {
     return acts;
   }
 
+  /** Edit speed… (see Controls): anywhere from still to four times its own. */
+  editor(): ValueEditor {
+    return {
+      label: 'Edit speed…',
+      title: `Edit ${this.label.toLowerCase()}`,
+      fields: [settingField('speed', 'Speed', () => this.speed, (v) => (this.speed = v))],
+      reset: () => (this.speed = 1),
+      alive: () => !this.destroyed,
+    };
+  }
+
   protected serializeExtra(): Record<string, unknown> {
     return { ...super.serializeExtra(), speed: this.speed };
   }
 
   protected restoreExtra(x: Record<string, unknown>): void {
     super.restoreExtra(x);
-    this.speed = AIR_SPEEDS.includes(x.speed as number) ? (x.speed as number) : 1;
+    this.speed = setting(x.speed);
   }
 }
 
@@ -307,22 +322,66 @@ export const PROP_TOP = 16;
  * to with it), less the faster it already goes that way. Its blades cut what
  * touches them; it doesn't blow things about.
  */
-export class Propeller extends Airscrew {
+export class Propeller extends Airscrew implements Engine {
   /** Its pull (N) from standing still at full speed. */
   force: number;
+  job: Job = 'auto';
+  pilotOut: number | null = null;
+  pilotT = 0;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, frames: (f: number) => PixelArt, zone: BladeZone, force: number, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, frames, zone, x, y, opts);
     this.force = force;
   }
 
+  /** Under the pilot, it runs as the pilot has it (the pilot's throttle is its power); its own, while switched on and powered. */
+  get running(): boolean {
+    if (this.pilotOut !== null) return this.pilotOut > 0 && this.works;
+    return super.running;
+  }
+
+  activate(): void {
+    // (taken back from the pilot: it's its own again)
+    if (this.pilotOut !== null) {
+      this.pilotOut = null;
+      this.pilotT = 0;
+    }
+    super.activate();
+  }
+
+  pushDir(): V2 {
+    return this.forward();
+  }
+
+  pushForce(): number {
+    return this.force * this.speed;
+  }
+
+  pushAt(): V2 {
+    return { x: this.main.x, y: this.main.y };
+  }
+
   protected drive(dt: number): void {
     const p = this.main;
     if (p.frozen) return;
     const f = this.forward();
-    const v = p.body.linvel();
     const top = PROP_TOP * Math.sqrt(this.speed);
-    const pull = this.force * this.speed * Math.min(1, Math.max(0, 1 - (v.x * f.x + v.y * f.y) / top));
+    const level = this.pilotOut !== null ? Math.abs(this.pilotOut) : this.powerLevel;
+    // (it can only push the air there is)
+    const pull = this.force * this.speed * level * this.game.air.thinness(p.y) * Math.min(1, Math.max(0, 1 - (p.vx * f.x + p.vy * f.y) / top));
     p.body.applyImpulse({ x: f.x * pull * dt, y: f.y * pull * dt }, true);
+  }
+
+  contextActions(): ContextAction[] {
+    return [...super.contextActions(), jobAction(this)];
+  }
+
+  protected serializeExtra(): Record<string, unknown> {
+    return { ...super.serializeExtra(), ...pilotState(this) };
+  }
+
+  protected restoreExtra(x: Record<string, unknown>): void {
+    restorePilot(this, x);
+    super.restoreExtra(x);
   }
 }

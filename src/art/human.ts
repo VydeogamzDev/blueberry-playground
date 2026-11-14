@@ -1,6 +1,6 @@
 import { PixelArt, type Color } from './PixelArt';
 import {
-  finish, farSide, draw, SKIN, HAIR, SHIRT, PANTS, SHOE, LEATHER, BRASS, EYE_C, ROBOT, ROBOT_DK, GUNMETAL, GLOW,
+  finish, farSide, draw, ramp, SKIN, HAIR, SHIRT, PANTS, SHOE, LEATHER, BRASS, EYE_C, ROBOT, ROBOT_DK, GUNMETAL, GLOW,
   type Ramp,
 } from './palette';
 
@@ -13,6 +13,9 @@ export type LimbKey =
 
 export type BodyKind = 'human' | 'android';
 
+/** How a body is made: anyone's, or Grant's (short, broad and built different). */
+export type Build = 'standard' | 'grant';
+
 export interface Skin {
   skin: Ramp;
   hair: Ramp;
@@ -23,14 +26,23 @@ export interface Skin {
 }
 
 export const HUMAN_SKIN: Skin = { skin: SKIN, hair: HAIR, shirt: SHIRT, pants: PANTS, shoes: SHOE, belt: LEATHER };
+/** Grant: a black T-shirt, dark jeans and boots, a dark beard. */
+export const GRANT_SKIN: Skin = {
+  skin: ramp('#c08a66', 0.85), hair: ramp('#3a2a20', 1.1), shirt: ramp('#34363b', 1.1),
+  pants: ramp('#33435e'), shoes: ramp('#2e2622', 1.2), belt: ramp('#2a2420', 1.1),
+};
+/** His sunglasses, and the glint on them. */
+const SHADES = 0x15161a;
+const GLINT = 0x6a7a8c;
 
 /** Face pixel positions on the head sprite (art coords) used for expressions. */
 export const EYE = { x: 7, y: 5 };
 export const MOUTH = { x: 7, y: 8 };
 
-/** Face colors for each expression state. */
-export function faceColors(kind: BodyKind, skin: Skin = HUMAN_SKIN) {
+/** Face colors for each expression state (Grant's eyes are behind his shades, whatever they're doing). */
+export function faceColors(kind: BodyKind, skin: Skin = HUMAN_SKIN, build: Build = 'standard') {
   if (kind === 'android') return { eye: GLOW, eyeDim: 0x1f6b74, eyeDead: 0x2a2f35, mouth: -1, mouthDead: -1 };
+  if (build === 'grant') return { eye: SHADES, eyeClosed: SHADES, eyeDead: SHADES, mouth: skin.skin[1], mouthDead: 0x3a1f1a };
   return { eye: EYE_C, eyeClosed: skin.skin[1], eyeDead: 0x4a3a33, mouth: skin.skin[1], mouthDead: 0x3a1f1a };
 }
 
@@ -213,6 +225,132 @@ function humanFoot(s: Skin): PixelArt {
   return finish(a, { shadow: false });
 }
 
+// ---------------------------------------------------------------- Grant
+// Short arms and legs, a head like anyone's, a broad chest and a thick neck:
+// a buzz cut, a full beard and sunglasses he never takes off.
+
+function grantHead(s: Skin): PixelArt {
+  const a = draw(10, 11, [
+    '..qhhhq...',
+    '.qhhhhhhq.',
+    'qhhsssssss',
+    'qhssssssss',
+    'qhssssssss',
+    'qhssssssss',
+    'qhssssssss',
+    'qhhssshhhh',
+    '.qhhhhhshh',
+    '..qhhhhhh.',
+    '...qhhhh..',
+  ], pal(s));
+  finish(a, { shadow: true });
+  // the shades, their arm back to the ear, and a glint
+  for (let x = 6; x <= 9; x++) a.set(x, 4, SHADES);
+  for (let x = 4; x <= 9; x++) a.set(x, EYE.y, SHADES);
+  a.set(7, 4, GLINT);
+  a.set(3, 5, s.skin[2]).set(3, 6, s.skin[1]); // ear
+  a.set(9, 6, s.skin[3]); // nose
+  a.set(MOUTH.x, MOUTH.y, s.skin[1]);
+  return a;
+}
+
+function grantUpperTorso(s: Skin): PixelArt {
+  const a = draw(12, 12, [
+    '.....ssss...',
+    '.....ksss...',
+    '.cccccccXcc.',
+    'cCCccccccCCc',
+    'cCCCcccccCCc',
+    'cCCcccxccCcc',
+    'ccccccxccccc',
+    'cccxcccccccc',
+    'cccccccccccc',
+    '.cccccccccc.',
+    '.cccccccccc.',
+    '.cccccccccc.',
+  ], pal(s));
+  return finish(a);
+}
+
+function grantMidTorso(s: Skin): PixelArt {
+  const a = draw(11, 5, [
+    '.ccccccccc.',
+    'ccccccxcccc',
+    'cCcccccxccc',
+    'cCccccccccc',
+    '.ccccccccc.',
+  ], pal(s));
+  return finish(a);
+}
+
+function grantLowerTorso(s: Skin): PixelArt {
+  const a = draw(12, 8, [
+    '.cccccccccc.',
+    'bbbbbbbbbbgG',
+    'pPpppppppypp',
+    'pPppppppypPp',
+    'ppppppppyppp',
+    'pppppppppppp',
+    'ppppppyyppp.',
+    '.pppppppppp.',
+  ], pal(s));
+  return finish(a);
+}
+
+function grantUpperArm(s: Skin): PixelArt {
+  const a = draw(5, 8, [
+    '.ccc.',
+    'ccccc',
+    'ccccc',
+    'xxxxx',
+    'sssss',
+    'sSsss',
+    'sssks',
+    '.sss.',
+  ], pal(s));
+  return finish(a, { shadow: false });
+}
+
+function grantLowerArm(s: Skin): PixelArt {
+  const a = draw(5, 7, [
+    '.sss.',
+    'sssss',
+    'sSsss',
+    'sssss',
+    'sssks',
+    'sssss',
+    '.sss.',
+  ], pal(s));
+  return finish(a, { shadow: false });
+}
+
+function grantUpperLeg(s: Skin): PixelArt {
+  const a = draw(7, 7, [
+    '.ppppp.',
+    'ppppppp',
+    'pppppyp',
+    'pppppyp',
+    'ppppppp',
+    'ppppppp',
+    '.ppppp.',
+  ], pal(s));
+  return finish(a);
+}
+
+function grantLowerLeg(s: Skin): PixelArt {
+  // (his jeans over the tops of his boots)
+  const a = draw(6, 7, [
+    '.pppp.',
+    'pppppp',
+    'ppppyp',
+    'pppppp',
+    'yyyyyy',
+    'oooooo',
+    'oOoooo',
+  ], pal(s));
+  return finish(a);
+}
+
 // ---------------------------------------------------------------- android
 
 const RB = ROBOT;
@@ -320,13 +458,26 @@ function androidFoot(): PixelArt {
 const cache = new Map<string, PixelArt>();
 
 /** Returns the (cached) sprite for a body part. Far-side limbs are darker for depth. */
-export function limbArt(kind: BodyKind, key: LimbKey, skin: Skin = HUMAN_SKIN, skinKey = 'default'): PixelArt {
-  const ck = `${kind}:${skinKey}:${key}`;
+export function limbArt(kind: BodyKind, key: LimbKey, skin: Skin = HUMAN_SKIN, skinKey = 'default', build: Build = 'standard'): PixelArt {
+  const ck = `${kind}:${build}:${skinKey}:${key}`;
   const hit = cache.get(ck);
   if (hit) return hit;
   const base = key.replace(/[FB]$/, '');
   let a: PixelArt;
-  if (kind === 'human') {
+  if (build === 'grant') {
+    switch (base) {
+      case 'head': a = grantHead(skin); break;
+      case 'upperTorso': a = grantUpperTorso(skin); break;
+      case 'midTorso': a = grantMidTorso(skin); break;
+      case 'lowerTorso': a = grantLowerTorso(skin); break;
+      case 'upperArm': a = grantUpperArm(skin); break;
+      case 'lowerArm': a = grantLowerArm(skin); break;
+      case 'hand': a = humanHand(skin); break;
+      case 'upperLeg': a = grantUpperLeg(skin); break;
+      case 'lowerLeg': a = grantLowerLeg(skin); break;
+      default: a = humanFoot(skin); break;
+    }
+  } else if (kind === 'human') {
     switch (base) {
       case 'head': a = humanHead(skin); break;
       case 'upperTorso': a = humanUpperTorso(skin); break;
@@ -366,21 +517,30 @@ export const STAND_LAYOUT: [LimbKey, number, number][] = [
   ['upperLegF', 0, 17.5], ['lowerLegF', 0, 7.5], ['footF', 1.5, 1.5],
   ['upperArmF', 0, 37], ['lowerArmF', 0, 27.5], ['handF', 0, 21],
 ];
+/** Grant's (as his limbs are laid out in entities/Human). */
+export const GRANT_LAYOUT: [LimbKey, number, number][] = [
+  ['upperArmB', 0, 27.25], ['lowerArmB', 0, 20.75], ['handB', 0, 16],
+  ['upperLegB', 0, 10], ['lowerLegB', 0, 5], ['footB', 0.5, 1.5],
+  ['lowerTorso', 0, 15], ['midTorso', 0, 20], ['upperTorso', 0, 27], ['head', 0.5, 38],
+  ['upperLegF', 0, 10], ['lowerLegF', 0, 5], ['footF', 0.5, 1.5],
+  ['upperArmF', 0, 27.25], ['lowerArmF', 0, 20.75], ['handF', 0, 16],
+];
 
 /** Composite of a standing figure (for the catalog). */
-export function figureArt(kind: BodyKind, skin: Skin = HUMAN_SKIN, skinKey = 'default', stagger = 1): PixelArt {
-  const W = 16;
-  const H = 56;
+export function figureArt(kind: BodyKind, skin: Skin = HUMAN_SKIN, skinKey = 'default', stagger = 1, build: Build = 'standard'): PixelArt {
+  const grant = build === 'grant';
+  const W = grant ? 18 : 16;
+  const H = grant ? 45 : 56;
   const out = new PixelArt(W, H);
-  const ox = 7;
-  for (const [key, cx, cy] of STAND_LAYOUT) {
-    const a = limbArt(kind, key, skin, skinKey);
+  const ox = grant ? 8 : 7;
+  for (const [key, cx, cy] of grant ? GRANT_LAYOUT : STAND_LAYOUT) {
+    const a = limbArt(kind, key, skin, skinKey, build);
     const back = key.endsWith('B') ? -stagger : 0;
     out.blit(a, Math.round(ox + cx + back - a.w / 2), Math.round(H - cy - a.h / 2));
   }
   return out;
 }
 
-export function figurePreview(kind: BodyKind, skin: Skin = HUMAN_SKIN, skinKey = 'default'): HTMLCanvasElement {
-  return figureArt(kind, skin, skinKey).toCanvas(1);
+export function figurePreview(kind: BodyKind, skin: Skin = HUMAN_SKIN, skinKey = 'default', build: Build = 'standard'): HTMLCanvasElement {
+  return figureArt(kind, skin, skinKey, 1, build).toCanvas(1);
 }

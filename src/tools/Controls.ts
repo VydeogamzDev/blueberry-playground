@@ -10,11 +10,13 @@ import { loadFromString } from '../world/SaveLoad';
 import { History } from '../world/History';
 import { HINGE_LIMITS, RAMPS, SPRING_STIFFNESS, stiffnessStep, type ConnKind, type Connection } from '../systems/Connections';
 import { PK } from '../systems/Particles';
+import type { PilotHud } from '../systems/Piloting';
 import { getItem } from '../catalog/items';
 import type { ShapeMaterialId } from '../art/props';
 import type { ShapeForm } from '../entities/Shape';
 import { Car } from '../entities/Car';
 import { Tank } from '../entities/Tank';
+import { TRIGGER_KEYS, pressKey } from '../entities/Flight';
 import { Firearm } from '../entities/Firearm';
 import { cleanOutline, segmentsCross, selfCrossing, signedArea, type Pt } from '../engine/geometry';
 import { ACTIONS, Bindings, isModifier, type ActionId } from './Bindings';
@@ -73,6 +75,11 @@ export interface UIBridge {
 }
 
 /** One number in an object's edit panel. */
+/** The vehicle (or cockpit) a person sits in, if any (see Human.seat). */
+function seatOf(e: Entity): Entity | null {
+  return (e as { seat?: { vehicle?: Entity } | null }).seat?.vehicle ?? null;
+}
+
 export interface EditField {
   /** Which number it is (for tests). */
   key: string;
@@ -827,6 +834,7 @@ export class Controls {
     game.preStepHandlers.push((dt) => this.preStep(dt));
     game.postStepHandlers.push(() => this.offerHeld());
     game.frameHandlers.push((dt) => this.frame(dt));
+    game.origin.listeners.push((dx, dy) => this.shift(dx, dy));
     game.hooks.onEntityRemoved = (e) => {
       this.selection.delete(e);
       this.activated.delete(e);
@@ -1447,6 +1455,45 @@ export class Controls {
   }
 
   /** The handle as it's turned: round the middle, where the cursor is. */
+  /**
+   * The floating origin moved (see world/Origin): what's in hand, being dragged out
+   * or drawn moves with the world, so nothing the player is doing jumps.
+   */
+  private shift(dx: number, dy: number): void {
+    const m = (v: V2) => ({ x: v.x + dx, y: v.y + dy });
+    this.wx += dx;
+    this.wy += dy;
+    const g = this.grab;
+    if (g) {
+      g.at = m(g.at);
+      for (const a of g.along ?? []) a.at = m(a.at);
+    }
+    if (this.box) {
+      this.box.x0 += dx;
+      this.box.y0 += dy;
+    }
+    if (this.pan) {
+      this.pan.camX += dx;
+      this.pan.camY += dy;
+    }
+    if (this.pinch) {
+      this.pinch.wx += dx;
+      this.pinch.wy += dy;
+    }
+    for (const t of [this.twist, this.spin]) {
+      if (!t) continue;
+      t.cx += dx;
+      t.cy += dy;
+    }
+    if (this.draft) {
+      this.draft.pts = this.draft.pts.map(m);
+      if (this.draft.press) this.draft.press = m(this.draft.press);
+    }
+    if (this.placer.ghost) this.placer.ghost.at = m(this.placer.ghost.at);
+    this.arrange.group = null;
+    this.connect.shift(dx, dy);
+  }
+
   private spinAt(): { x: number; y: number } {
     const s = this.spin!;
     const r = this.game.renderer;
@@ -1506,11 +1553,49 @@ export class Controls {
     return (this.isHeld(plus) ? 1 : 0) - (this.isHeld(minus) ? 1 : 0);
   }
 
-  /** The vehicles in the selection (cars, trucks, tanks): the drive keys are theirs while there are any. */
+  /** The vehicles in the selection (cars, trucks, tanks; a person in one stands for it): the drive keys are theirs while there are any. */
   private vehicles(): Car[] {
     const out: Car[] = [];
-    for (const e of this.selection) if (e instanceof Car && !e.destroyed) out.push(e);
+    for (const e of this.selection) {
+      const v = e instanceof Car ? e : seatOf(e);
+      if (v instanceof Car && !v.destroyed && !out.includes(v)) out.push(v);
+    }
     return out;
+  }
+
+  /** What's selected to fly (see systems/Piloting), and when (and from what) it was worked out (see flown()). */
+  private flying = { key: '', at: -Infinity, list: [] as Entity[] };
+
+  /**
+   * The selection, if it's (part of) a build with engines in it to fly (see
+   * systems/Piloting): not the vehicles in it (they drive themselves), and a person
+   * in a cockpit stands for it. Looked over a few times a second.
+   */
+  private flown(): Entity[] {
+    if (!this.selection.size) return [];
+    let key = '';
+    for (const e of this.selection) key += `${e.id},`;
+    const f = this.flying;
+    const now = performance.now();
+    if (key !== f.key || now - f.at > 250) {
+      const sel: Entity[] = [];
+      for (const e of this.selection) {
+        if (e.destroyed || e instanceof Car) continue;
+        const v = seatOf(e);
+        if (v instanceof Car) continue;
+        sel.push(v && !v.destroyed ? v : e);
+      }
+      f.key = key;
+      f.at = now;
+      f.list = sel.length && this.game.piloting.pilotable(sel) ? sel : [];
+    }
+    return f.list.some((e) => e.destroyed) ? f.list.filter((e) => !e.destroyed) : f.list;
+  }
+
+  /** What the HUD shows of what's flown here (see systems/Piloting), or null when nothing is. */
+  pilotHud(): PilotHud | null {
+    const fly = this.grab ? [] : this.flown();
+    return fly.length ? this.game.piloting.hudOf(fly) : null;
   }
 
   /**
@@ -1523,13 +1608,17 @@ export class Controls {
     // (something dragged: A and D turn it, as ever)
     const x = this.grab ? 0 : this.axis('driveLeft', 'driveRight');
     const aim = this.grab ? 0 : this.axis('aimDown', 'aimUp');
-    const now = x || aim ? this.vehicles() : [];
-    for (const v of this.driven) if (!now.includes(v) && !v.destroyed) v.steer(0, 0);
+    const turn = this.grab ? 0 : this.axis('turnRight', 'turnLeft');
+    const now = x || aim || turn ? this.vehicles() : [];
+    for (const v of this.driven) if (!now.includes(v) && !v.destroyed) v.steer(0, 0, 0);
     this.driven.clear();
     for (const v of now) {
-      v.steer(x, aim);
+      v.steer(x, aim, turn);
       this.driven.add(v);
     }
+    // a build with engines, selected, is flown (told every step, keys or none: let go of, it's left as it is)
+    const fly = this.grab ? [] : this.flown();
+    if (fly.length) this.game.piloting.drive(fly, { x, t: aim, r: turn });
   }
 
   /**
@@ -1540,11 +1629,12 @@ export class Controls {
   private drives(code: string): Set<ActionId> {
     const out = new Set<ActionId>();
     const cars = this.grab ? [] : this.vehicles();
-    if (!cars.length) return out;
+    const flying = !this.grab && this.flown().length > 0;
+    if (!cars.length && !flying) return out;
     const tanks = cars.some((c) => c instanceof Tank);
     for (const a of ACTIONS) {
       if (!a.shares || !this.bindings.keys(a.id).includes(code)) continue;
-      if (a.id === 'driveLeft' || a.id === 'driveRight' || tanks) out.add(a.shares);
+      if (a.id === 'driveLeft' || a.id === 'driveRight' || a.id === 'turnLeft' || a.id === 'turnRight' || tanks || flying) out.add(a.shares);
     }
     return out;
   }
@@ -1560,18 +1650,28 @@ export class Controls {
     const r = this.game.renderer;
     let cx = 0;
     let cy = 0;
+    let vx = 0;
+    let vy = 0;
     for (const e of list) {
       const c = e.center();
       cx += c.x / list.length;
       cy += c.y / list.length;
+      const p = e.parts.find((q) => !q.destroyed);
+      if (p) {
+        vx += p.vx / list.length;
+        vy += p.vy / list.length;
+      }
     }
     const k = Math.min(1, dt * 3);
     const dx = cx - r.camX;
     const dy = cy - r.camY;
     const mx = (r.viewWidth / r.zoom) * 0.25;
     const my = (r.height / r.zoom) * 0.25;
-    if (Math.abs(dx) > mx) r.camX += (dx - Math.sign(dx) * mx) * k;
-    if (Math.abs(dy) > my) r.camY += (dy - Math.sign(dy) * my) * k;
+    // (past the margin and going on out, the camera goes with it as well as closing in: easing
+    // in alone, it trailed a third of a second's travel behind, and a craft climbing at 15 m/s
+    // was off a phone's screen)
+    if (Math.abs(dx) > mx) r.camX += (dx - Math.sign(dx) * mx) * k + (vx * dx > 0 ? vx * dt : 0);
+    if (Math.abs(dy) > my) r.camY += (dy - Math.sign(dy) * my) * k + (vy * dy > 0 ? vy * dt : 0);
     r.clampCamera();
   }
 
@@ -2186,16 +2286,17 @@ export class Controls {
     if (!this.grab) this.rotateSelection(this.touchTargets(), dir * this.arrange.angleStep);
   }
 
-  /** The touch screen's drive and aim buttons: held as the keys are (see steer()). */
-  holdDrive(id: 'driveLeft' | 'driveRight' | 'aimUp' | 'aimDown', on: boolean): void {
+  /** The touch screen's drive, aim and turn buttons: held as the keys are (see steer()). */
+  holdDrive(id: 'driveLeft' | 'driveRight' | 'aimUp' | 'aimDown' | 'turnLeft' | 'turnRight', on: boolean): void {
     if (on) this.held.add(id);
     else this.held.delete(id);
   }
 
-  /** What the selection has for the drive buttons: a vehicle to drive, a tank to aim. */
-  drivable(): { drive: boolean; aim: boolean } {
+  /** What the selection has for the drive buttons: a vehicle to drive (or a build to fly), a tank to aim (or a throttle), something to turn. */
+  drivable(): { drive: boolean; aim: boolean; turn: boolean } {
     const v = this.vehicles();
-    return { drive: v.length > 0, aim: v.some((c) => c instanceof Tank) };
+    const fly = this.flown().length > 0;
+    return { drive: v.length > 0 || fly, aim: fly || v.some((c) => c instanceof Tank), turn: fly || v.length > 0 };
   }
 
   /** The touch bar's Flip: the selection, or what's about to be placed. */
@@ -2609,6 +2710,11 @@ export class Controls {
     if (down && tag === 'BUTTON' && (e.code === 'Space' || e.code === 'Enter' || e.code === 'NumpadEnter')) return;
     const code = e.code;
     const ids = this.bindings.actionsFor(code);
+    // a key trigger's key (see entities/Flight): pressed and let go, whatever else it does
+    if (TRIGGER_KEYS.includes(code) && !e.ctrlKey && !e.metaKey && (!down || (!this.keys.has(code) && !this.ui.isPanelOpen()))) {
+      if (this.net) this.net.send({ op: 'key', code, down });
+      else pressKey(this.game, code, down);
+    }
     if (!down) {
       this.keys.delete(code);
       // a modifier pressed and let go on its own: its command
@@ -2893,6 +2999,11 @@ export class Controls {
       r.camY += my * speed;
       r.clampCamera();
     } else if (cars.length && !this.follow && this.axis('driveLeft', 'driveRight')) this.keepInView(cars, dt);
+    else if (!this.follow && this.selection.size) {
+      // (what's flown, moving, kept in view as a driven car is)
+      const craft = this.game.piloting.mine;
+      if (craft && Math.hypot(craft.ref.vx, craft.ref.vy) > 1) this.keepInView(craft.ents, dt);
+    }
     // the camera keeps what it follows centered
     if (this.follow) {
       const live = this.follow.filter((e) => !e.destroyed);
@@ -2962,7 +3073,8 @@ export class Controls {
     this.sentAt = now;
     const net = this.net!;
     // (with the view's zoom: a seeker held from here looks through a gate the size it's drawn here)
-    net.send({ op: 'cursor', x: this.wx, y: this.wy, zoom: this.game.renderer.zoom });
+    const r = this.game.renderer;
+    net.send({ op: 'cursor', x: this.wx, y: this.wy, zoom: r.zoom, ...(this.game.map.world ? { view: [r.camX, r.camY] as [number, number] } : {}) });
     if (this.grab) {
       const t = this.dragTarget();
       const snap = this.arrange.dragSnap();
@@ -2974,11 +3086,15 @@ export class Controls {
     // (renewed while the keys are held: let go, or the guest gone, the host's vehicles let go by themselves soon after)
     const x = this.axis('driveLeft', 'driveRight');
     const aim = this.axis('aimDown', 'aimUp');
-    const cars = x || aim ? this.vehicles() : [];
+    const turn = this.axis('turnRight', 'turnLeft');
+    const cars = x || aim || turn ? this.vehicles() : [];
     const stop = this.driveSent.filter((v) => !cars.includes(v));
-    if (stop.length) net.send({ op: 'drive', ids: net.ids(stop), x: 0, aim: 0 });
-    if (cars.length) net.send({ op: 'drive', ids: net.ids(cars), x, aim });
+    if (stop.length) net.send({ op: 'drive', ids: net.ids(stop), x: 0, aim: 0, r: 0 });
+    if (cars.length) net.send({ op: 'drive', ids: net.ids(cars), x, aim, r: turn });
     this.driveSent = cars;
+    // (renewed while it's selected: deselected, the host lets it go soon after)
+    const fly = this.grab ? [] : this.flown();
+    if (fly.length) net.send({ op: 'pilot', ids: net.ids(fly), x, t: aim, r: turn });
   }
 
   /** Push, pull and lift show how far they reach around the cursor. */
@@ -3089,6 +3205,12 @@ export class Controls {
         return `Click: place ${this.armed.name}${l && rt ? ` · ${l} / ${rt}: turn it` : ''}${r ? ` · ${r}: mirror it` : ''}${grid}${with_}`;
       }
       if (l || rt) return `Hold ${[rt, l].filter(Boolean).join(' / ')} and let go: spawn ${this.armed.name}${rt && l ? ' (facing right / left)' : ''}${grid}${with_}`;
+    }
+    // a build to fly selected: its keys
+    const fly = this.touchMode || !this.selection.size || this.grab ? [] : this.flown();
+    if (fly.length && (!this.hover || fly.includes(this.hover.entity))) {
+      const keys = (a: ActionId, b: ActionId) => [this.bindings.label(a), this.bindings.label(b)].filter(Boolean).join(' ');
+      return `${keys('aimUp', 'aimDown')}: throttle · ${keys('driveLeft', 'driveRight')}: move · ${keys('turnLeft', 'turnRight')}: turn`;
     }
     // vehicles selected (and nothing else pointed at): how to drive them, and lay a tank's gun
     const cars = this.touchMode || !this.selection.size ? [] : this.vehicles();

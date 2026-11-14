@@ -13,11 +13,12 @@ import { arrayToBase64 } from '../engine/base64';
 import { clamp, type V2 } from '../engine/math';
 import { isFighter, isLiving, setFighting } from '../systems/Fighting';
 import { Car } from '../entities/Car';
+import { pressKey } from '../entities/Flight';
 import { heldSeekers, STRIKE_COUNT, type Sighted } from '../entities/Missiles';
 import { beginGrab, dragPaused, grabAlong, inWorld, Powers, releaseGrab, stepGrab, type Controls, type Grab, type PowerId, type ValueEditor } from '../tools/Controls';
 import { FxRecorder, refOf, type PartRef } from './Effects';
 import { Wire, type Lobby, type Link } from './Link';
-import { PART_FLAGS, type GuestOp, type HostMsg, type NetConn, type NetSeeker, type NetSight, type NetTime, type PlayerInfo, type Tick, type Welcome } from './protocol';
+import { GLOW_SHIFT, PART_FLAGS, type GuestOp, type HostMsg, type NetConn, type NetSeeker, type NetSight, type NetTime, type PlayerInfo, type Tick, type Welcome } from './protocol';
 
 /** Ticks a second's worth: how often guests hear what changed (ms between). */
 const TICK_MS = 50;
@@ -37,6 +38,11 @@ export const VITALS = ['alive', 'consciousness', 'blood', 'pain', 'shock', 'stat
 interface Guest extends PlayerInfo {
   wire: Wire<GuestOp, HostMsg>;
   cursor: V2 | null;
+  /** The middle of their view, as they last said (on the World: ground's laid round it and nothing near it is parked). */
+  view: V2 | null;
+  /** Where their floating origin is, as they last said (see world/Origin): what they send is from there. */
+  ox: number;
+  oy: number;
   /** Their view's zoom (screen px per m), as they last said (see Game.cursorOf()). */
   zoom: number;
   grab: Grab | null;
@@ -84,6 +90,40 @@ export function vitalsOf(e: Entity): Record<string, unknown> {
   const drugs = src.drugs as Record<string, number> | undefined;
   if (drugs) v.drugs = Object.fromEntries(Object.entries(drugs).map(([k, x]) => [k, Math.round(x * 100) / 100]));
   return v;
+}
+
+/**
+ * A guest's op from where their floating origin was (see world/Origin) put where
+ * the host's is: (dx, dy) added to every place in it (in place: it's theirs, parsed).
+ */
+function localize(m: GuestOp, dx: number, dy: number): void {
+  const at = (v: unknown) => {
+    const p = v as { x?: unknown; y?: unknown } | null;
+    if (p && typeof p.x === 'number' && typeof p.y === 'number') {
+      p.x += dx;
+      p.y += dy;
+    }
+  };
+  switch (m.op) {
+    case 'cursor':
+      at(m);
+      if (Array.isArray(m.view) && typeof m.view[0] === 'number' && typeof m.view[1] === 'number') m.view = [m.view[0] + dx, m.view[1] + dy];
+      break;
+    case 'spawn': case 'grab': case 'drag': case 'drop': case 'power': case 'lightAt': at(m); break;
+    case 'place':
+      if (typeof m.dx === 'number' && typeof m.dy === 'number') {
+        m.dx += dx;
+        m.dy += dy;
+      }
+      break;
+    case 'connect':
+      at(m.wa);
+      at(m.wb);
+      if (Array.isArray(m.more)) for (const t of m.more) at(t?.wb);
+      break;
+    case 'moveEnd': at(m.w); break;
+    case 'rebuild': at(m.at); break;
+  }
 }
 
 /** A player's name as shown: short, plain. */
@@ -134,7 +174,18 @@ export class NetHost {
       const g = this.guests.get(player);
       return g?.cursor ? { x: g.cursor.x, y: g.cursor.y, zoom: g.zoom } : null;
     },
+    views: () => {
+      const out: V2[] = [];
+      for (const g of this.guests.values()) {
+        const v = g.view ?? g.cursor;
+        if (v) out.push(v);
+      }
+      return out;
+    },
   };
+  /** Where the floating origin was when the guests were last told (see world/Origin). */
+  private originSent = '';
+  private shiftHook = (dx: number, dy: number) => this.shift(dx, dy);
 
   constructor(private game: Game, private controls: Controls, private lobby: Lobby, name: string) {
     this.me = { id: 1, name: cleanName(name, 'Host'), color: PLAYER_COLORS[0] };
@@ -153,6 +204,7 @@ export class NetHost {
     game.preStepHandlers.push(this.hooks.pre);
     game.postStepHandlers.push(this.hooks.post);
     game.frameHandlers.push(this.hooks.frame);
+    game.origin.listeners.push(this.shiftHook);
     // everything gets its number now (afresh: numbers from an earlier game hosted would clash with the new ones)
     for (const e of game.entities) e.netId = 0;
     this.tick(true);
@@ -179,7 +231,8 @@ export class NetHost {
     const id = this.nextPlayer++;
     const wire = new Wire<GuestOp, HostMsg>(link);
     const g: Guest = {
-      id, name: `Player ${id}`, color: PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length], wire, cursor: null, zoom: DEFAULT_ZOOM,
+      id, name: `Player ${id}`, color: PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length], wire, cursor: null, view: null, zoom: DEFAULT_ZOOM,
+      ox: this.game.origin.x, oy: this.game.origin.y,
       grab: null, grabList: [], target: { x: 0, y: 0 }, rot: 0, snap: false, snapGrid: 0.1, snapStep: Math.PI / 12, alone: false, moveList: null,
       powers: new Powers(this.game), power: { kind: null, x: 0, y: 0, flick: { x: 0, y: 0 } },
       activated: new Set(), creations: [],
@@ -244,6 +297,36 @@ export class NetHost {
     g.preStepHandlers = g.preStepHandlers.filter((h) => h !== this.hooks.pre);
     g.postStepHandlers = g.postStepHandlers.filter((h) => h !== this.hooks.post);
     g.frameHandlers = g.frameHandlers.filter((h) => h !== this.hooks.frame);
+    const k = g.origin.listeners.indexOf(this.shiftHook);
+    if (k >= 0) g.origin.listeners.splice(k, 1);
+  }
+
+  /**
+   * The floating origin moved (see world/Origin): what's kept of the guests'
+   * (their pointers, what they hold) and of what they were sent (poses, effects not
+   * yet sent) moved with it. The next tick tells them, and they move theirs too.
+   */
+  private shift(dx: number, dy: number): void {
+    const m = (v: V2) => ({ x: v.x + dx, y: v.y + dy });
+    this.fx.shift(dx, dy);
+    for (const k of this.known.values()) {
+      const q = k.pose;
+      for (let i = 0; i < q.length; i += 3) {
+        q[i] += dx;
+        q[i + 1] += dy;
+      }
+    }
+    for (const g of this.guests.values()) {
+      if (g.cursor) g.cursor = m(g.cursor);
+      if (g.view) g.view = m(g.view);
+      g.target = m(g.target);
+      g.power.x += dx;
+      g.power.y += dy;
+      if (g.grab) {
+        g.grab.at = m(g.grab.at);
+        for (const a of g.grab.along ?? []) a.at = m(a.at);
+      }
+    }
   }
 
   // ---- ticks ----------------------------------------------------------------------------
@@ -264,6 +347,8 @@ export class NetHost {
       for (const g of this.guests.values()) g.wire.send(this.welcome(g));
       this.conns = this.connSig();
       this.map = this.game.map;
+      // (the save has the origin)
+      this.originSent = `${this.game.origin.x},${this.game.origin.y}`;
       return;
     }
     const m: Tick = { t: 'tick', ht: now };
@@ -285,6 +370,12 @@ export class NetHost {
     if (this.game.map !== this.map) {
       this.map = this.game.map;
       m.map = this.map;
+    }
+    const o = this.game.origin;
+    const os = `${o.x},${o.y}`;
+    if (os !== this.originSent) {
+      this.originSent = os;
+      m.origin = [o.x, o.y];
     }
     const t = this.netTime();
     const time = `${t.paused}:${t.scale}:${t.iterations}:${t.gravity}:${t.music?.seed}:${t.music?.start}:${JSON.stringify(t.weather)}`;
@@ -416,7 +507,8 @@ export class NetHost {
   }
 
   private stateOf(p: Part): [number, number, number, number] {
-    const flags = (p.frozen ? PART_FLAGS.frozen : 0) | (p.flip === -1 ? PART_FLAGS.left : 0) | (p.noCollideAll ? PART_FLAGS.noCollide : 0);
+    // (how hot it glows goes along in the flags' upper bits: 0..63)
+    const flags = (p.frozen ? PART_FLAGS.frozen : 0) | (p.flip === -1 ? PART_FLAGS.left : 0) | (p.noCollideAll ? PART_FLAGS.noCollide : 0) | (Math.round(p.glow * 63) << GLOW_SHIFT);
     const hp = Number.isFinite(p.hp) ? Math.round(p.hp * 2) / 2 : 1e9;
     return [hp, Math.round(p.burning * 100) / 100, Math.round(p.charred * 100) / 100, flags];
   }
@@ -564,6 +656,17 @@ export class NetHost {
     const game = this.game;
     const c = this.controls;
     const history = c.history;
+    if (m.op === 'origin') {
+      if (Number.isFinite(m.x) && Number.isFinite(m.y)) {
+        g.ox = m.x;
+        g.oy = m.y;
+      }
+      return;
+    }
+    // (what they send is from where their origin is: a tick behind the host's, maybe, as it moves)
+    const ox = g.ox - game.origin.x;
+    const oy = g.oy - game.origin.y;
+    if (ox || oy) localize(m, ox, oy);
     switch (m.op) {
       case 'hello':
         g.name = cleanName(m.name, g.name);
@@ -572,6 +675,8 @@ export class NetHost {
         break;
       case 'cursor': {
         g.cursor = { x: Number(m.x) || 0, y: Number(m.y) || 0 };
+        const v = Array.isArray(m.view) ? { x: Number(m.view[0]), y: Number(m.view[1]) } : null;
+        g.view = v && Number.isFinite(v.x) && Number.isFinite(v.y) ? v : null;
         const zoom = Number(m.zoom);
         if (Number.isFinite(zoom) && zoom > 0) g.zoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
         break;
@@ -640,8 +745,14 @@ export class NetHost {
       case 'noCollide': c.setNoCollide(this.entities(m.ids), !!m.on); break;
       case 'rotate': c.rotateSelection(this.entities(m.ids), Number(m.angle) || 0); break;
       case 'drive':
-        for (const e of this.entities(m.ids)) if (e instanceof Car) e.steer(clamp(Number(m.x) || 0, -1, 1), clamp(Number(m.aim) || 0, -1, 1));
+        for (const e of this.entities(m.ids)) if (e instanceof Car) e.steer(clamp(Number(m.x) || 0, -1, 1), clamp(Number(m.aim) || 0, -1, 1), clamp(Number(m.r) || 0, -1, 1));
         break;
+      case 'key': pressKey(game, String(m.code), !!m.down); break;
+      case 'pilot': {
+        const ents = this.entities(m.ids);
+        if (ents.length) game.piloting.drive(ents, { x: clamp(Number(m.x) || 0, -1, 1), t: clamp(Number(m.t) || 0, -1, 1), r: clamp(Number(m.r) || 0, -1, 1) }, false);
+        break;
+      }
       case 'freezePart': {
         const p = this.part(m.p);
         if (!p) return;

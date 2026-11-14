@@ -7,6 +7,8 @@ import type { WeatherState } from '../systems/Weather';
 import type { StainState } from '../systems/Particles';
 import type { PuddleState } from '../systems/Puddles';
 import type { FluidState } from '../systems/Fluid';
+import { rebase } from './Origin';
+import type { Parked } from './Parking';
 
 /** Stains (see StainState), their arrays as base64. */
 interface SavedStains {
@@ -36,7 +38,15 @@ interface SavedFluid {
 }
 
 interface SaveData extends Snapshot {
-  version: 1;
+  /** 2: saved away from the World's start (see origin); 1: everything else, as before. */
+  version: 1 | 2;
+  /**
+   * Where the floating origin was (see world/Origin): every position in the save is
+   * from there. None: at (0, 0), as on every map but the World.
+   */
+  origin?: { x: number; y: number };
+  /** What was parked, far from every view on the World (see world/Parking). */
+  parked?: Parked[];
   camera: { x: number; y: number; zoom: number };
   /** The floor's stains and puddles (saves from before they were kept have none). */
   stains?: SavedStains;
@@ -50,7 +60,7 @@ interface SaveData extends Snapshot {
 }
 
 export function saveToString(game: Game): string {
-  return sceneToString(game, { snap: capture(game, game.entities), stains: game.stains.capture(), puddles: game.puddles.capture(), fluid: game.fluid.capture(), map: game.map });
+  return sceneToString(game, { snap: capture(game, game.entities), stains: game.stains.capture(), puddles: game.puddles.capture(), fluid: game.fluid.capture(), map: game.map, origin: game.origin, parked: game.parking.list });
 }
 
 /** What a save is made of, captured now or earlier (an undo step's: see History.lastSave()). */
@@ -60,13 +70,21 @@ export interface SceneParts {
   puddles: PuddleState;
   fluid: FluidState;
   map: MapSpec;
+  /** Where the floating origin was as it was captured (see world/Origin). */
+  origin?: { x: number; y: number };
+  /** What was parked then (see world/Parking). */
+  parked?: Parked[];
 }
 
 /** A save of what was captured (the camera and the weather as they are now). */
-export function sceneToString(game: Game, { snap, stains: st, puddles: pu, fluid: fl, map }: SceneParts): string {
+export function sceneToString(game: Game, { snap, stains: st, puddles: pu, fluid: fl, map, origin, parked }: SceneParts): string {
   const r = game.renderer;
+  const away = (!!origin && (origin.x !== 0 || origin.y !== 0)) || !!parked?.length;
   const data: SaveData = {
-    version: 1,
+    // (a game from before the World wouldn't know where things are: it's told this is new)
+    version: away ? 2 : 1,
+    ...(away && origin ? { origin: { x: origin.x, y: origin.y } } : {}),
+    ...(parked?.length ? { parked: parked.map((k) => ({ ...k, snap: { entities: k.snap.entities.map(({ uid: _uid, ...e }) => e), connections: k.snap.connections } })) } : {}),
     // (an undo step's say which entity each was: no use in a save)
     entities: snap.entities.map(({ uid: _uid, ...e }) => e),
     connections: snap.connections,
@@ -80,13 +98,34 @@ export function sceneToString(game: Game, { snap, stains: st, puddles: pu, fluid
   return JSON.stringify(data);
 }
 
+/** What was parked, from a save: each with its place and origin made safe, its snapshot as saved (made as any save's is). */
+function parkedOf(raw: unknown): Parked[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Parked[] = [];
+  for (const k of raw as Partial<Parked>[]) {
+    const s = k?.snap;
+    if (!s || !Array.isArray(s.entities) || !Array.isArray(s.connections)) continue;
+    const at = originOf({ x: k.x, y: k.y });
+    const o = originOf({ x: k.ox, y: k.oy });
+    out.push({ x: at.x, y: at.y, ox: o.x, oy: o.y, snap: { entities: s.entities, connections: s.connections } });
+  }
+  return out;
+}
+
+/** A saved origin, made safe: whole numbers (it only ever moves by whole steps), and in reach of a double's precision. */
+function originOf(raw: unknown): { x: number; y: number } {
+  const o = raw as { x?: unknown; y?: unknown } | null | undefined;
+  const ok = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(Math.max(-1e12, Math.min(1e12, v))) : 0);
+  return { x: ok(o?.x), y: ok(o?.y) };
+}
+
 /**
  * Replaces the scene with a saved one; returns what was made, in the save's
  * order (null where something couldn't be). `camera: false` keeps the view.
  */
 export function loadFromString(game: Game, json: string, o: { camera?: boolean } = {}): (Entity | null)[] {
   const data = JSON.parse(json) as SaveData;
-  if (!data || data.version !== 1 || !Array.isArray(data.entities)) throw new Error('Unrecognized save format');
+  if (!data || (data.version !== 1 && data.version !== 2) || !Array.isArray(data.entities)) throw new Error('Unrecognized save format');
   // the map first: a scene saved on another one switches to it
   const map = (data.map && validateMap(data.map)) || LAB;
   if (!sameMap(game.map, map)) game.setMap(map, !data.camera || o.camera === false);
@@ -94,7 +133,11 @@ export function loadFromString(game: Game, json: string, o: { camera?: boolean }
   game.clearAll();
   game.fire.clear();
   game.explosions.clear();
+  // the origin where it was saved from (positions are all from there); none but on the World
+  const at = map.world ? originOf(data.origin) : { x: 0, y: 0 };
+  if (at.x !== game.origin.x || at.y !== game.origin.y) rebase(game, at.x - game.origin.x, at.y - game.origin.y);
   const made = instantiateIndexed(game, { entities: data.entities, connections: data.connections ?? [] });
+  game.parking.list = map.world ? parkedOf(data.parked) : [];
   // (the camera before the puddles: on an endless map, those kept are those around it)
   if (data.camera && o.camera !== false) {
     game.renderer.camX = data.camera.x;

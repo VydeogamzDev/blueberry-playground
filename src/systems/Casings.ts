@@ -128,7 +128,7 @@ export class Casings {
   step(dt: number): void {
     const world = this.game.physics.world;
     const env = this.game.env;
-    const terrain = env.ground.length > 0;
+    const terrain = env.hasGround;
     const g = this.game.gravity;
     // (fewer allowed now than lie about: the oldest go)
     while (this.n > Math.max(0, this.cap)) this.drop(0);
@@ -234,6 +234,17 @@ export class Casings {
       mesh.count = counts[k];
       mesh.instanceMatrix.needsUpdate = true;
     });
+  }
+
+  /** Everything here moved by (dx, dy): the floating origin moved (see world/Origin). */
+  shift(dx: number, dy: number): void {
+    for (let i = 0; i < this.n; i++) {
+      this.x[i] += dx;
+      this.y[i] += dy;
+      this.onX[i] += dx;
+      this.onY[i] += dy;
+    }
+    this.dirty = true;
   }
 
   clear(): void {

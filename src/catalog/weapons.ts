@@ -188,6 +188,10 @@ interface BombDef {
   hold: HoldSpec | null;
   blast: BlastSpec;
   tags?: string[];
+  /** There's air in it: it floats by its looks (see PartSpec.hollow). */
+  hollow?: boolean;
+  /** How much more than its looks water holds it up (see Part.buoyancy): a drum of fuel, lighter than water. */
+  buoyancy?: number;
 }
 
 const BOMBS: BombDef[] = [
@@ -205,7 +209,7 @@ const BOMBS: BombDef[] = [
   },
   {
     id: 'explosive-barrel', name: 'Explosive Barrel', desc: 'Goes off when shot, burned or hit hard.', art: () => barrelArt(true), w: 18, h: 26,
-    shapes: [{ kind: 'box', w: 18, h: 26, r: 1.5 }], mass: 40, material: MAT.sheetMetal, hold: null,
+    shapes: [{ kind: 'box', w: 18, h: 26, r: 1.5 }], mass: 40, material: MAT.sheetMetal, hold: null, hollow: true, buoyancy: 1.2,
     blast: { power: 190, radius: 7, damage: 280, incendiary: true, fuse: 0, sensitivity: 30, burnTime: 2.5 },
     tags: ['oil', 'drum', 'red'],
   },
@@ -282,8 +286,11 @@ export function registerExplosives(): void {
   for (const b of BOMBS) {
     const shapes = b.shapes ?? rects(b.w, b.h, b.rects ?? [[0, 0, b.w, b.h]], 0.5);
     const density = densityFor(b.mass, shapes);
-    item(b.id, b.name, 'Explosives', b.desc, b.art, (game, def, art, x, y, opts) =>
-      new Explosive(game, def, { art, material: b.material, shapes, density, angularDamping: 0.25 }, b.hold, b.blast, x, y, opts), b.tags);
+    item(b.id, b.name, 'Explosives', b.desc, b.art, (game, def, art, x, y, opts) => {
+      const e = new Explosive(game, def, { art, material: b.material, shapes, density, angularDamping: 0.25, hollow: b.hollow }, b.hold, b.blast, x, y, opts);
+      if (b.buoyancy) e.main.buoyancy = b.buoyancy;
+      return e;
+    }, b.tags);
   }
   registerMolotov();
   const nukeShapes = rects(64, 24, [[5, 4, 59, 16], [1, 0, 12, 4], [1, 20, 12, 4]], 1.5);
@@ -399,7 +406,7 @@ export function registerMachinery(): void {
     const shapes: ShapeSpec[] = [{ kind: 'ball', r: 4, y: 2 }, artRect(8, 12, 2, 7, 4, 5)];
     return new LightBulb(game, def, { art, material: MAT.plastic, shapes, density: densityFor(0.25, shapes), hp: 4 }, bulbOn, x, y, opts);
   }, ['lamp', 'lightbulb', 'electric']);
-  item('thruster', 'Thruster', 'Machinery', 'Pushes forward while active or powered: one lifts a person, a few lift a car. Set its thrust in its menu, from 300 N to 4800 N (1200 N to start with).', I.thrusterArt, (game, def, art, x, y, opts) => {
+  item('thruster', 'Thruster', 'Machinery', 'Pushes forward while active or powered: one lifts a person, a few lift a car. Set its thrust in its menu, 300 N to 4800 N (1200 N to start with). Select what it’s built into to fly it: W and S throttle, A and D move, Q and E turn.', I.thrusterArt, (game, def, art, x, y, opts) => {
     const shapes = rects(14, 10, [[5, 1, 9, 8], [0, 1, 6, 8]]);
     // (a push 20 times its own weight from standing, fading toward THRUST_TOP m/s)
     return new Thruster(game, def, { art, material: MAT.metal, shapes, density: densityFor(6, shapes) }, 1200, x, y, opts);

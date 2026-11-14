@@ -258,6 +258,8 @@ type BoltState = 'loose' | 'flying' | 'stuck';
  * stick lying about: dropped on a crossbow, it loads it with its kind.
  */
 export class Bolt extends Prop {
+  // (its own drag and lift: see systems/Aero)
+  ownFlight = true;
   readonly kind: BoltKind;
   state: BoltState = 'loose';
   /** The part it's stuck in. */
@@ -271,6 +273,12 @@ export class Bolt extends Prop {
   private age = 0;
   /** Where it was loosed from (see CLEAR), and how far on (m, across) it goes through the side of the soldier who shot it (see launch()). */
   private start: V2 | null = null;
+
+  /** The floating origin moved (see world/Origin): what it keeps of where things are in the world moves too. */
+  shifted(dx: number, dy: number): void {
+    super.shifted(dx, dy);
+    if (this.start) this.start = { x: this.start.x + dx, y: this.start.y + dy };
+  }
   private passD = 0;
   /** That side, whose soldiers' bullets don't meet it (see Passing). */
   firedFor: string | null = null;

@@ -2,6 +2,7 @@ import { RAPIER } from '../engine/Physics';
 import { GROUP, PX, groups } from '../engine/constants';
 import { clamp, rotate, type V2 } from '../engine/math';
 import { Entity } from '../world/Entity';
+import { Machine } from './Machine';
 import { MAT } from '../world/Materials';
 import { PK } from '../systems/Particles';
 import { isLiving, type Living } from '../systems/Fighting';
@@ -57,7 +58,7 @@ let ray: RAPIER.Ray | null = null;
  * or gone. On from the start (activate switches it off and on); wired up, it
  * runs only while powered. Set to a team, it spares that team's people and animals.
  */
-export class Turret extends Entity {
+export class Turret extends Machine {
   readonly base: Part;
   readonly head: Part;
   readonly spec: TurretSpec;
@@ -104,11 +105,12 @@ export class Turret extends Entity {
     const data = RAPIER.JointData.revolute(this.base.pixelToLocal(spec.pivot[0], spec.pivot[1]), this.head.pixelToLocal(hp[0], hp[1]));
     this.joint = this.addJoint(data, this.base, this.head) as RAPIER.RevoluteImpulseJoint;
     this.lockHead();
+    this.sturdy();
   }
 
   /** Runs: switched on, powered if it's wired, and not knocked out by an EMP. */
   get running(): boolean {
-    return this.on && (this.powered || !this.isWired()) && !this.game.connections.jammed.has(this);
+    return this.on && (this.powered || !this.isWired()) && !this.game.connections.jammed.has(this) && this.works;
   }
 
   private isWired(): boolean {

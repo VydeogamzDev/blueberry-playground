@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RAPIER } from '../engine/Physics';
-import { Entity } from '../world/Entity';
+import { BROKEN, WORN } from '../world/Entity';
+import { Machine } from './Machine';
 import { Prop, type PropConfig } from './Prop';
 import { PK } from '../systems/Particles';
 import { PX } from '../engine/constants';
@@ -10,6 +11,9 @@ import type { PixelArt } from '../art/PixelArt';
 import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
 import type { ContextAction, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
+import type { V2 } from '../engine/math';
+import type { EditField, ValueEditor } from '../tools/Controls';
+import { engineLevel, jobAction, pilotState, restorePilot, type Engine, type Job } from '../systems/Piloting';
 
 /** A machine that runs while switched on by hand or while powered (thrusters, lamps, motors, pistons, timers). */
 export interface HandSwitched {
@@ -44,11 +48,23 @@ export class Battery extends Prop {
   }
 
   isPowerSource(): boolean {
-    return this.on;
+    return this.on && this.works;
   }
 
   get chargesWater(): boolean {
-    return this.on;
+    return this.on && this.works;
+  }
+
+  /**
+   * Hurt, it shorts out inside: it heats up (the worse hurt, the faster), till its
+   * casing smokes and catches; broken, it's dead (see works).
+   */
+  preStep(dt: number): void {
+    super.preStep(dt);
+    const c = this.condition;
+    if (!this.on || c >= WORN || c < BROKEN || this.fried) return;
+    this.game.heat.add(this.main, dt * 60 * (WORN - c) / (WORN - BROKEN));
+    if (this.main.temp > 120 && Math.random() < dt * 3) this.game.particles.smoke(this.main.x, this.main.y + 0.1, 1, 0.15, true);
   }
 
   activate(): void {
@@ -240,27 +256,36 @@ export class LightBulb extends Prop implements HandSwitched {
 
 // ------------------------------------------------------------------ thruster
 
-/**
- * How fast (m/s, along its push) a thruster stops pushing: it pushes less the
- * faster it already goes that way, as a propeller does, so on its own it tops out
- * near this rather than flying off ever faster, yet it still lifts a load.
- */
-export const THRUST_TOP = 20;
-
-/** The pushes a thruster can be set to, as shares of its own (the context menu's). */
+/** The pushes a thruster can be set to, as shares of its own (the context menu's; its editor sets any between). */
 export const THRUSTS = [0.25, 0.5, 1, 2, 4];
+/** The most a thruster, a motor, a fan or a propeller can be set to, as a share of its own (see setting()). */
+export const SETTING_MAX = 4;
+
+/** A share of its own an engine's setting can be (a save's, a guest's): THRUSTS' range, or 1. */
+export function setting(v: unknown): number {
+  return typeof v === 'number' && v >= 0 && v <= SETTING_MAX ? v : 1;
+}
+
+/** An editor field for an engine's setting, as a percentage of its own. */
+export function settingField(key: string, label: string, get: () => number, set: (v: number) => void): EditField {
+  return { key, label, unit: '%', min: 0, max: SETTING_MAX * 100, step: 1, get: () => Math.round(get() * 100), set: (v) => set(Math.min(SETTING_MAX, Math.max(0, v / 100))) };
+}
 
 /**
  * Pushes along its facing while active or powered (backwards, powered through a
- * reversing switch set to reverse).
+ * reversing switch set to reverse). A rocket: it pushes as hard however fast it
+ * goes, needing no air (only the air's drag holds it back: see systems/Aero).
  */
-export class Thruster extends Prop implements HandSwitched {
+export class Thruster extends Prop implements HandSwitched, Engine {
   on = false;
   heldOff = false;
   /** Its push (N) from standing still, at the usual setting. */
   force: number;
   /** Its push as a share of the usual (see THRUSTS). */
   thrust = 1;
+  job: Job = 'auto';
+  pilotOut: number | null = null;
+  pilotT = 0;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, force: number, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
@@ -270,12 +295,30 @@ export class Thruster extends Prop implements HandSwitched {
   }
 
   get running(): boolean {
-    return (this.on || this.powered) && !this.heldOff;
+    if (this.pilotOut !== null) return this.pilotOut > 0 && this.works;
+    return (this.on || this.powered) && !this.heldOff && this.works;
   }
 
   activate(): void {
+    // (taken back from the pilot: it's its own again)
+    if (this.pilotOut !== null) {
+      this.pilotOut = null;
+      this.pilotT = 0;
+    }
     toggleRun(this, this.running, this.powered);
     this.game.sound.click(this.main.x, 0.9);
+  }
+
+  pushDir(): V2 {
+    return this.main.localDir(this.main.flip, 0);
+  }
+
+  pushForce(): number {
+    return this.force * this.thrust;
+  }
+
+  pushAt(): V2 {
+    return { x: this.main.x, y: this.main.y };
   }
 
   setPowered(on: boolean): void {
@@ -287,9 +330,9 @@ export class Thruster extends Prop implements HandSwitched {
     return !this.running;
   }
 
-  /** Pushing backwards: powered through a reversing switch set to reverse. */
+  /** Pushing backwards: powered through a reversing switch set to reverse (not under the pilot). */
   get backwards(): boolean {
-    return this.powered && this.reversed;
+    return this.pilotOut === null && this.powered && this.reversed;
   }
 
   preStep(dt: number): void {
@@ -299,8 +342,7 @@ export class Thruster extends Prop implements HandSwitched {
     if (p.frozen) return;
     const s = this.backwards ? -1 : 1;
     const f = p.localDir(p.flip * s, 0);
-    const v = p.body.linvel();
-    const push = this.force * this.thrust * Math.min(1, Math.max(0, 1 - (v.x * f.x + v.y * f.y) / THRUST_TOP));
+    const push = this.force * this.thrust * engineLevel(this, this.on);
     p.body.applyImpulse({ x: f.x * push * dt, y: f.y * push * dt }, true);
     const n = p.pixelToWorld(0, 5);
     // the blast out of the nozzle; pushing backwards, it's turned out to the
@@ -334,18 +376,31 @@ export class Thruster extends Prop implements HandSwitched {
       { label: this.running ? 'Turn off' : 'Turn on', hint: 'F', action: () => this.activate() },
       // (named by the push, not by whether it's picked: a guest's pick is found by its name)
       ...THRUSTS.map((s) => ({ label: `Thrust ${Math.round(this.force * s)} N`, checked: this.thrust === s, action: () => (this.thrust = s) })),
+      jobAction(this),
     ];
   }
 
+  /** Edit thrust… (see Controls): its push, anywhere from none to four times its own. */
+  editor(): ValueEditor {
+    return {
+      label: 'Edit thrust…',
+      title: `Edit ${this.label.toLowerCase()}`,
+      fields: [settingField('thrust', `Thrust (of ${this.force} N)`, () => this.thrust, (v) => (this.thrust = v))],
+      reset: () => (this.thrust = 1),
+      alive: () => !this.destroyed,
+    };
+  }
+
   protected serializeExtra(): Record<string, unknown> {
-    return { on: this.on, off: this.heldOff, thrust: this.thrust };
+    return { on: this.on, off: this.heldOff, thrust: this.thrust, ...pilotState(this) };
   }
 
   protected restoreExtra(x: Record<string, unknown>): void {
     this.on = !!x.on;
     this.heldOff = !!x.off;
     // (saves from before the setting push as hard as they did)
-    this.thrust = THRUSTS.includes(x.thrust as number) ? (x.thrust as number) : 1;
+    this.thrust = setting(x.thrust);
+    restorePilot(this, x);
   }
 }
 
@@ -374,13 +429,16 @@ export interface MotorConfig {
  * A housing with a powered rotor. Weld things to the rotor to spin them. Powered
  * through a reversing switch set to reverse, it turns the other way.
  */
-export class Motor extends Entity implements HandSwitched {
+export class Motor extends Machine implements HandSwitched, Engine {
   readonly housing: Part;
   readonly rotor: Part;
   private joint: RAPIER.RevoluteImpulseJoint;
   on = false;
   heldOff = false;
   dir: 1 | -1 = 1;
+  job: Job = 'auto';
+  pilotOut: number | null = null;
+  pilotT = 0;
   /** Its speed as a share of its own (see MOTOR_SPEEDS). */
   speed = 1;
   /** Its torque as a share of its own (see MOTOR_TORQUES). */
@@ -406,33 +464,63 @@ export class Motor extends Entity implements HandSwitched {
     this.joint.configureMotorModel(RAPIER.MotorModel.ForceBased);
     this.joint.setMotorMaxForce(cfg.torque);
     this.apply();
+    this.sturdy();
   }
 
   private running(): boolean {
-    return (this.on || this.powered) && !this.heldOff;
+    if (this.pilotOut !== null) return this.pilotOut !== 0 && this.works;
+    return (this.on || this.powered) && !this.heldOff && this.works;
   }
 
   canRest(): boolean {
     return !this.running();
   }
 
+  pushDir(): null {
+    return null;
+  }
+
+  pushForce(): number {
+    return this.cfg.torque * this.torque;
+  }
+
+  pushAt(): V2 {
+    return { x: this.housing.x, y: this.housing.y };
+  }
+
   private apply(): void {
     const run = this.running();
-    const dir = this.powered && this.reversed ? -this.dir : this.dir;
-    const sig = `${run}:${dir}:${this.speed}:${this.torque}`;
+    let dir: number;
+    let k: number;
+    if (this.pilotOut !== null) {
+      // under the pilot: a wheel motor (on Auto or Move) drives right for +, whichever
+      // way it faces; on a job of another kind, it runs its own way
+      const drive = this.job === 'auto' || this.job === 'move';
+      dir = Math.sign(this.pilotOut) * this.dir * (drive && this.flipped ? -1 : 1);
+      k = Math.abs(this.pilotOut);
+    } else {
+      dir = this.powered && this.reversed ? -this.dir : this.dir;
+      k = this.on ? 1 : this.powered ? this.powerLevel : 1;
+    }
+    const sig = `${run}:${dir}:${this.speed}:${this.torque}:${k}`;
     if (sig === this.applied || !this.joint.isValid()) return;
     this.applied = sig;
     const torque = this.cfg.torque * this.torque;
     this.joint.setMotorMaxForce(torque);
     // target velocity is the rotor relative to the housing; by default rotors turn
     // clockwise, so wheels drive the way the motor faces
-    if (run) this.joint.configureMotorVelocity(-this.cfg.speed * this.speed * dir * (this.flipped ? -1 : 1), torque * 0.6);
+    if (run) this.joint.configureMotorVelocity(-this.cfg.speed * this.speed * k * dir * (this.flipped ? -1 : 1), torque * 0.6);
     else this.joint.configureMotorVelocity(0, 0.02);
     this.rotor.body.wakeUp();
     this.housing.body.wakeUp();
   }
 
   activate(): void {
+    // (taken back from the pilot: it's its own again)
+    if (this.pilotOut !== null) {
+      this.pilotOut = null;
+      this.pilotT = 0;
+    }
     toggleRun(this, this.running(), this.powered);
     this.game.sound.click(this.housing.x, this.running() ? 1.0 : 0.7);
     this.apply();
@@ -474,20 +562,39 @@ export class Motor extends Entity implements HandSwitched {
           this.apply();
         },
       })),
+      jobAction(this),
     ];
   }
 
+  /** Edit motor… (see Controls): its speed and its torque, anywhere from none to four times its own. */
+  editor(): ValueEditor {
+    return {
+      label: 'Edit motor…',
+      title: `Edit ${this.label.toLowerCase()}`,
+      fields: [
+        settingField('speed', 'Speed', () => this.speed, (v) => (this.speed = v)),
+        settingField('torque', `Torque (of ${this.cfg.torque} N·m)`, () => this.torque, (v) => (this.torque = v)),
+      ],
+      reset: () => {
+        this.speed = 1;
+        this.torque = 1;
+      },
+      alive: () => !this.destroyed,
+    };
+  }
+
   protected serializeExtra(): Record<string, unknown> {
-    return { on: this.on, off: this.heldOff, dir: this.dir, speed: this.speed, torque: this.torque };
+    return { on: this.on, off: this.heldOff, dir: this.dir, speed: this.speed, torque: this.torque, ...pilotState(this) };
   }
 
   protected restoreExtra(x: Record<string, unknown>): void {
     this.on = !!x.on;
     this.heldOff = !!x.off;
     this.dir = x.dir === -1 ? -1 : 1;
-    this.speed = MOTOR_SPEEDS.includes(x.speed as number) ? (x.speed as number) : 1;
+    this.speed = setting(x.speed);
     // (saves from before the setting turn as hard as they did)
-    this.torque = MOTOR_TORQUES.includes(x.torque as number) ? (x.torque as number) : 1;
+    this.torque = setting(x.torque);
+    restorePilot(this, x);
     this.apply();
   }
 }

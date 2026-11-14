@@ -20,7 +20,7 @@ export abstract class Appliance extends Prop {
   }
 
   get running(): boolean {
-    return this.on && this.powered;
+    return this.on && this.powered && this.works;
   }
 
   canRest(): boolean {

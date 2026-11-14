@@ -14,6 +14,11 @@ const THINGS = groups(GROUP.DEBRIS, GROUP.DYNAMIC);
 /** How far an EMP generator can be set to reach (m), and how long what it hits stays out (s). */
 export const EMP_RADII = [4, 8, 12];
 export const EMP_TIMES = [3, 8, 15];
+/**
+ * Right up against it (within this share of its reach), the pulse is strong enough to
+ * fry what it reaches for good, till it's repaired (see Entity.fry()).
+ */
+const FRY_SHARE = 0.1;
 /** Seconds before it can go off again. */
 const RECHARGE = 2;
 /** Seconds its ring takes to spread out to its reach. */
@@ -50,7 +55,8 @@ function steered(e: Entity): e is Entity & Steered {
  * pulse that knocks out everything electrical within its reach for a while:
  * machines and lamps get no power and go dead (those switched on by hand are
  * switched off, and back on after), batteries and sensors give none, logic hears
- * nothing, turrets stop, and cars stall, even with someone at the keys.
+ * nothing, turrets stop, and cars stall, even with someone at the keys. What's
+ * right up against it is fried for good (see FRY_SHARE).
  */
 export class EmpGenerator extends Prop {
   radius = 8;
@@ -108,6 +114,10 @@ export class EmpGenerator extends Prop {
       if (q) game.particles.sparks(q.x, q.y, 0, 1, 3, 2);
     }
     this.until = Math.max(this.until, until);
+    const close = this.radius * FRY_SHARE + 0.25;
+    for (const e of found) {
+      if (!e.destroyed && e.parts.some((q) => !q.destroyed && Math.hypot(q.x - p.x, q.y - p.y) < close)) e.fry(false);
+    }
     C.recomputePower();
     // what was switched on by hand goes off (its own switch, so it shows), the power gone first
     for (const e of found) {

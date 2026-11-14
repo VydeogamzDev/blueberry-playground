@@ -235,6 +235,8 @@ export class RocketLauncher extends Firearm {
  * it came out of, or whoever holds that, until it's well clear of them.
  */
 export class Rocket extends Entity {
+  // (its own drag and lift: see systems/Aero)
+  ownFlight = true;
   readonly main: Part;
   private blast: ExplosionOpts;
   /** Seconds of motor burn left. */
@@ -249,6 +251,13 @@ export class Rocket extends Entity {
   firedFor: string | null = null;
   /** Where its tail was a step ago: the trail is laid along the way from there. */
   private tail: V2 | null = null;
+
+  /** The floating origin moved (see world/Origin): what it keeps of where things are in the world moves too. */
+  shifted(dx: number, dy: number): void {
+    super.shifted(dx, dy);
+    if (this.start) this.start = { x: this.start.x + dx, y: this.start.y + dy };
+    if (this.tail) this.tail = { x: this.tail.x + dx, y: this.tail.y + dy };
+  }
 
   constructor(game: Game, def: ItemDef, art: PixelArt, shapes: ShapeSpec[], density: number, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);

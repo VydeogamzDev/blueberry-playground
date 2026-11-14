@@ -8,6 +8,7 @@ import type { Part } from '../world/Part';
 import type { Entity } from '../world/Entity';
 import type { Ground } from '../world/Environment';
 import { store } from '../engine/Store';
+import { isLiving } from './Fighting';
 
 /**
  * Water that flows: a few thousand particles that keep their distance from each
@@ -159,7 +160,7 @@ export interface FluidState {
 }
 
 /** What a part is in water for the step (see float()). */
-interface Sampled {
+export interface Sampled {
   art: unknown;
   holes: number;
   /** Its solid pixels, a few px apart: body-local x, y (m). */
@@ -492,6 +493,22 @@ export class Fluid {
     this.live[i] = this.live[j];
   }
 
+  /** Everything here moved by (dx, dy): the floating origin moved (see world/Origin). */
+  shift(dx: number, dy: number): void {
+    for (let i = 0; i < this.n; i++) {
+      this.x[i] += dx;
+      this.y[i] += dy;
+      this.ox[i] += dx;
+      this.oy[i] += dy;
+    }
+    this.bx0 += dx;
+    this.bx1 += dx;
+    this.by0 += dy;
+    this.by1 += dy;
+    // (the cells are the world's: filed again)
+    this.hash();
+  }
+
   clear(): void {
     this.n = 0;
     this.drops = 0;
@@ -501,7 +518,7 @@ export class Fluid {
   private blocked(x: number, y: number): boolean {
     const g = this.game;
     if (x < WORLD.left || x > WORLD.right || y > WORLD.ceiling || (!g.env.floorless && y < WORLD.floor)) return true;
-    if (g.env.ground.length && g.env.groundPieceAt(x, y)) return true;
+    if (g.env.hasGround && g.env.groundPieceAt(x, y)) return true;
     let hit = false;
     g.physics.world.intersectionsWithPoint({ x, y }, (c) => {
       const p = g.physics.partOf(c);
@@ -673,7 +690,8 @@ export class Fluid {
     const g = this.game;
     const { x, y, ox, oy } = this;
     const floor = g.env.floorless ? -Infinity : WORLD.floor + R;
-    const ground = g.env.ground;
+    const ground = g.env.hasGround;
+    const world = g.env.world;
     for (let i = 0; i < this.n; i++) {
       if (y[i] < floor) {
         y[i] = floor;
@@ -682,10 +700,17 @@ export class Fluid {
       if (x[i] < WORLD.left + R) x[i] = WORLD.left + R;
       else if (x[i] > WORLD.right - R) x[i] = WORLD.right - R;
       if (y[i] > WORLD.ceiling - R) y[i] = WORLD.ceiling - R;
-      if (!ground.length) continue;
-      const piece = g.env.groundPieceAt(x[i], y[i]);
-      if (!piece) continue;
-      const out = outOf(piece, x[i], y[i]);
+      if (!ground) continue;
+      let out: { x: number; y: number; nx: number; ny: number };
+      if (world) {
+        // (the World's ground: a surface with nothing under it but more ground)
+        if (y[i] > world.heightAt(x[i]) + R) continue;
+        out = world.outOf(x[i], y[i]);
+      } else {
+        const piece = g.env.groundPieceAt(x[i], y[i]);
+        if (!piece) continue;
+        out = outOf(piece, x[i], y[i]);
+      }
       x[i] = out.x + out.nx * R;
       y[i] = out.y + out.ny * R;
       // (what it was going into the ground taken away, and a little of the rest)
@@ -709,7 +734,7 @@ export class Fluid {
     const g = this.game;
     const { x, y, ox, oy, head, next } = this;
     const floor = g.env.floorless ? -Infinity : WORLD.floor + R;
-    const ground = g.env.ground.length > 0;
+    const ground = g.env.hasGround;
     for (const e of g.entities) {
       if (e.destroyed) continue;
       const catcher = show ? null : (e as Entity & Partial<LiquidCatcher>).catchDrop ? (e as Entity & LiquidCatcher) : null;
@@ -945,7 +970,9 @@ export class Fluid {
         const b = p.body;
         const com = b.worldCom();
         // (something heavier than its looks, less: a head, bone, see Breath)
-        const press = p.weightless ? 0 : DENSITY * up * Math.min(1, p.buoyancy);
+        // (and something lighter than its looks, made of no lighter stuff, as much less: see floatShare())
+        const share = floatShare(p, s);
+        const press = p.weightless ? 0 : DENSITY * up * Math.min(1, p.buoyancy) * share;
         let fx = 0;
         let fy = 0;
         let tq = 0;
@@ -988,7 +1015,8 @@ export class Fluid {
         const mm = carriedMass(g, p, this.carried);
         const ux = vx + (fx / mm) * dt;
         const uy = vy + (fy / mm + g.gravity * b.gravityScale()) * dt;
-        const q = quadDrag(p, ux, uy, frac, dt, mm);
+        // (the water in its way as thick through as it is: see floatShare())
+        const q = quadDrag(p, ux, uy, frac * share, dt, mm);
         b.applyImpulse({ x: fx * dt - vx * m * k - ux * q, y: fy * dt - vy * m * k - uy * q }, true);
         b.applyTorqueImpulse(tq * dt, true);
         b.setAngvel(b.angvel() * (1 - Math.min(1, SPIN_DRAG * frac * dt)), true);
@@ -1018,8 +1046,8 @@ export class Fluid {
     return false;
   }
 
-  /** A part's solid pixels, every few, and its outline: what float() weighs against the water. */
-  private sampled(p: Part): Sampled {
+  /** A part's solid pixels, every few, and its outline: what float() (and the sea: see Water) weighs against the water. */
+  sampled(p: Part): Sampled {
     let s = this.samples.get(p);
     if (s && s.art === p.art && s.holes === p.holeCount) return s;
     const step = Math.max(1, Math.round(Math.max(p.w, p.h) / 12));
@@ -1346,6 +1374,21 @@ const B = { x: 0, y: 0 };
  * the speed it ends the step at (a light float's lift is many times its weight:
  * reckoned on its speed before, the drag could never catch up with it).
  */
+/**
+ * How much of what water would hold up by a part's looks (its solid pixels' area, at the
+ * water's DENSITY) it really does: as much as what it's made of does. Drawn bigger than
+ * its mass (a 1 kg pistol, a sword: thin front to back), it's as solid all the same, so
+ * steel sinks and a plastic syringe floats, however they're drawn. Never more than its
+ * looks (heavy insides: a tank's road wheels). Something with air in it (Part.hollow: a
+ * barrel, a float, a car's cabin) floats by its looks, and living things by their own
+ * (lungs: see Breath).
+ */
+export function floatShare(p: Part, s: Sampled): number {
+  if (p.hollow || isLiving(p.entity)) return 1;
+  const solid = s.area * (s.pts.length / 2);
+  return Math.min(1, p.mass / Math.max(1e-6, solid * p.mat.density));
+}
+
 export function quadDrag(p: Part, vx: number, vy: number, frac: number, dt: number, mass = p.mass): number {
   const s = Math.hypot(vx, vy);
   if (s < 1e-3 || mass <= 0) return 0;

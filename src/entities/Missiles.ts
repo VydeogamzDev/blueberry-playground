@@ -141,6 +141,8 @@ export function angleFor(heading: number, flipped: boolean): number {
  * going into what it hit.
  */
 export class Missile extends Entity {
+  // (its own drag and lift: see systems/Aero)
+  ownFlight = true;
   readonly main: Part;
   readonly spec: MissileSpec;
   readonly kind: MissileKind;
@@ -166,6 +168,15 @@ export class Missile extends Entity {
   /** That side, whose soldiers' bullets don't meet it (see Passing). */
   firedFor: string | null = null;
   private tail: V2 | null = null;
+
+  /** The floating origin moved (see world/Origin): what it keeps of where things are in the world moves too. */
+  shifted(dx: number, dy: number): void {
+    super.shifted(dx, dy);
+    const m = (v: V2 | null) => (v ? { x: v.x + dx, y: v.y + dy } : null);
+    this.start = m(this.start);
+    this.tail = m(this.tail);
+    if (this.guide.kind === 'target') this.guide.at = m(this.guide.at)!;
+  }
   /** Its art's size (px), and that against the standard missile's (its flame and trail go by it). */
   private readonly size: { w: number; h: number };
   private readonly scale: number;
@@ -983,6 +994,17 @@ export class SpikeLauncher extends GuidedLauncher {
   lock: Sighted | null = null;
   /** Everything in its square as of its last look, targets first, each nearest the middle first (see scan()). */
   tracked: Sighted[] = [];
+
+  /** The floating origin moved (see world/Origin): what it keeps of where things are in the world moves too. */
+  shifted(dx: number, dy: number): void {
+    super.shifted(dx, dy);
+    const seen = new Set<Sighted>();
+    for (const s of [this.sighted, this.lock, ...this.tracked]) {
+      if (!s || seen.has(s)) continue;
+      seen.add(s);
+      s.at = { x: s.at.x + dx, y: s.at.y + dy };
+    }
+  }
   /** The square the seeker looks in (rebuilt as the view's zoom changes its size in the world). */
   private box: RAPIER.Cuboid | null = null;
   /**

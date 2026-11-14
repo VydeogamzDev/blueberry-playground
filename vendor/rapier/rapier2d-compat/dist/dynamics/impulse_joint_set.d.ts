@@ -49,6 +49,14 @@ export declare class ImpulseJointSet {
      */
     bodyPairs(bodies: RigidBodySet): Float64Array;
     /**
+     * The impulses each of these joints gave in the last step, in its own frame: three
+     * numbers a joint, along its two axes and then about its turning one (NaNs for one
+     * that's gone). One call for them all.
+     *
+     * @param handles - The joints' handles.
+     */
+    impulsesOf(handles: Float64Array): Float32Array;
+    /**
      * Internal function, do not call directly.
      * @param handle
      */

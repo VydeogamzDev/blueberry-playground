@@ -237,6 +237,14 @@ class Spills {
     this.game = game;
     game.preStepHandlers.push((dt) => this.step(dt));
     game.frameHandlers.push(() => this.frame());
+    // (moved with the world when the floating origin moves: see world/Origin)
+    game.origin.listeners.push((dx, dy) => {
+      for (const s of this.list) {
+        s.x += dx;
+        s.y += dy;
+        if (s.ground) s.ground.y = s.ground.y.map((v) => v + dy);
+      }
+    });
   }
 
   /** A lit bottle broke at (x, y). */
@@ -251,7 +259,8 @@ class Spills {
       for (let i = 0; i < PATCH; i++) ys.push(g.env.groundAt(x + (i - (PATCH - 1) / 2) * PATCH_STEP, y + 0.3));
       ground = { y: ys, from: fall(y - top) + 0.1, warm: 0 };
     }
-    this.list.push({ x, y, t: 0, next: 0, window: fall(y - WORLD.floor) + SPLASH_TIME, ground, scene: g.sceneVersion });
+    // (the World's floor is far down under its ground: the drops land on that)
+    this.list.push({ x, y, t: 0, next: 0, window: fall(y - (g.map.world ? top : WORLD.floor)) + SPLASH_TIME, ground, scene: g.sceneVersion });
   }
 
   private step(dt: number): void {

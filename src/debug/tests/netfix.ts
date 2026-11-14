@@ -8,6 +8,7 @@ import type { Human } from '../../entities/Human';
 import type { Car } from '../../entities/Car';
 import type { GuidedLauncher, Missile, SpikeLauncher } from '../../entities/Missiles';
 import type { MissileCarrier } from '../../entities/M113';
+import type { Thruster } from '../../entities/Machines';
 import type { LineBatch } from '../../systems/Connections';
 import type { makeTestKit } from '../testkit';
 import type { ItemDef } from '../../world/types';
@@ -198,6 +199,46 @@ function all({ game, controls, kit, human }: TestCtx): Test[] {
         g.controls.releaseActivation();
       }
       if (!(await until(() => !m.activeHeld, 2000))) return 'the guest let go of F, the host’s M113 still has it held';
+      return true;
+    })],
+    ['extra: netfix: a guest who selects a cockpit rocket and holds W flies it in the host’s game, and it keeps its throttle when they let go', () => kit.still(async () => {
+      const g = await play();
+      kit.reset();
+      tick();
+      const C = game.connections;
+      const plank = kit.spawn('plank', 0, 0.3);
+      const l = kit.spawn('thruster', -0.75, 0.6, { angle: Math.PI / 2 }) as Thruster;
+      const r = kit.spawn('thruster', 0.75, 0.6, { angle: Math.PI / 2 }) as Thruster;
+      const cockpit = kit.spawn('cockpit', 0, 0.75);
+      kit.advance(0.3);
+      for (const e of [l, r, cockpit]) C.create('weld', plank.parts[0], { x: e.parts[0].x, y: plank.parts[0].y + 0.05 }, e.parts[0], { x: e.parts[0].x, y: plank.parts[0].y + 0.05 });
+      kit.advance(0.3);
+      const gc = await theirs(g, cockpit);
+      if (!gc) return 'the guest never got the cockpit';
+      if (!(await until(() => g.game.connections.list.filter((c) => c.kind === 'weld').length >= 3, 2000))) return 'the guest never got the welds';
+      const y0 = plank.parts[0].y;
+      // (the guest's game opened on its main menu, which has the keys while it's up: as the runner does here, it's closed)
+      (g.controls.ui as unknown as { mainMenu?: { close(): void } }).mainMenu?.close();
+      g.controls.selection = new Set([gc]);
+      g.kit.key('KeyW', true);
+      try {
+        // (the host stepped as the guest's word comes: about a second of W)
+        for (let t = 0; t < 1.2; t += 0.05) {
+          await sleep(25);
+          kit.advance(0.05);
+        }
+      } finally {
+        g.kit.key('KeyW', false);
+      }
+      if (l.pilotOut === null) return 'the host never had the guest flying it';
+      const T = l.pilotT;
+      if (T < 0.3) return `the guest's W took its throttle to only ${T.toFixed(2)}`;
+      for (let t = 0; t < 1; t += 0.05) {
+        await sleep(10);
+        kit.advance(0.05);
+      }
+      if (plank.parts[0].y - y0 < 2) return `it only climbed ${(plank.parts[0].y - y0).toFixed(1)} m`;
+      if (!l.running || Math.abs(l.pilotT - T) > 0.05) return `let go of, its throttle went from ${T.toFixed(2)} to ${l.pilotT.toFixed(2)} (running: ${l.running})`;
       return true;
     })],
     ['extra: netfix: a guest holding a Spike’s seeker locks on what’s under the guest’s cursor, sees the reticle (the host doesn’t), and letting go fires at it', () => kit.still(async () => {

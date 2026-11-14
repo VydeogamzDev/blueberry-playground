@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { sendFirst } from '../engine/Uploads';
 import { landDroplet, Liquid, LIQUID_COLORS } from './Liquids';
 import { RAPIER } from '../engine/Physics';
 import { GROUP, PX, WORLD, groups } from '../engine/constants';
@@ -192,14 +193,10 @@ class Layer {
     }
     // the first frame draws one blank particle, so the buffers go to the GPU at
     // load rather than as a hitch on the first shot or blast
-    this.geo.setDrawRange(0, this.warmed ? this.count : Math.max(1, this.count));
+    const drawn = this.warmed ? this.count : Math.max(1, this.count);
+    this.geo.setDrawRange(0, drawn);
     this.warmed = true;
-    for (const name of ['position', 'pcolor', 'psize', 'pshape']) {
-      const attr = this.geo.getAttribute(name) as THREE.BufferAttribute;
-      attr.clearUpdateRanges();
-      attr.addUpdateRange(0, this.count * attr.itemSize);
-      attr.needsUpdate = true;
-    }
+    for (const name of ['position', 'pcolor', 'psize', 'pshape']) sendFirst(this.geo.getAttribute(name) as THREE.BufferAttribute, drawn);
   }
 }
 
@@ -373,13 +370,16 @@ export class Particles {
   }
 
   /** Emits droplets of a liquid (water, acid, oil) in a fan around (dx, dy). */
-  liquid(kind: Liquid, x: number, y: number, dx: number, dy: number, amount: number, speed = 2.5, spread = 0.55, ignore: RAPIER.RigidBody | null = null): void {
+  liquid(kind: Liquid, x: number, y: number, dx: number, dy: number, amount: number, speed = 2.5, spread = 0.55, ignore: RAPIER.RigidBody | null = null, rim = 0): void {
     const n = Math.min(300, Math.round(amount));
     const shades = LIQUID_COLORS[kind];
     for (let k = 0; k < n; k++) {
       const s = speed * (0.3 + Math.random() * 0.9);
       const ang = Math.atan2(dy, dx) + (Math.random() * 2 - 1) * spread;
-      this.emit(PK.Blood, x + (Math.random() - 0.5) * PX, y + (Math.random() - 0.5) * PX, {
+      // (from `rim` m out the way it goes: a shattered flask's content from outside its own shards)
+      const ox = Math.cos(ang) * rim;
+      const oy = Math.max(WORLD.floor + PX - y, Math.sin(ang) * rim);
+      this.emit(PK.Blood, x + ox + (Math.random() - 0.5) * PX, y + oy + (Math.random() - 0.5) * PX, {
         vx: Math.cos(ang) * s,
         vy: Math.sin(ang) * s,
         life: 3,
@@ -505,7 +505,7 @@ export class Particles {
     const floor = WORLD.floor;
     const env = this.game.env;
     // (on a map with ground, bits land on whatever top of it is under them)
-    const terrain = env.ground.length > 0;
+    const terrain = env.hasGround;
     // every particle moved first, and the droplets' paths cast against the world all
     // together, so they can stain what they hit (one call into Rapier, not one each)
     let n = 0;
@@ -605,6 +605,16 @@ export class Particles {
     for (const L of [this.smokeL, this.normal, this.fireL, this.additive]) {
       L.mat.uniforms.uScale.value = s;
       L.upload();
+    }
+  }
+
+  /** Everything here moved by (dx, dy): the floating origin moved (see world/Origin). */
+  shift(dx: number, dy: number): void {
+    for (const L of [this.smokeL, this.normal, this.fireL, this.additive]) {
+      for (let i = 0; i < L.count; i++) {
+        L.x[i] += dx;
+        L.y[i] += dy;
+      }
     }
   }
 
@@ -747,6 +757,24 @@ export class Stains {
     this.head = s.head;
     if (s.n) this.markDirty(s.n - 1);
     this.saved = { version: this.version, state: s };
+  }
+
+  /**
+   * Everything moved by (dx, dy): the floating origin moved (see world/Origin). Whole
+   * metres, so each stain stays on its sprite pixel.
+   */
+  shift(dx: number, dy: number): void {
+    if (!this.n) return;
+    this.version++;
+    this.occupied.clear();
+    const pos = this.pos;
+    for (let i = 0; i < this.n; i++) {
+      pos[i * 3] += dx;
+      pos[i * 3 + 1] += dy;
+      this.occupied.set(Math.floor(pos[i * 3] / PX) * 100000 + Math.floor(pos[i * 3 + 1] / PX), i);
+    }
+    this.markDirty(0);
+    this.markDirty(this.n - 1);
   }
 
   clear(): void {

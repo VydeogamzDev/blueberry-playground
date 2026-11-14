@@ -1,6 +1,7 @@
 import { RAPIER } from '../engine/Physics';
 import { GROUP, PX, groups } from '../engine/constants';
 import { Entity } from '../world/Entity';
+import { Machine } from './Machine';
 import { Prop, type PropConfig } from './Prop';
 import { artRect } from './Item';
 import { toggleRun, type HandSwitched } from './Machines';
@@ -302,7 +303,7 @@ export class Timer extends Prop implements HandSwitched {
   }
 
   private runs(fed: boolean): boolean {
-    return (this.on || fed) && !this.heldOff;
+    return (this.on || fed) && !this.heldOff && this.works;
   }
 
   preStep(dt: number): void {
@@ -484,7 +485,7 @@ const FAR = 100;
  * A cylinder whose rod pushes out while on or powered (powered through a
  * reversing switch set to reverse, it pulls in). Weld things to its plate.
  */
-export class Piston extends Entity implements HandSwitched {
+export class Piston extends Machine implements HandSwitched {
   readonly base: Part;
   readonly rod: Part;
   on = false;
@@ -528,6 +529,7 @@ export class Piston extends Entity implements HandSwitched {
     raw.jointConfigureMotorPosition(this.side.handle, LinX, FAR, cfg.force * ROD_HOLD, cfg.force * 0.6);
     raw.jointSetMotorMaxForce(this.side.handle, LinX, cfg.force);
     this.apply();
+    this.sturdy();
   }
 
   /** Its power drives it: powered, but not turned round by a reversing switch (which pulls it in). */

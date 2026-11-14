@@ -255,7 +255,7 @@ function registerOddities(): void {
   item('balloon', 'Balloon', 'Objects',
     'A balloon full of gas: it floats up and lifts what it is tied to (tie a rope to its knot). One holds up about 20 kg: a few lift a person. It bursts at bullets, blades, fire and hard knocks. Its colour is in its menu.',
     balloon, (game, def, x, y, opts) =>
-      new Balloon(game, def, { art: balloon, material: MAT.rubber, shapes: balloonShapes, density: densityFor(0.8, balloonShapes), restitution: 0.4, angularDamping: 3 }, x, y, opts),
+      new Balloon(game, def, { art: balloon, material: MAT.rubber, shapes: balloonShapes, density: densityFor(0.8, balloonShapes), restitution: 0.4, angularDamping: 3, hollow: true }, x, y, opts),
     ['float', 'lift', 'helium', 'party', 'pop', 'air']);
   const weight = lazyArt(G.weightArt);
   // (a trapezoid; densityFor() only counts boxes, so the poly's area is added by hand)

@@ -1,7 +1,9 @@
 import { RAPIER } from '../engine/Physics';
 import { GROUP, PX, groups } from '../engine/constants';
 import { Prop, type PropConfig } from './Prop';
-import { toggleRun, type HandSwitched } from './Machines';
+import { toggleRun, setting, settingField, type HandSwitched } from './Machines';
+import { engineLevel, jobAction, pilotState, restorePilot, type Engine, type Job } from '../systems/Piloting';
+import type { ValueEditor } from '../tools/Controls';
 import { PK } from '../systems/Particles';
 import { jetEngineArt, JET_INTAKE, JET_NOZZLE } from '../art/floats';
 import type { Part } from '../world/Part';
@@ -17,8 +19,11 @@ export const JET_FORCE = 9000;
 /** How long (s) it takes to spool up from still to full, and to wind down again. */
 const SPOOL_UP = 2.5;
 const SPOOL_DOWN = 4;
-/** How fast (m/s, along its push) it no longer pushes. */
-const JET_TOP = 60;
+/**
+ * How fast (m/s, along its push) it no longer pushes: its intake can't swallow air
+ * faster than sound (the air's drag holds it back well before: see systems/Aero).
+ */
+const JET_TOP = 340;
 /** Its exhaust: how fast it leaves at full spool (m/s), how far it reaches (m), how wide it spreads (half the angle, rad). */
 const BLAST = 45;
 const BLAST_REACH = 8;
@@ -63,11 +68,16 @@ interface Caught {
  * them alight close up; its intake draws things in, and what reaches its fan
  * is torn up. Weld it to something to fly it.
  */
-export class JetEngine extends Prop implements HandSwitched {
+export class JetEngine extends Prop implements HandSwitched, Engine {
   on = false;
   heldOff = false;
   /** Its throttle, as a share of its own push (see JET_THROTTLES). */
   throttle = 1;
+  job: Job = 'auto';
+  pilotOut: number | null = null;
+  pilotT = 0;
+  /** The share of its throttle it was last run at (the pilot's, a throttle lever's: see Piloting.engineLevel()). */
+  private level = 1;
   /** How far it's spooled up (0 to 1). */
   spool = 0;
   private caught: Caught[] = [];
@@ -83,12 +93,30 @@ export class JetEngine extends Prop implements HandSwitched {
   }
 
   get running(): boolean {
-    return (this.on || this.powered) && !this.heldOff;
+    if (this.pilotOut !== null) return this.pilotOut > 0 && this.works;
+    return (this.on || this.powered) && !this.heldOff && this.works;
   }
 
   activate(): void {
+    // (taken back from the pilot: it's its own again)
+    if (this.pilotOut !== null) {
+      this.pilotOut = null;
+      this.pilotT = 0;
+    }
     toggleRun(this, this.running, this.powered);
     this.game.sound.click(this.main.x, 0.8);
+  }
+
+  pushDir(): V2 {
+    return this.forward();
+  }
+
+  pushForce(): number {
+    return JET_FORCE * this.throttle;
+  }
+
+  pushAt(): V2 {
+    return { x: this.main.x, y: this.main.y };
   }
 
   setPowered(on: boolean): void {
@@ -116,12 +144,13 @@ export class JetEngine extends Prop implements HandSwitched {
 
   /** Its push now, as a share of its full push at the usual throttle. */
   get power(): number {
-    return this.spool * this.spool * this.throttle;
+    return this.spool * this.spool * this.throttle * this.level;
   }
 
   preStep(dt: number): void {
     if (this.heldOff && !this.powered) this.heldOff = false;
     const up = this.running;
+    if (up) this.level = engineLevel(this, this.on);
     this.spool = up ? Math.min(1, this.spool + dt / SPOOL_UP) : Math.max(0, this.spool - dt / SPOOL_DOWN);
     if (this.spool === 0) {
       this.caught.length = 0;
@@ -131,8 +160,8 @@ export class JetEngine extends Prop implements HandSwitched {
     const f = this.forward();
     const k = this.power;
     if (!p.frozen && k > 0) {
-      const v = p.body.linvel();
-      const push = JET_FORCE * k * Math.min(1, Math.max(0, 1 - (v.x * f.x + v.y * f.y) / JET_TOP));
+      // it burns the air it takes in: in thin air it pushes that much less
+      const push = JET_FORCE * k * this.game.air.thinness(p.y) * Math.min(1, Math.max(0, 1 - (p.vx * f.x + p.vy * f.y) / JET_TOP));
       p.body.applyImpulse({ x: f.x * push * dt, y: f.y * push * dt }, true);
     }
     if ((this.lookT -= dt) <= 0) {
@@ -295,18 +324,32 @@ export class JetEngine extends Prop implements HandSwitched {
       { label: this.running ? 'Turn off' : 'Turn on', hint: 'F', action: () => this.activate() },
       // (named by the push, not by whether it's picked: a guest's pick is found by its name)
       ...JET_THROTTLES.map((t) => ({ label: `Throttle ${Math.round(JET_FORCE * t)} N`, checked: this.throttle === t, action: () => (this.throttle = t) })),
+      jobAction(this),
     ];
   }
 
+  /** Edit throttle… (see Controls): its push at full spool, anywhere from none to four times its own. */
+  editor(): ValueEditor {
+    return {
+      label: 'Edit throttle…',
+      title: `Edit ${this.label.toLowerCase()}`,
+      fields: [settingField('throttle', `Throttle (of ${JET_FORCE} N)`, () => this.throttle, (v) => (this.throttle = v))],
+      reset: () => (this.throttle = 1),
+      alive: () => !this.destroyed,
+    };
+  }
+
   protected serializeExtra(): Record<string, unknown> {
-    return { on: this.on, off: this.heldOff, throttle: this.throttle, spool: Math.round(this.spool * 100) / 100 };
+    return { on: this.on, off: this.heldOff, throttle: this.throttle, spool: Math.round(this.spool * 100) / 100, lv: this.level, ...pilotState(this) };
   }
 
   protected restoreExtra(x: Record<string, unknown>): void {
     this.on = !!x.on;
     this.heldOff = !!x.off;
-    this.throttle = JET_THROTTLES.includes(x.throttle as number) ? (x.throttle as number) : 1;
+    this.throttle = setting(x.throttle);
     this.spool = Math.min(1, Math.max(0, Number(x.spool) || 0));
+    this.level = typeof x.lv === 'number' && x.lv >= 0 && x.lv <= 1 ? x.lv : 1;
+    restorePilot(this, x);
   }
 }
 

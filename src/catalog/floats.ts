@@ -64,7 +64,7 @@ export function registerFloats(): void {
   Object.defineProperty(waterDef, 'halfHeight', { get: () => (water().h * PX) / 2 });
   prop('glass-tank', 'Glass Tank', 'Objects',
     'A glass tank, open at the top: fill it with water (put Water in it, or run a tap into it) and see what floats. Any size. Glass: knock it hard or shoot it and it shatters, and out comes the water.',
-    () => F.glassTankArt(), { material: GLASS, shapes: tankShapes(64, 40), density: 60, hp: 30 }, ['aquarium', 'fish tank', 'pool', 'container', 'water', 'glass'], {
+    () => F.glassTankArt(), { material: GLASS, shapes: tankShapes(64, 40), density: 60, hp: 30, hollow: true }, ['aquarium', 'fish tank', 'pool', 'container', 'water', 'glass'], {
       art: F.glassTankArt,
       cfg: (w, h) => ({ shapes: tankShapes(w, h), hp: 30 * clamp((w + h) / 104, 0.5, 4) }),
     });
@@ -81,7 +81,7 @@ export function registerFloats(): void {
     'An inflatable float. Weld or tie it to something and it keeps it afloat: one holds about 100 kg up in water. Rubber: it bursts if shot or cut.',
     tube, (game, def, x, y, opts) => {
       const shapes: ShapeSpec[] = [{ kind: 'box', w: F.TUBE_W, h: F.TUBE_H - 1, y: -0.5, r: 4 }];
-      const e = new Prop(game, def, { art: tube, material: MAT.rubber, shapes, density: densityFor(2, shapes), hp: 8, restitution: 0.4 }, x, y, opts);
+      const e = new Prop(game, def, { art: tube, material: MAT.rubber, shapes, density: densityFor(2, shapes), hp: 8, restitution: 0.4, hollow: true }, x, y, opts);
       // (it's mostly air: the water holds it up five times as hard as its size alone would)
       e.main.buoyancy = 5;
       return e;
@@ -96,11 +96,11 @@ export function registerFloats(): void {
   item('big-balloon', 'Big Balloon', 'Objects',
     'A great big balloon: one lifts a person off the ground, a handful lift a car. Tie it on with a rope to its knot, weld its knot to something, or use Tie to what’s below in its menu. It bursts at bullets, blades, fire and hard knocks.',
     bigArts.red, (game, def, x, y, opts) =>
-      new Balloon(game, def, { art: bigArts.red, material: MAT.rubber, shapes: bigShapes, density: densityFor(5, bigShapes), restitution: 0.3, angularDamping: 4 }, x, y, opts, big),
+      new Balloon(game, def, { art: bigArts.red, material: MAT.rubber, shapes: bigShapes, density: densityFor(5, bigShapes), restitution: 0.3, angularDamping: 4, hollow: true }, x, y, opts, big),
     ['float', 'lift', 'helium', 'fly', 'weather', 'pop', 'air']);
   const jet = lazyArt(() => F.jetEngineArt(0));
   item('jet-engine', 'Jet Engine', 'Machinery',
-    `Activate (or power) it and it spools up to a mighty push toward its intake: ${JET_FORCE} N, enough to fly a car. Its exhaust blows things far away and sets them alight; its intake sucks things in and tears them up. Weld it to something to fly it. Set its throttle in its menu. Crashed hard, it breaks, and its fuel goes up if it was running.`,
+    `Activate (or power) it and it spools up to a mighty push toward its intake: ${JET_FORCE} N, enough to fly a car. Its exhaust blows things far away and sets them alight; its intake sucks things in and tears them up. Weld it to something to fly it, and select that: W and S throttle, A and D move, Q and E turn. Set its throttle in its menu. It needs air: high up, it gives less, and none in space. Crashed hard, it breaks, and its fuel goes up if it was running.`,
     jet, (game, def, x, y, opts) => {
       const shapes = rects(F.JET_W, F.JET_H, [[5, 1, 39, 16], [0, 4, 6, 10]]);
       return new JetEngine(game, def, { art: jet, material: MAT.metal, shapes, density: densityFor(80, shapes), angularDamping: 0.3, hp: 400 }, x, y, opts);

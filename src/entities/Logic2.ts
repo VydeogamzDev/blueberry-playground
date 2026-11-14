@@ -1,6 +1,7 @@
 import { RAPIER } from '../engine/Physics';
 import { GROUP, PX, groups } from '../engine/constants';
 import { Entity } from '../world/Entity';
+import { Machine } from './Machine';
 import { Prop, type PropConfig } from './Prop';
 import { Appliance } from './Appliance';
 import { sideRole } from './Devices';
@@ -371,7 +372,7 @@ export class Metronome extends Prop {
   }
 
   get running(): boolean {
-    return this.on && fedOf(this);
+    return this.on && fedOf(this) && this.works;
   }
 
   activate(): void {
@@ -776,7 +777,7 @@ export interface ServoConfig {
  * angle it's set to, and back to straight out when not. Weld things to the arm
  * (or fix the housing) to build with it.
  */
-export class Servo extends Entity implements HandSwitched {
+export class Servo extends Machine implements HandSwitched {
   readonly housing: Part;
   readonly arm: Part;
   on = false;
@@ -811,6 +812,7 @@ export class Servo extends Entity implements HandSwitched {
     this.joint.configureMotorModel(RAPIER.MotorModel.ForceBased);
     this.joint.setMotorMaxForce(cfg.torque);
     this.apply();
+    this.sturdy();
   }
 
   /** Turned to its angle (powered or on by hand, and not held off, nor knocked out by an EMP). */

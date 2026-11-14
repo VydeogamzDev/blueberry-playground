@@ -4,6 +4,114 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.3.0 — 2026-11-14
+
+### Everything breaks
+- Everything that isn't alive can be broken now, not only wood and glass: crates, machines, guns,
+  launchers, the nuke's casing. Its hit points come from what it's made of and how big it is. When they
+  run out it comes apart into pieces of itself, which you can pick up, burn, weld or break again. Steel
+  tears into a few big jagged sheets, glass shatters finest where it was hit, wood splinters, and stone
+  and concrete crumble to rubble. Only the map can't be broken.
+- Vehicles come apart for real. A nuke or enough C4 tears a tank's turret off whole, sends its gun and
+  road wheels flying, and rips its hull into torn plates. A car loses its cabin from its floor, and its
+  windows burst into glass. The fuel catches and whoever was inside falls out. A burnt-out wreck stays a
+  burnt-out shell, and it can still be torn apart.
+- Rounds go through thin metal and wood, leaving a hole where they go in and where they come out, and
+  dent armour that stops them.
+- Things are crushed by weight they can't bear, weakened by heat and dripped away by enough of it.
+- Welds, hinges and pins snap under force. C4 within about 3 m snaps a weld between steel beams, and a
+  grenade only strains one. Wires, ropes and fuses are cut by rounds, blades, the chainsaw, blasts and
+  fire.
+- Machines wear out. A damaged one sputters and flickers, and a broken one stops. A shot battery shorts
+  out and can catch fire. Motors, pistons, servos and turrets break apart. An EMP generator up close fries
+  electronics for good, and so does a nuke, out to three times the reach of its blast.
+- A round sets off a landmine or anything with a lit fuse. C4 and grenades that are shot are broken into
+  pieces without going off.
+- Repair puts a broken thing back together from its pieces, wherever they've flown.
+- Hard landings and crashes hurt the whole body: a 15 m fall is survived, 22 m is a coin flip, and 30 m
+  kills.
+- Settings > Graphics > Debris sets how many pieces may lie about (40 to 500). Past that, the oldest go.
+
+### Heat and air
+- Everything has a temperature. Fire, exhausts, lasers, blasts and a nuke's flash heat things up, heat
+  spreads through what's welded together, and hot metal glows. Something heated past the point its
+  material burns at catches fire by itself.
+- Things fall through the air, with drag and lift from their own shape: a plank tilted into the wind
+  lifts, and a person falling stops speeding up at about 50 m/s.
+- No more top speeds. A thruster pushes as hard however fast it goes, a jet's push falls off with the
+  thinning air, and a propeller's falls off with its speed and the air.
+
+### Flying and driving anything
+- Anything you build with engines can be flown. Select it, or seat someone in the new Cockpit Seat, then
+  use W and S for the throttle (it stays where you leave it), A and D to move, and Q and E to turn. The
+  game works out what each engine is for (lift, moving, turning) from where it sits and which way it
+  points, and levels the craft by easing its lift engines. A readout at the top shows speed, height,
+  climb and throttle; move it with the layout editor.
+- New parts in Machinery:
+  - **Mini Thruster:** 300 N, for steering.
+  - **Hover Thruster:** holds a build at a height over the ground or water.
+  - **Gyroscope Stabiliser** and **Industrial Gyroscope:** hold a build upright, or at an angle Q and E
+    set.
+  - **Key Trigger:** works whatever it's wired to with a key (T, Y, U, I, O, P, K or L).
+  - **Cockpit Seat.**
+  - **Throttle Lever:** lets through as much power as it's pulled.
+- Thrusters, jets, propellers and motors have a thrust setting from 0 to 400% in their menus.
+- Cars and tanks speed up gradually instead of going full throttle at once. The opposite key brakes, and
+  Q and E tilt them in the air.
+- On a phone, the drive pad has turn buttons and works for any craft.
+- Guests can fly crafts too.
+
+### The World
+- A new map, World: endless both ways, with hills, mountains, mesas and valleys past flat ground at the
+  start, and endless upward too. The air thins as you climb:
+  - People are short of breath at about 800 m and pass out by about 1.3 km.
+  - The clouds and the rain stay below about 650 m. Balloons burst a little above that.
+  - Higher up, fire goes out, jets and propellers lose their push, blasts are weaker, and sound fades to
+    a dull thump.
+  - Past about 10 km it's space: black sky, stars, the curve of the planet below. Nothing slows you down
+    there, and gravity fades off the higher you go.
+- It stays smooth however far out you go. Things left more than 2 km behind every player are put away
+  and come back when someone returns.
+- Saves keep where everything is on the World, however far out. Older saves still load.
+- Guests can roam up to about 16 km from the host.
+
+### Speed
+- Drawing sends the graphics card only what changed each frame. Before, every sprite, particle, tracer
+  and wire buffer was sent whole, even when nearly empty.
+- The World's sky draws only what's in view: clouds, stars or the planet. Its ground reuses its pieces
+  as you travel. In a phone-sized test with software drawing, standing on the World went from 39 to
+  over 200 fps.
+- The first tank torn apart no longer stalls the game for a moment: tearing one apart is rehearsed
+  while the game loads.
+
+### Secrets
+- Somebody is hiding in Settings. He's built different.
+
+### Fixes
+- A broken thing loaded from a save no longer comes back damaged.
+- Big pieces of gore keep their size when loaded or sent to guests.
+- A wreck the host repairs is whole again for guests too.
+- Someone standing on a fast craft rides it. Before, a plank flown upward faster than it is thick
+  dragged their feet through it, and both were flung apart. (Inside the physics engine: a fast body was
+  checked against where the other one ends its step, not along its path.)
+- Something lying still that a blast hits is thrown. Before, it was sometimes put straight back to
+  sleep where it lay, if the game checked for things at rest just after the blast.
+- People who land a fall on their feet get up properly. Before, they could spring a metre or more back
+  into the air.
+- On a phone, the flight readout sits above the drive pad, not over the toolbar.
+- The camera keeps up with a fast craft it follows.
+- The sea (on the Sea map) holds things up by what they are made of, and they settle. Before, how
+  something floated depended on its picture's box:
+  - Guns and other thin metal things floated, held up by the empty corners around them.
+  - The explosive barrel hung half way down for ever.
+  - Light floats such as the bucket and the buoyancy tube jittered or bobbed on the surface without
+    stopping.
+
+  Now wood, plastic, rubber, and anything hollow with air in it (barrels, buckets, the glass tank,
+  cars) float and come to rest within a few seconds, lying as their weight has them. Metal, stone and
+  glass go down to the bed. Nothing stays hanging in the water. A float bobbing on the surface loses its
+  bobbing to the waves it makes, as a real one does.
+
 ## 0.2.5 — 2026-10-29
 
 ### Battles

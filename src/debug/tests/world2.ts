@@ -183,6 +183,43 @@ export default function tests({ game, kit, human }: TestCtx): Test[] {
       if (box.parts[0].y > w.level - 1) return `a metal box dropped in the sea is at y ${box.parts[0].y.toFixed(2)} (surface ${w.level})`;
       return true;
     }],
+    ['extra: world2: the Sea: by what it’s made of, everything ends afloat and still or down on the bed: nothing hangs in the water, or jitters on it', () => {
+      const SLOTS = [-144, -135, -126, -117, -108, -82, -73, -48];
+      // (a fuel drum and a buoyancy tube hung half way down or jittered on the surface, and guns floated)
+      const rounds = [
+        { float: true, ids: ['plank', 'crate', 'chair', 'barrel', 'explosive-barrel', 'bucket', 'buoyancy-tube', 'bat'] },
+        { float: false, ids: ['pistol', 'rifle', 'grenade', 'battery', 'axe', 'metal-box'] },
+      ];
+      for (const r of rounds) {
+        kit.reset();
+        const m = builtinMap('sea')!;
+        game.setMap(m);
+        const L = m.water!.level;
+        const ents = r.ids.map((id, i) => kit.spawn(id, SLOTS[i], L + 1.2));
+        kit.advance(10);
+        const vy = ents.map(() => 0);
+        const av = ents.map(() => 0);
+        for (let k = 0; k < 120; k++) {
+          kit.advance(1 / 60);
+          ents.forEach((e, i) => {
+            for (const p of e.parts) {
+              vy[i] = Math.max(vy[i], Math.abs(p.vy));
+              av[i] = Math.max(av[i], Math.abs(p.av));
+            }
+          });
+        }
+        for (let i = 0; i < ents.length; i++) {
+          const e = ents[i];
+          if (e.destroyed) return `${r.ids[i]} dropped in the sea was destroyed`;
+          const y = e.parts.reduce((a, p) => (p.mass > a.mass ? p : a)).y - L;
+          if (r.float) {
+            if (Math.abs(y) > 0.8) return `${r.ids[i]} should float, but after 12 s it's ${y.toFixed(2)} m from the surface`;
+            if (vy[i] > 0.1 || av[i] > 0.3) return `${r.ids[i]} afloat isn't still: up and down at ${vy[i].toFixed(2)} m/s, turning at ${av[i].toFixed(2)} rad/s`;
+          } else if (y > -6) return `${r.ids[i]} should sink to the bed, but after 12 s it's ${y.toFixed(2)} m from the surface`;
+        }
+      }
+      return true;
+    }],
     ['extra: world2: statistics count spawns, kills and explosions (not a scene loaded), and are kept in the store', () => {
       kit.reset();
       const st = game.stats;

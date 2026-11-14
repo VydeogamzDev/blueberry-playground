@@ -130,6 +130,8 @@ interface Hearted {
   alive: boolean;
   die(): void;
   restart(): boolean;
+  /** Nothing stops their heart (Grant). */
+  hardy?: boolean;
   inject?(drug: Drug, dose: number): void;
   limbOf(p: Part): { spec: { key: string } } | undefined;
 }
@@ -245,7 +247,7 @@ export class TeslaCoil extends Appliance {
       h.inject?.('knockout', ARC_DOSE);
       this.jolted.set(who, JOLT);
       const key = h.limbOf?.(q)?.spec.key;
-      if (key && CHEST.has(key) && h.die && h.restart && Math.random() < ARC_HEART) h.die();
+      if (key && CHEST.has(key) && h.die && h.restart && !h.hardy && Math.random() < ARC_HEART) h.die();
       // (only oil soaked into them sets the living alight)
       if (q.oil > 0.05) game.fire.ignite(q, 0.5);
     } else if ((q.mat.flammability > 0 || q.oil > 0) && Math.random() < 0.25 + q.mat.flammability * 0.5 + q.oil) {

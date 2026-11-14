@@ -31,6 +31,8 @@ interface Shockable {
   alive: boolean;
   drugs: { knockout: number };
   die(): void;
+  /** Nothing stops their heart (Grant). */
+  hardy?: boolean;
   inject(drug: Drug, dose: number): void;
   limbOf(p: Part): { spec: { key: string } } | undefined;
 }
@@ -145,7 +147,7 @@ export class LiveWater {
         if (h.drugs.knockout < KEPT_OUT) h.inject('knockout', DOSE * k);
         // (with the current through their chest, it may stop the heart)
         const chest = e.parts.some((p) => !p.destroyed && CHEST.has(h.limbOf(p)?.spec.key ?? '') && this.at(p) > 0);
-        if (chest && Math.random() < HEART * k) h.die();
+        if (chest && !h.hardy && Math.random() < HEART * k) h.die();
       }
       if (Math.random() < 0.5 * k) {
         g.particles.sparks(best.x, best.y, 0, 1, 3, 2);

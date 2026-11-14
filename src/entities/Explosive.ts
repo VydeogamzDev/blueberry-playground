@@ -208,14 +208,22 @@ export class Explosive extends Item {
 
   onBullet(hit: BulletHit): void {
     this.main.flash = 0.5;
-    if (this.blast.sensitivity === undefined) return;
+    if (this.blast.sensitivity === undefined) {
+      // a round into a pressure plate, or into black powder (its sparks), sets it off;
+      // into the rest (C4, a grenade) it only tears the casing, and torn apart it's a
+      // dud, in pieces (see Prop.damage()). Before, rounds went into these for nothing.
+      if (this.blast.pressure || this.hasFuse) {
+        if (hit.damage > 15) this.arm(0.02);
+      } else super.onBullet(hit);
+      return;
+    }
     // a bullet into what's touchy (a drum of fuel) sets it off, whatever gun it came from;
     // stray fragments and spent pellets only add up
     if (hit.damage > 15) this.arm(0.02);
     else this.hurt(hit.damage);
   }
 
-  damage(_part: Part, amount: number, kind: DamageKind, _point?: V2, _dir?: V2): void {
+  damage(part: Part, amount: number, kind: DamageKind, point?: V2, dir?: V2): void {
     if (kind === 'fire') return;
     if (kind === 'shock') {
       // a jolt of electricity (lightning) fires it, like the current down a wire to a detonator
@@ -227,7 +235,9 @@ export class Explosive extends Item {
       if (amount > 8) this.arm(Math.min(this.armed ? this.timer : 99, 0.06 + Math.random() * 0.08));
       return;
     }
+    // (what isn't touchy is hurt as a thing of its make is: smashed or cut apart, a dud)
     if (this.blast.sensitivity !== undefined) this.hurt(amount);
+    else if (!this.exploded) super.damage(part, amount, kind, point, dir);
   }
 
   private hurt(amount: number): void {

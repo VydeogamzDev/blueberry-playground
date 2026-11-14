@@ -24,6 +24,12 @@ export function makePixelTexture(canvas: HTMLCanvasElement | OffscreenCanvas): T
   return tex;
 }
 
+/** The World's sky (see BG_FRAG): its clouds' layer (true heights, m), where stars come out, and the camera's height the planet's edge shows from. */
+const CLOUDS_LO = 120;
+const CLOUDS_HI = 720;
+const STARS_FROM = 2500;
+const PLANET_FROM = 4000;
+
 const BG_FRAG = /* glsl */ `
 uniform vec2 uCam;
 uniform vec2 uRes;
@@ -37,6 +43,9 @@ uniform vec3 uTop;
 uniform vec3 uFar;
 uniform float uPanels;
 uniform float uGradH;
+// (the World's sky, SKY 4: where the floating origin is, see world/Origin. x: 0.4 of its x,
+// y and z: a twentieth of its x and y, each wrapped round SKY_WRAP m; w: its true height)
+uniform vec4 uOrigin;
 varying vec2 vUv;
 
 float lineMask(float w, float period, float thick) {
@@ -104,6 +113,87 @@ vec3 sky(vec2 sp, float fx) {
 }
 #endif
 
+#if SKY == 4
+const float SKY_WRAP = 10240.0;
+
+// a number in 0..1 for a cell, by whole-number hashing (sin() loses its digits on big inputs)
+float hashU(vec2 p) {
+  uvec2 q = uvec2(ivec2(p) + 65536);
+  uint h = (q.x * 1597334677u) ^ (q.y * 3812015801u);
+  h = h * 747796405u + 2891336453u;
+  h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
+  h = (h >> 22u) ^ h;
+  return float(h) / 4294967295.0;
+}
+
+// noise() repeating every \`period\` cells along x: drawn from x wrapped round SKY_WRAP,
+// it meets itself again where the wrap comes round, with no seam
+float noiseP(vec2 p, float period) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float i0 = mod(i.x, period);
+  float i1 = mod(i.x + 1.0, period);
+  return mix(mix(hash(vec2(i0, i.y)), hash(vec2(i1, i.y)), f.x), mix(hash(vec2(i0, i.y + 1.0)), hash(vec2(i1, i.y + 1.0)), f.x), f.y);
+}
+
+// The World's sky (SKY 4), by the true height of each pixel: pale at the ground,
+// deepening blue through the clouds (120 to 700 m), dark by a few kilometres, black
+// with stars in space; and from high up, the planet's curve under the view.
+vec3 worldSky(vec2 sp, vec2 world) {
+  float h = sp.y + uOrigin.w;
+  // the colour, in bands 8 m tall, from stops by height
+  float hq = floor(h / 8.0) * 8.0;
+  vec3 c = mix(vec3(0.66, 0.81, 0.89), vec3(0.31, 0.54, 0.75), smoothstep(0.0, 600.0, hq));
+  c = mix(c, vec3(0.12, 0.25, 0.48), smoothstep(600.0, 1800.0, hq));
+  c = mix(c, vec3(0.035, 0.065, 0.16), smoothstep(1800.0, 3800.0, hq));
+  c = mix(c, vec3(0.008, 0.01, 0.025), smoothstep(3800.0, 8000.0, hq));
+  // (x drifting by at 0.6 of the camera's speed, as the other skies' far horizon does)
+  float fx = floor(mod(world.x - uCam.x * 0.6 + uOrigin.x, SKY_WRAP) / uPx) * uPx;
+  // (each of the three below is compiled in only while the view can show it: see
+  // Renderer.worldSky(); a branch skipped costs a software renderer all the same)
+#if SKY_CLOUDS
+  // clouds: lumps of noise in two tones, in their layer
+  float band = smoothstep(${CLOUDS_LO.toFixed(1)}, 220.0, h) * (1.0 - smoothstep(520.0, ${CLOUDS_HI.toFixed(1)}, h));
+  if (band > 0.0) {
+    vec2 q = vec2(fx / 32.0, h / 9.0);
+    float n = (noiseP(q, SKY_WRAP / 32.0) * 0.65 + noiseP(vec2(q.x * 2.0, q.y * 2.3 + 7.0), SKY_WRAP / 16.0) * 0.35) * band;
+    if (n > 0.62) c = mix(c, vec3(0.97, 0.97, 0.95), 0.85);
+    else if (n > 0.56) c = mix(c, vec3(0.97, 0.97, 0.95), 0.4);
+  }
+#endif
+#if SKY_STARS
+  // stars, coming out as the air thins: a couple of screen pixels each whatever the zoom
+  // (they're as good as infinitely far), drifting by at a twentieth of the camera's speed
+  float stars = smoothstep(${STARS_FROM.toFixed(1)}, 6000.0, h);
+  if (stars > 0.0) {
+    vec2 f = mod(gl_FragCoord.xy - uCenter + (uCam * 0.05 + uOrigin.yz) * 64.0, 65536.0);
+    float s = hashU(floor(f / 2.0));
+    if (s > 0.9975) c = mix(c, vec3(0.86, 0.88, 0.96), stars * (0.35 + 0.65 * fract(s * 131.0)));
+  }
+#endif
+#if SKY_PLANET
+  // high up, the planet's edge under the view: a dark curve, its air glowing along it
+  float hc = uCam.y + uOrigin.w;
+  float vis = smoothstep(${PLANET_FROM.toFixed(1)}, 20000.0, hc);
+  if (vis > 0.0) {
+    vec2 px = gl_FragCoord.xy;
+    float R = uRes.x * mix(9.0, 1.1, smoothstep(4000.0, 80000.0, hc));
+    vec2 o = vec2(uRes.x * 0.5, uRes.y * 0.24 * vis - R);
+    float d = length(px - o) - R;
+    float rim = uRes.y * 0.012;
+    if (d < 0.0) {
+      vec2 g = floor(px / (uScale * uPx * 4.0));
+      float n = noise(g * 0.07 + 3.0);
+      c = mix(vec3(0.05, 0.11, 0.17), vec3(0.16, 0.24, 0.2), step(0.55, n));
+      c = mix(c, vec3(0.85, 0.88, 0.92), step(0.7, noise(g * 0.13 + 9.0)) * 0.6);
+    } else if (d < rim) c = mix(c, vec3(0.45, 0.7, 1.0), (1.0 - floor(d / rim * 3.0) / 3.0) * 0.8);
+  }
+#endif
+  return c;
+}
+#endif
+
 void main() {
   vec2 world = uCam + (gl_FragCoord.xy - uCenter) / uScale;
   // snap to sprite pixel grid so the backdrop reads as pixel art
@@ -116,6 +206,8 @@ void main() {
   base *= 1.0 + checker * uPanels;
   // subtle vertical gradient: darker high up
   base *= mix(1.04, 0.86, clamp(sp.y / uGradH, 0.0, 1.0));
+#elif SKY == 4
+  base = worldSky(sp, world);
 #else
   base = sky(sp, floor((world.x - uCam.x * 0.6) / uPx) * uPx);
 #endif
@@ -171,7 +263,7 @@ void main() {
 
 /** How the backdrop behind the world looks: a map's theme (see world/Environment). */
 export interface Backdrop {
-  /** 0: a hall's back wall of panels; 1: a day sky over hills; 2: a desert sky over mesas; 3: a night sky over a city. */
+  /** 0: a hall's back wall of panels; 1: a day sky over hills; 2: a desert sky over mesas; 3: a night sky over a city; 4: the World's sky, up into space. */
   sky: number;
   /** The wall's colour, or the sky's at the horizon; the sky's high up; the far horizon's (rgb 0..1). */
   base: [number, number, number];
@@ -208,6 +300,8 @@ export class Renderer {
 
   camX = 0;
   camY = 4;
+  /** Where local (0, 0) truly is (the floating origin: see world/Origin), for the World's sky. */
+  origin = { x: 0, y: 0 };
   zoom = DEFAULT_ZOOM;
   targetZoom = DEFAULT_ZOOM;
   width = 1;
@@ -220,6 +314,14 @@ export class Renderer {
   showGrid = true;
 
   private bgMat: THREE.ShaderMaterial;
+  private bgMesh: THREE.Mesh;
+  /**
+   * The World's sky (SKY 4) with only the parts the view can show compiled in, by flags
+   * (1: the clouds' layer, 2: stars, 4: the planet's edge): all of them in every pixel
+   * made it the dearest backdrop of any map, a quarter of the Lab's frame rate drawn in
+   * software. Each shares bgMat's uniforms; all are built on the way into the World.
+   */
+  private skyMats: THREE.ShaderMaterial[] = [];
   private lightMat: THREE.ShaderMaterial;
   private lightMesh: THREE.Mesh;
   private lights: Light[] = [];
@@ -245,8 +347,9 @@ export class Renderer {
     this.bgMat = new THREE.ShaderMaterial({
       vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy * 2.0, 0.999, 1.0); }`,
       fragmentShader: BG_FRAG,
-      // (the lab's hall until a map sets its own: see setBackdrop())
-      defines: { SKY: 0 },
+      // (the lab's hall until a map sets its own: see setBackdrop(); the World's sky's
+      // parts are worldSky()'s to choose)
+      defines: { SKY: 0, SKY_CLOUDS: 1, SKY_STARS: 1, SKY_PLANET: 1 },
       uniforms: {
         uCam: { value: new THREE.Vector2() },
         uRes: { value: new THREE.Vector2() },
@@ -260,6 +363,7 @@ export class Renderer {
         uFar: { value: new THREE.Vector3(0.157, 0.165, 0.176) },
         uPanels: { value: 0.018 },
         uGradH: { value: 45 },
+        uOrigin: { value: new THREE.Vector4() },
       },
       depthWrite: false,
       depthTest: false,
@@ -268,6 +372,7 @@ export class Renderer {
     bg.frustumCulled = false;
     bg.renderOrder = -1000;
     this.scene.add(bg);
+    this.bgMesh = bg;
 
     this.lightMat = new THREE.ShaderMaterial({
       vertexShader: `void main(){ gl_Position = vec4(position.xy * 2.0, 0.0, 1.0); }`,
@@ -353,6 +458,16 @@ export class Renderer {
     this.lights.push({ x, y, r: radius, i: intensity, c: color, life, max: life });
   }
 
+  /** Everything here moved by (dx, dy): the floating origin moved (see world/Origin). */
+  shift(dx: number, dy: number): void {
+    this.camX += dx;
+    this.camY += dy;
+    for (const l of this.lights) {
+      l.x += dx;
+      l.y += dy;
+    }
+  }
+
   /** A frame that isn't drawn (a hidden tab kept running): its lights come and go all the same. */
   skipFrame(dt: number): void {
     this.ageLights(dt);
@@ -385,9 +500,31 @@ export class Renderer {
     if (keepView) this.camX += (this.centerX - before) / this.zoom;
   }
 
+  /** The World's sky with these parts in it (see skyMats). */
+  private worldSky(f: number): THREE.ShaderMaterial {
+    let m = this.skyMats[f];
+    if (!m) {
+      m = this.bgMat.clone();
+      m.uniforms = this.bgMat.uniforms;
+      m.defines = { SKY: 4, SKY_CLOUDS: f & 1 ? 1 : 0, SKY_STARS: f & 2 ? 1 : 0, SKY_PLANET: f & 4 ? 1 : 0 };
+      this.skyMats[f] = m;
+    }
+    return m;
+  }
+
   /** Sets the backdrop to a map's, and the world's bounds (WORLD) that it darkens outside of. */
   setBackdrop(b: Backdrop): void {
     const u = this.bgMat.uniforms;
+    if (b.sky === 4 && !this.skyMats.length) {
+      // (all of the World's skies built now, not the first time the view goes up into the clouds)
+      const all = new THREE.Scene();
+      for (let f = 0; f < 8; f++) {
+        const m = new THREE.Mesh(UNIT_QUAD, this.worldSky(f));
+        m.frustumCulled = false;
+        all.add(m);
+      }
+      this.gl.compile(all, this.camera);
+    }
     if (this.bgMat.defines.SKY !== b.sky) {
       // (each kind of backdrop is its own shader)
       this.bgMat.defines.SKY = b.sky;
@@ -460,6 +597,17 @@ export class Renderer {
 
     const u = this.bgMat.uniforms;
     u.uCam.value.set(cx, cy);
+    if (this.bgMat.defines.SKY === 4) {
+      // (worked out in doubles, handed over small: see BG_FRAG)
+      const o = this.origin;
+      const w = (v: number) => ((v % 10240) + 10240) % 10240;
+      u.uOrigin.value.set(w(o.x * 0.4), w(o.x * 0.05), w(o.y * 0.05), o.y);
+      // (what of the sky the view can show: its true heights, a little either side)
+      const lo = cy - hh + o.y - 2;
+      const hi = cy + hh + o.y + 2;
+      const f = (hi > CLOUDS_LO && lo < CLOUDS_HI ? 1 : 0) | (hi > STARS_FROM ? 2 : 0) | (cy + o.y > PLANET_FROM ? 4 : 0);
+      this.bgMesh.material = this.worldSky(f);
+    } else this.bgMesh.material = this.bgMat;
     u.uRes.value.set(this.width * this.dpr, this.height * this.dpr);
     u.uCenter.value.set(this.centerX * this.dpr, (this.height * this.dpr) / 2);
     u.uScale.value = scale;

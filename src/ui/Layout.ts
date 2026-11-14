@@ -129,6 +129,7 @@ const PIECES: PieceSpec[] = [
   { id: 'status', name: 'Stats', sel: '.status', display: 'block', anchor: [1, 1], hide: true },
   { id: 'hint', name: 'Hints', sel: '.hint', display: 'block', anchor: [0.5, 1], shift: ['-50%', '0px'], hide: true },
   { id: 'toast', name: 'Messages', sel: '.toast', display: 'block', anchor: [0.5, 0], shift: ['-50%', '0px'], hide: true },
+  { id: 'pilot', name: 'Flight readout', sel: '.pilot-hud', display: 'flex', anchor: [0.5, 0], shift: ['-50%', '0px'], hide: true },
   { id: 'banner', name: 'Map editing bar', sel: '.map-banner', display: 'flex', anchor: [0.5, 0], shift: ['-50%', '0px'] },
   { id: 'invite', name: 'Friend invitations', sel: '.fr-invite', display: 'flex', anchor: [0.5, 0], shift: ['-50%', '0px'], hide: true },
   { id: 'touchbar', name: 'Selection bar', sel: '.touchbar:not(.buildbar)', display: 'flex', anchor: [0.5, 1], shift: ['-50%', '0px'], touch: true },
@@ -610,7 +611,10 @@ export class Layout {
       return dock === 'right' ? [1, 0] : dock === 'bottom' ? [0, 1] : [0, 0];
     }
     const at = this.cur.pieces[p.spec.id]?.at;
-    return at ? [at.ax, at.ay] : p.spec.anchor;
+    if (at) return [at.ax, at.ay];
+    // (a narrow screen's style sheet puts the flight readout low down, by its bottom: see .pilot-hud)
+    if (p.spec.id === 'pilot' && matchMedia('(max-width: 700px)').matches) return [0.5, 1];
+    return p.spec.anchor;
   }
 
   /** Whether the layout hides a piece (the toolbar never in the touch layout: it's the way to the menus there). */

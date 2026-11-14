@@ -4,6 +4,7 @@ import { Prop, WOOD_HP, type PropConfig } from '../entities/Prop';
 import { Shape, readShapeConfig } from '../entities/Shape';
 import { Bacon } from '../entities/Bacon';
 import { Gore, readGoreConfig } from '../entities/Gore';
+import { Debris, readDebrisConfig } from '../entities/Debris';
 import { baconArt } from '../art/bacon';
 import { Barrel, Bucket, BUCKET_SHAPES, DRUM_SHAPES } from '../entities/Bucket';
 import { MAT, GLASS } from '../world/Materials';
@@ -104,7 +105,7 @@ export function registerProps(): void {
     material: MAT.metal, density: 170,
   }, ['girder', 'steel', 'bar'], { art: A.beamArt });
   prop('short-beam', 'Short Beam', 'Objects', 'A short steel beam.', () => A.beamArt(48), { material: MAT.metal, density: 170 }, ['girder'], { art: A.beamArt });
-  prop('plank', 'Wooden Plank', 'Objects', 'A long wooden plank.', () => A.plankArt(64), { material: MAT.wood, hpPerKg: WOOD_HP }, ['board', 'wood'], { art: A.plankArt });
+  prop('plank', 'Wooden Plank', 'Objects', 'A long wooden plank.', () => A.plankArt(64), { material: MAT.wood, hpPerKg: WOOD_HP, depth: 0.25 }, ['board', 'wood'], { art: A.plankArt });
   prop('tire', 'Tire', 'Objects', 'A bouncy rubber tire.', A.tireArt, {
     material: MAT.rubber, shapes: [{ kind: 'ball', r: 11 }], angularDamping: 0.05,
   }, ['wheel', 'rubber']);
@@ -117,7 +118,7 @@ export function registerProps(): void {
     id: 'bucket', name: 'Bucket', category: 'Objects', tags: ['pail', 'container', 'water'],
     description: 'A metal bucket. Pour liquid in from a flask to fill it; tip it over to pour it out.',
     preview: previewOf(bucketArt), halfHeight: 0,
-    create: (game, x, y, opts) => new Bucket(game, bucket, { art: bucketArt, material: MAT.sheetMetal, density: 22, shapes: BUCKET_SHAPES }, x, y, opts),
+    create: (game, x, y, opts) => new Bucket(game, bucket, { art: bucketArt, material: MAT.sheetMetal, density: 22, shapes: BUCKET_SHAPES, hollow: true }, x, y, opts),
   });
   Object.defineProperty(bucket, 'halfHeight', { get: () => (bucketArt().h * PX) / 2 });
   // the same, bigger: a steel drum with its lid off
@@ -126,7 +127,7 @@ export function registerProps(): void {
     id: 'barrel', name: 'Barrel', category: 'Objects', tags: ['drum', 'oil', 'container', 'water'],
     description: 'A steel drum with its lid off. Pour liquid in, or hold it under in the sea, to fill it; tip it over to pour it out. Empty, it floats.',
     preview: previewOf(drumArt), halfHeight: 0,
-    create: (game, x, y, opts) => new Barrel(game, barrel, { art: drumArt, material: MAT.sheetMetal, shapes: DRUM_SHAPES }, x, y, opts),
+    create: (game, x, y, opts) => new Barrel(game, barrel, { art: drumArt, material: MAT.sheetMetal, shapes: DRUM_SHAPES, hollow: true }, x, y, opts),
   });
   Object.defineProperty(barrel, 'halfHeight', { get: () => (drumArt().h * PX) / 2 });
   prop('glass', 'Glass Pane', 'Objects', 'A fragile pane of glass. Shatters.', A.glassPaneArt, { material: GLASS, hp: 6 }, ['window'], {
@@ -146,6 +147,13 @@ export function registerProps(): void {
     id: 'gore', name: 'Gore', category: 'Objects', description: 'A piece torn off a body.', tags: ['flesh', 'meat', 'chunk', 'gib'],
     preview: previewOf(goreArt), hidden: true,
     create: (game, x, y, opts) => new Gore(game, gore, readGoreConfig(opts.config), x, y, opts),
+  });
+  // broken off something not alive (see systems/Structure; not in the toybox)
+  const debrisArt = lazyArt(() => new PixelArt(6, 4).rect(0, 0, 6, 4, 0x8c939b).rect(1, 1, 4, 2, 0x6b7178).set(5, 0, 0));
+  const debris: ItemDef = register({
+    id: 'debris', name: 'Debris', category: 'Objects', description: 'A piece broken off something: scrap, a splinter, a shard, rubble.', tags: ['scrap', 'shard', 'splinter', 'rubble', 'piece'],
+    preview: previewOf(debrisArt), hidden: true,
+    create: (game, x, y, opts) => new Debris(game, debris, readDebrisConfig(opts.config), x, y, opts),
   });
   // drawn with the Shape tool (not in the toybox)
   const shapeArt = lazyArt(() => A.materialArt(new PixelArt(16, 16).rect(0, 0, 16, 16, 0), 'wood'));

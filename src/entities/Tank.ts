@@ -447,6 +447,8 @@ export class Tank extends Car {
  * which it starts out inside the barrel of).
  */
 export class Shell extends Entity {
+  // (its own drag and lift: see systems/Aero)
+  ownFlight = true;
   readonly main: Part;
   private blast: ExplosionOpts;
   private age = 0;

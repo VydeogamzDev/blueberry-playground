@@ -174,6 +174,13 @@ export class Chainsaw extends Item {
     super.postStep(dt);
     this.cutting = this.hard = false;
     if (!this.running || this.crank > 0 || this.destroyed) return;
+    // (the chain cuts through a wire or a rope across the bar: see Connections.cutAcross())
+    if (this.game.connections.hasCords) {
+      const y = (SAW_BAR.y0 + SAW_BAR.y1) / 2;
+      const a = this.main.pixelToWorld(SAW_BAR.x0, y);
+      const b = this.main.pixelToWorld(SAW_BAR.x1, y);
+      this.game.connections.cutAcross(a.x, a.y, b.x, b.y, 1, this);
+    }
     this.tickT -= dt;
     this.kickT -= dt;
     const bite = this.tickT <= 0;

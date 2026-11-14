@@ -64,8 +64,24 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
   /** A prop the tour put out under a name (it must be there). */
   const ref = <T extends Entity = Entity>(name: string): T => {
     const e = tut().ref(name);
-    if (!e) throw new Error(`the tour put out no ${name} (at ${on()})`);
+    if (!e) throw new Error(`the tour put out no ${name} (at ${on()}${harmLog.length ? `; ${harmLog.join(' ')}` : ''})`);
     return e as T;
+  };
+  /** (debugging the medicine tour) What befell the water flasks. */
+  const harmLog: string[] = [];
+  const watchHarm = (name: string) => {
+    const e = tut().ref(name) as (Entity & { shatter?(p?: unknown): void }) | null;
+    if (!e) return;
+    const dmg = e.damage.bind(e);
+    e.damage = (p, amount, kind, ...rest) => {
+      harmLog.push(`${name} ${kind} ${amount.toFixed(1)} T${p.temp.toFixed(0)} @${game.time.toFixed(2)}`);
+      dmg(p, amount, kind, ...rest);
+    };
+    const imp = e.onImpact.bind(e);
+    e.onImpact = (info) => {
+      if (info.speed > 3 || info.otherSpeed > 3) harmLog.push(`${name} knock ${info.speed.toFixed(1)}/${info.otherSpeed.toFixed(1)} by ${info.other?.entity.def.id ?? 'floor'} ${info.otherMass.toFixed(1)}kg`);
+      imp(info);
+    };
   };
   /** What the tour has seen the player do, in a line (for what went wrong). */
   const seenNow = () =>
@@ -73,9 +89,22 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
   /** Where the tour's props are, and what the living ones are up to, in a line (for what went wrong). */
   const whereNow = () =>
     [...tut().refs].filter(([, e]) => e && !e.destroyed).map(([k, e]) => {
-      const st = e instanceof Human || e instanceof Creature ? ` ${e.state}` : '';
-      return `${k} at ${e.center().x.toFixed(1)}${st}`;
-    }).join(', ') + `, view at ${game.renderer.camX.toFixed(1)}`;
+      const it = e as Entity & { holder?: Entity | null; lodges?: unknown[] };
+      const st = e instanceof Human || e instanceof Creature
+        ? ` ${e.state}${e.alive ? '' : ' dead'}${e instanceof Human ? ` ko ${e.drugs.knockout.toFixed(0)}` : ''}`
+        : ` (${e.parts[0].a.toFixed(1)} rad${it.holder ? `, held by a ${it.holder.def.id}` : ''}${it.lodges?.length ? ', stuck in something' : ''})`;
+      const c = e.center();
+      return `${k} at ${c.x.toFixed(1)},${c.y.toFixed(2)}${st}`;
+    }).join(', ') + `, view at ${game.renderer.camX.toFixed(1)}` + nearPatient();
+  /** (debugging the medicine tour) The patient's limbs, and what else lies near them. */
+  const nearPatient = () => {
+    const h = tut().refs.get('patient');
+    if (!(h instanceof Human) || h.destroyed) return '';
+    const c = h.center();
+    const limbs = [...h.limbs.values()].filter((l) => !l.gone).map((l) => `${l.spec.key} ${l.part.x.toFixed(2)},${l.part.y.toFixed(2)}`).join(' ');
+    const near = game.entities.filter((e) => e !== h && !e.destroyed && Math.abs(e.center().x - c.x) < 1.5).map((e) => `${e.def.id}#${e.id} ${e.center().x.toFixed(2)},${e.center().y.toFixed(2)}`).join(' ');
+    return `; LIMBS ${limbs}; NEAR ${near}`;
+  };
   /** A button of the tool bar, by its tooltip's start. */
   const tb = (title: string) => {
     const b = [...document.querySelectorAll<HTMLElement>('.toolbar .tb-btn')].find((e) => (e.dataset.tutTitle ?? e.title).startsWith(title));
@@ -113,8 +142,24 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
    * half second (as a player presses F again when nothing happened: a needle that
    * met a sleeve, a defibrillator charged while it slid off) until the step moves on.
    */
+  /**
+   * Loose things lying on someone (the first-aid kit and a syringe dropped on their chest
+   * by the steps before), moved off them as a player would before pressing something else
+   * on: the syringe after them came to rest on the kit, short of the patient.
+   */
+  const clearOff = (target: Part, keep: Entity) => {
+    for (const e of game.entities) {
+      const it = e as Entity & { holder?: Entity | null; lodges?: unknown[] };
+      if (e === keep || e.destroyed || !('holder' in it) || it.holder || it.lodges?.length || e.frozen) continue;
+      const c = e.center();
+      if (Math.abs(c.x - target.x) > 0.9 || c.y < target.y - 0.1 || c.y > target.y + 1.4) continue;
+      e.translate(target.x + 2.4 - c.x, 0.6 - c.y);
+      e.setVelocity(0, 0);
+    }
+  };
   const pressOn = (e: Entity, target: Part, secs: number) => {
     const step = on();
+    clearOff(target, e);
     const c = e.center();
     e.translate(target.x - c.x, target.y + 0.9 - c.y);
     e.setVelocity(0, 0);
@@ -459,11 +504,15 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
         const lane0 = game.entities.filter((e) => e !== ride && e.center().x > ride.body.x - 2.5 && e.center().x < ride.body.x + 42)
           .map((e) => `${e.def.id}@${e.center().x.toFixed(1)},${e.center().y.toFixed(1)}${(e as Human).seat ? ' seated' : ''}${tut().props.has(e) ? ' (tour)' : ''}`).join(' ');
         live(0.3);
+        // (as a player would: once it's done rocking from them landing in it, on the bonnet where it is)
+        for (let i = 0; i < 30 && (Math.hypot(ride.body.vx, ride.body.vy) > 0.25 || Math.abs(ride.body.av) > 0.25); i++) live(0.05);
         const [hx, hy] = ride.cfg.headlight!;
-        const bn = ride.body.pixelToWorld(hx - 14, hy - 4);
+        let bn = ride.body.pixelToWorld(hx - 14, hy - 4);
         const cam0 = { x: game.renderer.camX, y: game.renderer.camY };
         kit.move(bn.x, bn.y);
         live(0.05);
+        bn = ride.body.pixelToWorld(hx - 14, hy - 4);
+        kit.move(bn.x, bn.y);
         kit.press('KeyF');
         if (!ride.driving) {
           const picked = game.pick(bn.x, bn.y, 0.05);
@@ -773,6 +822,7 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
             // the flasks smashed over the biggest flames, a second apart; a flame that
             // hangs on put out from their menu, as the step says
             'p-douse': [() => {
+              for (const k of ['water0', 'water1', 'water2']) watchHarm(k);
               const h = patient();
               const alight = () => h.parts.filter((p) => !p.destroyed && p.burning > 0);
               const before = alight().length;

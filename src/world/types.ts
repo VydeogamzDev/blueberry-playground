@@ -117,6 +117,8 @@ export interface PartState {
   paint?: string;
   /** Ignores gravity (see Part.setWeightless()). */
   weightless?: boolean;
+  /** Its temperature (°C), when it's away from the air's (see systems/Heat). */
+  temp?: number;
 }
 
 export interface EntityState {
@@ -130,6 +132,8 @@ export interface EntityState {
   links?: Record<string, unknown>;
   /** Its drawing depth, once put in front of or behind things by hand (see Entity.setDepth()). */
   z?: number;
+  /** Fried by an EMP (see Entity.fried). */
+  fried?: boolean;
   /** Which entity it was (undo's own captures only, never saved: see History). */
   uid?: number;
 }
