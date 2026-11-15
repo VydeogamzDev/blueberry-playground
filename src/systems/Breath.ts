@@ -6,7 +6,7 @@ import type { Part } from '../world/Part';
 /** The surface laps this far (m) over it: the mouth any nearer it than that is under water. */
 const LAPS = 0.03;
 /** Treading water, they keep their mouth this far (m) over the surface. */
-const ABOVE = 0.1;
+const ABOVE = 0.16;
 /** Out of the water, how long (s) a full breath takes to get back, and their strength for swimming. */
 const REFILL = 4;
 const REST = 20;

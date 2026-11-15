@@ -170,13 +170,16 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       kit.move(target.x, target.y + 0.9 - 0.75 * (i / 30));
       game.advance(1 / 60);
     }
-    e.activate();
+    // (what's there to use now: pushed against someone awake, they may have taken it into a
+    // hand, and turned to face their way it's made again; a player presses F on that one)
+    const now = () => game.successorOf(e) ?? e;
+    now().activate();
     // (until the step's done: its tick showing)
     const going = () => on() === step && !card()?.classList.contains('cheer');
     for (let i = 1; i <= secs * 60 && going(); i++) {
       kit.move(target.x, target.y + 0.15);
       game.advance(1 / 60);
-      if (i % 30 === 0 && going()) e.activate();
+      if (i % 30 === 0 && going()) now().activate();
     }
     kit.up(target.x, target.y + 0.15);
   };
@@ -377,6 +380,9 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
         const m = bottle.parts[0];
         kit.move(m.x, m.y);
         live(0.05);
+        // (pointed at again: the view may still be gliding over to it, and a still mouse drifts off it)
+        kit.move(m.x, m.y);
+        live(1 / 60);
         kit.press('KeyF');
         if (!(bottle as unknown as { lit?: boolean }).lit) {
           const sc = game.renderer.worldToScreen(m.x, m.y);

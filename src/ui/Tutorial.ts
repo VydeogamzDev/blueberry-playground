@@ -2264,8 +2264,9 @@ export const WEAPONS: TutorialStep[] = [
       targets(t, t.game.renderer.camX + 3);
     },
     done: (t) => {
-      const bow = refAs(t, 'bow', Crossbow);
-      return !!bow && bow.bolt !== 'normal' && bow.shots > t.memo.s;
+      // (as it was, if the shot broke it: an explosive bolt bursting near enough tears the bow apart too)
+      const bow = t.was('bow');
+      return bow instanceof Crossbow && bow.bolt !== 'normal' && bow.shots > t.memo.s;
     },
     target: (t) => (q('.ctx') ? null : useAt(t, t.ref('bow'))),
     allow: { menu: ['Bolts'], actions: ['activate'] },

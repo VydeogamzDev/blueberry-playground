@@ -237,8 +237,9 @@ function debrisProp(cfg: DebrisConfig): PropConfig {
   return {
     art: () => art,
     material: mat,
-    // (a few corners: it tumbles to a stop, as a broken piece does, rather than rolling off like a wheel)
-    shapes: [hullOf(art, 6)],
+    // (a few corners: it tumbles to a stop, as a broken piece does, rather than rolling off like a wheel;
+    // a tiny one, a shard or a chip, with six about as round as a pebble, rolled on and on)
+    shapes: [hullOf(art, n < 40 ? 4 : 6)],
     ownTexture: true,
     // (small, quick bits: a thin shard mustn't tunnel through the floor)
     ccd: n < 400,

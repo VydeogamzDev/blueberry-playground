@@ -8,6 +8,7 @@ import { CLEAR, type PixelArt } from '../art/PixelArt';
 import { DRUG_RAMPS } from '../art/items';
 import { GAUZE, GAUZE_COLORS, type DefibLight } from '../art/medical';
 import type { V2 } from '../engine/math';
+import type { RAPIER } from '../engine/Physics';
 import type { Part } from '../world/Part';
 import type { Game } from '../world/Game';
 import type { Entity } from '../world/Entity';
@@ -78,30 +79,43 @@ export interface Touch {
  * from whoever holds it. Limbs cut off count for nothing: the medicine has to
  * get into the body.
  */
+/** The most a scrap (a shard, a bit of gore) between a medicine and someone weighs to be pressed through to them (kg: see touches()). */
+const SCRAP_KG = 2;
+
 export function touches(item: Item): Touch[] {
   const phys = item.game.physics;
   const world = phys.world;
   const out: Touch[] = [];
-  for (const p of item.parts) {
-    if (p.destroyed) continue;
+  /** Scraps lying between it and someone (see below): pressed through, it reaches them. */
+  const scraps: Part[] = [];
+  const near = (c: RAPIER.Collider, other: RAPIER.Collider): boolean => {
+    let yes = false;
+    world.contactPair(c, other, (m) => {
+      for (let i = 0; i < m.numContacts(); i++) if (m.contactDist(i) < 0.03) yes = true;
+    });
+    return yes;
+  };
+  const reach = (p: Part, via: Part | null) => {
     const c0 = p.body.translation();
     for (const c of p.colliders) {
       world.contactPairsWith(c, (other) => {
         const op = phys.partOf(other);
         if (!op || op.destroyed || op.detached || op.entity === item || op.entity === item.holder || out.some((t) => t.part === op)) return;
         const who = asPatient(op.entity);
-        if (!who) return;
-        let near = false;
-        world.contactPair(c, other, (m) => {
-          for (let i = 0; i < m.numContacts(); i++) if (m.contactDist(i) < 0.03) near = true;
-        });
-        if (!near) return;
+        if (!who) {
+          // (a shard of glass, a scrap of gore lying on them: light and loose, it's pressed through)
+          if (!via && (op.entity.def.id === 'debris' || op.entity.def.id === 'gore') && !op.frozen && op.mass < SCRAP_KG && !scraps.includes(op) && near(c, other)) scraps.push(op);
+          return;
+        }
+        if (!near(c, other)) return;
         // (about where: the point of the limb nearest the thing)
         const pr = other.projectPoint(c0, true);
         out.push({ who, part: op, at: pr ? { x: pr.point.x, y: pr.point.y } : { x: op.x, y: op.y } });
       });
     }
-  }
+  };
+  for (const p of item.parts) if (!p.destroyed) reach(p, null);
+  if (!out.length) for (const q of scraps) reach(q, q);
   return out;
 }
 

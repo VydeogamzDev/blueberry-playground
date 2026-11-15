@@ -38,6 +38,42 @@ export function onFeet(e: Living): boolean {
   return state !== undefined ? e.alive && state === 'stand' : e.upright;
 }
 
+/** Knocked down this many times in one fight, someone's beaten (however quickly they got up each time: knocked down once, they go on). */
+export const KNOCKDOWNS = 2;
+
+/**
+ * Whether someone in a fight is beaten, watched step by step (by their foe, and
+ * by themselves): kept down long enough, or knocked down KNOCKDOWNS times. Time
+ * lying there counts toward the first, time getting up doesn't (it waits: knocked
+ * down and straight back up isn't beaten, however long a get-up takes), and back
+ * on their feet it starts again.
+ */
+export class Downs {
+  /** Seconds down since last on their feet. */
+  t = 0;
+  /** Times knocked off their feet. */
+  n = 0;
+  /** On their feet last step (null: not watched yet, so already lying when the fight began isn't a knockdown). */
+  private up: boolean | null = null;
+
+  /** Watches `e` one step more; true once they're beaten (down more than `limit` s). */
+  step(e: Living, dt: number, limit: number): boolean {
+    const feet = onFeet(e);
+    if (!feet && this.up) this.n++;
+    this.up = feet;
+    const state = (e as { state?: string }).state;
+    this.t = feet ? 0 : state === 'getup' && e.alive ? this.t : this.t + dt;
+    return this.t > limit || this.n >= KNOCKDOWNS;
+  }
+
+  /** A new fight: nothing so far counts. */
+  reset(): void {
+    this.t = 0;
+    this.n = 0;
+    this.up = null;
+  }
+}
+
 /** Where a blow is aimed: the head (the body, once that's gone). */
 export function strikePoint(foe: Entity): V2 {
   const head = foe.parts.find((p) => !p.destroyed && p.name === 'Head');

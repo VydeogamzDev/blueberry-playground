@@ -224,12 +224,18 @@ function all({ game, controls, kit, human }: TestCtx): Test[] {
       const y0 = p.y;
       g.controls.net!.send({ op: 'grab', p: [crate.netId, 0], x: x0, y: y0, ids: [] });
       g.controls.net!.send({ op: 'drag', x: x0 - 1, y: y0 + 1.5, rot: 0, snap: false });
-      await sleep(100);
-      kit.advance(1);
+      // (the host stepping as the guest's word comes: a busy machine may hold it back a while)
+      const steps = async (done: () => boolean) => {
+        for (let t = 0; t < 2 && !done(); t += 0.05) {
+          await sleep(50);
+          kit.advance(0.05);
+        }
+        kit.advance(0.5);
+      };
+      await steps(() => near(p.x, x0 - 1, 0.25) && near(p.y, y0 + 1.5, 0.25));
       if (!near(p.x, x0 - 1, 0.25) || !near(p.y, y0 + 1.5, 0.25)) return `dragged by the guest to (${(x0 - 1).toFixed(2)}, ${(y0 + 1.5).toFixed(2)}), the crate is at (${p.x.toFixed(2)}, ${p.y.toFixed(2)})`;
       g.controls.net!.send({ op: 'drop', x: x0 - 1, y: y0 + 1.5 });
-      await sleep(100);
-      kit.advance(1);
+      await steps(() => p.y < y0 + 0.2);
       if (p.y > y0 + 0.2) return `let go, the crate stayed up at y ${p.y.toFixed(2)}`;
       // deleting
       g.controls.deleteEntities([gc]);

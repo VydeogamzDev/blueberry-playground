@@ -70,6 +70,29 @@ rails and cranes, combat in the air, safety gear, places to race, and tutorials 
 - The planet seen from high up on the World map now sits low behind everything: a far-off curve of sea,
   land and cloud. It used to be a camouflage pattern across the lower quarter of the view, with blobs that
   jumped in size when you zoomed, and rockets seemed to plunge into it.
+- People who grow limbs back get up again. Before, about one in four stayed on the floor for good. The
+  old limb they cast off tangled their legs, scraps of gore lying on them counted as pinning them down,
+  and standing on a scrap left them leaning too far to count as up. Anyone who fails to get up off a heap
+  of light scraps (gore, shards) now pushes through them to the floor on the next try.
+- A syringe pushed slowly at someone goes in, even with their hand lying in the way. Before, they
+  sometimes took it out of your hand instead. Syringes, bandages and kits pressed onto someone covered in
+  glass shards or scraps of gore reach them through it.
+- A thrown Molotov smashes when it lands on a splinter or a spent case lying on the floor. It used to
+  land whole.
+- Fist fights end when one of them has really lost: knocked down twice, kept down, knocked out, or
+  worn out after a long brawl, when the one worse off sits down on the floor for a while. Before, almost
+  every knock-down ended the fight just as the one knocked down got back up. Punches are thrown a little
+  less whippily too.
+- The explosive crossbow bolt step in the weapons tutorial finishes when a shot breaks the crossbow.
+- People walking over a box climb down its far side. Before, now and then they stopped on top at the
+  edge, because the box's cut-off corner made it look as if there was no room below.
+- Someone propped up against a heap, leaning and stepping on the spot to catch it, stops and leans on
+  it. Before, they stepped there for ever and kept the whole heap from settling.
+- A helicopter rotor lifts straight up. Its lift pushed half a pixel off its middle, which twisted
+  whatever it was welded to round until it flipped over.
+- The tiniest broken bits (shards, chips) tumble to a stop instead of rolling away like pebbles.
+- People treading water keep their mouth above the waves. Before, the sea's swell washed over it every
+  second or so, even for a fresh swimmer, and cost them breath.
 
 ## 0.3.1 — 2026-11-14
 

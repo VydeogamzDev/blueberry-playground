@@ -14,7 +14,7 @@ import { getItem } from '../catalog/items';
 import { ACID_SCAR, Liquid, LIQUID_COLORS, liquidSound, paintWound, seep, woundSpot } from '../systems/Liquids';
 import { PK } from '../systems/Particles';
 import { FLESH, breakUp, blastEnergy, gibNow, sliceLimb, takeChunk } from '../systems/Chunks';
-import { isFighter, isLiving, land, onFeet, stillUp, type Fighter } from '../systems/Fighting';
+import { Downs, isFighter, isLiving, land, onFeet, stillUp, type Fighter } from '../systems/Fighting';
 import { allies, dress, dye, enemies, isTeamId, nearestEnemy, undead, type TeamId } from '../systems/Teams';
 import { LUNGS } from '../systems/Fluid';
 import { Jolt } from '../systems/Jolt';
@@ -507,8 +507,8 @@ export class Creature extends Entity {
   private lungeT = 0;
   private bit = false;
   private lungeCool = 0;
-  /** How long the foe has been down (s): long enough, and it's won. */
-  private foeDownT = 0;
+  /** The foe kept down, or knocked down, in the fight (see Downs): enough, and it's won. */
+  private foeDowns = new Downs();
   /** The side it fights for (see Teams): it goes for anyone on another, and leaves its own be (null: none). */
   team: TeamId | null = null;
   /** Until it next looks about for an enemy, on a team (s; see scan()). */
@@ -1296,7 +1296,7 @@ export class Creature extends Entity {
     this.foe = foe;
     this.goal = 'fight';
     // (a win in an earlier fight doesn't count towards this one)
-    this.foeDownT = 0;
+    this.foeDowns.reset();
     this.following = null;
     this.grazing = false;
     this.lungeCool = 0.2 + Math.random() * 0.6;
@@ -1350,8 +1350,8 @@ export class Creature extends Entity {
   private closeIn(c: Part, dt: number): number {
     const foe = this.foe;
     // (knocked down and staying down: beaten; a zombie goes on at them until they're bitten)
-    this.foeDownT = foe && isLiving(foe) && !onFeet(foe) ? this.foeDownT + dt : 0;
-    if (!foe || !stillUp(this) || (this.zombie ? foe.destroyed || !isLiving(foe) || !foe.alive || undead(foe) : !stillUp(foe) || this.foeDownT > LUNGE.beaten)) {
+    const beaten = !!foe && isLiving(foe) && this.foeDowns.step(foe, dt, LUNGE.beaten);
+    if (!foe || !stillUp(this) || (this.zombie ? foe.destroyed || !isLiving(foe) || !foe.alive || undead(foe) : !stillUp(foe) || beaten)) {
       this.stopFighting();
       return 0;
     }

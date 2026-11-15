@@ -28,6 +28,8 @@ const INJECT_TIME = 1.2;
 export const SYRINGE_STEPS = 8;
 /** How close (m) flesh has to be ahead of the needle's point for it to go in when pushed in slowly. */
 const PROBE = 0.02;
+/** How close (m) someone has to be ahead of the needle, pushed at them, for it to be an injection on its way rather than something handed to them. */
+const AIMED = 0.15;
 
 /**
  * How much faster adrenaline has someone (a person or an animal) moving and
@@ -84,7 +86,8 @@ export class Syringe extends Blade {
 
   /** Pushed into someone, it's an injection, not something handed to them. */
   offer(at?: V2): boolean {
-    if (this.lodge || this.pressed || (this.fill > 0 && this.needleAgainst())) return false;
+    // (the needle aimed at someone close by: a hand of theirs lying in the way doesn't take it)
+    if (this.lodge || this.pressed || (this.fill > 0 && this.needleAgainst(AIMED))) return false;
     return super.offer(at);
   }
 
@@ -123,21 +126,23 @@ export class Syringe extends Blade {
     return this.main.pixelToWorld(this.blade.blade[1], (this.main.h - 1) / 2);
   }
 
-  /** Flesh of someone (a person or an animal) right at the needle's point: the part it would go into. */
-  private needleAgainst(): Part | null {
+  /** Flesh of someone (a person or an animal) right at the needle's point (or as far ahead as reach, m): the part it would go into. */
+  private needleAgainst(reach = PROBE): Part | null {
     // (gone: its body is freed, and asking where it is would bring Rapier down)
     if (this.destroyed || this.main.destroyed) return null;
     const tip = this.tip();
     const f = this.forward();
-    const d = PX * 0.5 + PROBE;
     const phys = this.game.physics;
     let hit = null as Part | null;
-    phys.world.intersectionsWithPoint({ x: tip.x + f.x * d, y: tip.y + f.y * d }, (c) => {
-      const p = phys.partOf(c);
-      if (!p || p.destroyed || p.detached || !p.mat.bleeds || p.entity === this || p.entity === this.holder || !asPatient(p.entity)) return true;
-      hit = p;
-      return false;
-    });
+    // (a point every pixel along the way: nothing thinner than that lies between them)
+    for (let d = PX * 0.5 + Math.min(reach, PROBE); !hit && d <= PX * 0.5 + reach + 1e-6; d += PX) {
+      phys.world.intersectionsWithPoint({ x: tip.x + f.x * d, y: tip.y + f.y * d }, (c) => {
+        const p = phys.partOf(c);
+        if (!p || p.destroyed || p.detached || !p.mat.bleeds || p.entity === this || p.entity === this.holder || !asPatient(p.entity)) return true;
+        hit = p;
+        return false;
+      });
+    }
     return hit;
   }
 

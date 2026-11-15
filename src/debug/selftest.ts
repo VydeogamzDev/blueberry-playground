@@ -1331,7 +1331,13 @@ export function makeSelfTest(game: Game, controls: Controls) {
         t++;
       }
       const awake = parts().filter((p) => !p.body.isSleeping()).length;
-      if (awake) return `${awake} bodies still awake after 60 s`;
+      if (awake) {
+        // (what keeps it awake: the fastest things, and what the people are doing)
+        const speed = (e: Entity) => Math.max(...e.parts.filter((p) => !p.destroyed).map((p) => Math.hypot(p.body.linvel().x, p.body.linvel().y) + Math.abs(p.body.angvel()) * 0.1));
+        const fast = game.entities.filter((e) => !e.destroyed).sort((x, y) => speed(y) - speed(x)).slice(0, 4).map((e) => `${e.def.id} ${speed(e).toFixed(2)}`);
+        const people = game.entities.filter((e): e is Human => e.def.id === 'human').map((h) => { const q = h as unknown as { stumbling: boolean; propped: unknown; gaveUp: unknown; getupFails: number }; return `${h.status()}${q.stumbling ? ' stepping' : ''}${q.propped ? ' propped' : ''}${q.gaveUp ? ' gave up' : ''} fails ${q.getupFails}`; });
+        return `${awake} bodies still awake after 60 s (fastest: ${fast.join(', ')}; people: ${people.join(' / ')})`;
+      }
       // a crate dropped on it wakes it, without anything flying off
       kit.spawn('crate', 0, 4);
       let peak = 0;
@@ -2098,10 +2104,15 @@ export function makeSelfTest(game: Game, controls: Controls) {
         if (fell) return `shoved at ${dv} m/s, they fell (${h.status()})`;
         if (!stepped) return `shoved at ${dv} m/s, they never stepped to catch it`;
       }
-      // a huge one still knocks them flat
+      // a huge one still knocks them over, head to the floor (it flips them right over, and
+      // now and then all the way round onto their feet, crouched, and they're up again in 2 s:
+      // whether they went over is what counts, not whether they're still down 3 s later)
       const big = shove('upperTorso', 7);
-      kit.advance(3);
-      if (big.state === 'stand') return 'a 7 m/s shove left them standing';
+      let over = false;
+      game.advance(3, () => {
+        if (big.state === 'down' && big.limbs.get('head')!.part.y < 0.35) over = true;
+      });
+      if (!over) return `a 7 m/s shove never put them down, head to the floor (${big.status()})`;
       // picked up by the chest, carried and set down on their feet: they stand
       kit.reset();
       const h = human(0);

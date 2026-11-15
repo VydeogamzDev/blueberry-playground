@@ -112,8 +112,9 @@ export class Molotov extends Item {
   }
 
   onImpact(info: ImpactInfo): void {
-    // (a knock from something very light, a spent case, doesn't do it)
-    if (info.speed >= SHATTER_SPEED && info.otherMass > 0.3) this.shatter(info.point, info.normal);
+    // (a knock from something very light, a spent case, doesn't do it; but thrown onto a
+    // splinter or a case lying on the floor, it's the floor it smashes on)
+    if (info.speed >= SHATTER_SPEED && (info.otherMass > 0.3 || info.selfSpeed >= SHATTER_SPEED)) this.shatter(info.point, info.normal);
   }
 
   onBullet(hit: BulletHit): void {

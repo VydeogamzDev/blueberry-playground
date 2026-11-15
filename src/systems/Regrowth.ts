@@ -122,23 +122,24 @@ export function castOff<L extends RegrowLimb>(e: Entity, l: L, kind: GoreKind): 
 }
 
 /**
- * Pieces just cast off (see castOff()) don't push against what of the body they
- * lie on (a torn limb hung against it, and the new one grows where it hung):
- * they'd fly apart.
+ * Pieces just cast off (see castOff()) never push against the body they came off:
+ * a torn limb hung against it, and the new one grows where it hung (they'd fly
+ * apart), and lying about at its feet the old leg would be stood on and tangled
+ * in, and hold it down as it tried to get up.
  */
+/** What each body has cast off growing limbs back (see keepApart()). */
+const shedBy = new WeakMap<Entity, Gore[]>();
+
 export function keepApart(pieces: Gore[], e: Entity): void {
-  const phys = e.game.physics;
-  for (const g of pieces) {
+  // (what it shed before as well: a leg grows back a piece at a time, and the old foot
+  // cast off with the thigh mustn't trip the new foot grown after)
+  const all = [...(shedBy.get(e) ?? []).filter((g) => !g.destroyed && !pieces.includes(g)), ...pieces];
+  shedBy.set(e, all);
+  for (const g of all) {
     if (g.destroyed) continue;
     const q = g.main;
-    // (found first, kept apart after: Rapier can't change a collider in the middle of a query)
-    const under = new Set<Part>();
-    phys.world.intersectionsWithShape({ x: q.x, y: q.y }, q.a, g.hullShape(), (hit) => {
-      const o = phys.partOf(hit);
-      if (o && o.entity === e && !o.destroyed) under.add(o);
-      return true;
-    });
-    for (const o of under) {
+    for (const o of e.parts) {
+      if (o.destroyed) continue;
       q.noCollideWith(o);
       o.noCollideWith(q);
     }

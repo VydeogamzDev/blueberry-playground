@@ -46,9 +46,13 @@ export default function tests({ game, kit }: TestCtx): Test[] {
       // flung as hard as the blast flings whole things, no harder; then they lie about
       const fastest = Math.max(...pieces().map((d) => Math.hypot(d.main.vx, d.main.vy)));
       if (fastest > 45) return `a piece flew off at ${fastest.toFixed(0)} m/s`;
-      kit.advance(4);
-      // (on the floor: a shard flung high is still coming down)
-      const flying = pieces().filter((d) => d.main.y < 0.6 && Math.hypot(d.main.vx, d.main.vy) > 1.5);
+      // (on the floor, and a while: a shard flung high is still coming down, or only just
+      // came down and is skidding to a stop)
+      const up = new Map<Entity, number>();
+      game.advance(4, (i) => {
+        for (const d of pieces()) if (d.main.y > 0.6) up.set(d, i);
+      });
+      const flying = pieces().filter((d) => d.main.y < 0.6 && Math.hypot(d.main.vx, d.main.vy) > 1.5 && (up.get(d) ?? -Infinity) < 3 / game.stepDt);
       if (flying.length > 2) return `${flying.length} pieces still sliding or rolling along the floor after 4 s (${flying.slice(0, 4).map((d) => `${d.matName} ${Math.hypot(d.main.vx, d.main.vy).toFixed(1)} m/s ${d.main.av.toFixed(0)} rad/s`).join(', ')})`;
       return true;
     }],

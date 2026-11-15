@@ -78,7 +78,9 @@ export class HeliRotor extends Thruster {
   }
 
   pushAt(): V2 {
-    return this.main.pixelToWorld(48, 4);
+    // (on the mast, the middle of its width: half a pixel to one side, the lift twisted
+    // whatever it was on round and round until it flipped over)
+    return this.main.pixelToWorld((this.main.w - 1) / 2, 4);
   }
 
   protected thrustDir(s: number): V2 {

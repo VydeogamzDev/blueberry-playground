@@ -222,7 +222,12 @@ function all({ game, controls, kit, human }: TestCtx): Test[] {
       g.controls.selection = new Set([gc]);
       g.kit.key('KeyW', true);
       try {
-        // (the host stepped as the guest's word comes: about a second of W)
+        // (the host stepped as the guest's word comes: about a second of W, from when the
+        // host first has their W, the throttle starting up; a busy machine may hold it back a while)
+        for (let t = 0; t < 2 && !(l.pilotT > 0); t += 0.05) {
+          await sleep(25);
+          kit.advance(0.05);
+        }
         for (let t = 0; t < 1.2; t += 0.05) {
           await sleep(25);
           kit.advance(0.05);
@@ -231,6 +236,12 @@ function all({ game, controls, kit, human }: TestCtx): Test[] {
         g.kit.key('KeyW', false);
       }
       if (l.pilotOut === null) return 'the host never had the guest flying it';
+      // (where the throttle was left: once the host has their letting go, and it's stopped moving)
+      for (let t = 0, last = NaN; t < 2 && l.pilotT !== last; t += 0.05) {
+        last = l.pilotT;
+        await sleep(25);
+        kit.advance(0.05);
+      }
       const T = l.pilotT;
       if (T < 0.3) return `the guest's W took its throttle to only ${T.toFixed(2)}`;
       for (let t = 0; t < 1; t += 0.05) {

@@ -14,7 +14,7 @@ import { washBlood } from './Medical';
 import { Tendons } from '../systems/Tendons';
 import { Jolt } from '../systems/Jolt';
 import { FLESH, PLATING, breakUp, blastEnergy, gibNow, sliceLimb, takeChunk } from '../systems/Chunks';
-import { isFighter, isLiving, land, onFeet, stillUp, strikePoint, type Fighter } from '../systems/Fighting';
+import { Downs, isFighter, isLiving, land, onFeet, stillUp, strikePoint, type Fighter } from '../systems/Fighting';
 import { allies, blastClear, bombNear, dress, dye, enemies, isTeamId, isTeamMachine, lyingNear, nearestEnemy, nearestFoe, onSide, TEAMS, undead, type TeamId } from '../systems/Teams';
 import type { Passing } from './Tank';
 import type { PixelArt } from '../art/PixelArt';
@@ -107,6 +107,12 @@ const HEAD_BITE = 0.35;
 
 /** Failed attempts to stand before lying still until something changes. */
 const GIVE_UP = 4;
+/** Getting up on something uneven (see the 'getup' state): this near upright (rad), still and no better, counts as up. */
+const GETUP_UNEVEN = 0.4;
+/** Stepping to catch a lean this long (s) and getting no further (m) than this, they're propped on something (see stumbleSpeed()). */
+const PROPPED = { secs: 2.5, m: 0.2 };
+/** The least a scrap (gore, debris) lying on someone weighs (kg, all its parts on them) to count toward pinning them down (see pinned()). */
+const PIN_EACH = 4;
 /** Below this pain someone lying down stops writhing and goes still. */
 const CALM_PAIN = 0.12;
 
@@ -317,11 +323,13 @@ interface Grip {
  * (combo), and of a kick instead of a punch (kicks); how much harder the muscles work
  * throwing a punch or kick, and a swing; how fast the arms may turn to the next pose
  * (rad/s), and throwing a blow; how fast they step in winding up a swing, and step
- * back (m/s); and how long one of them stays down before they're beaten (s).
+ * back (m/s); how long one of them stays down before they're beaten (s, lying
+ * there: see Downs); and how long a fight between two people goes on before
+ * the one worse off gives up (s: see wornOut()), sitting on the floor so long (s).
  */
 const FIGHT = {
   reach: 0.62, stepOut: 0.4, shoot: 6, punch: 0.4, swing: 0.8, kick: 0.55, wind: 0.4, out: 0.3, swingWind: 0.3, swingOut: 0.5,
-  pause: 0.3, jitter: 0.6, combo: 0.35, kicks: 0.25, power: 3, swingPower: 1.5, slew: 9, slewOut: 30, lunge: 0.9, back: 0.85, beaten: 4,
+  pause: 0.3, jitter: 0.6, combo: 0.35, kicks: 0.25, power: 3, swingPower: 1.5, slew: 9, slewOut: 22, lunge: 0.9, back: 0.85, beaten: 2.5, tire: 35, sitOut: 6,
 };
 
 /**
@@ -699,10 +707,20 @@ export class Human extends Entity implements Holder {
   private fireT = 0;
   /** Backing away from a foe too near to fire a launcher at (until a metre past its blast). */
   private backOff = false;
-  /** How long the foe has been down (s): long enough, and they've won. */
-  private foeDownT = 0;
-  /** How long they've been down themselves in the fight (see FIGHT.beaten). */
-  private downT = 0;
+  /** The foe kept down, or knocked down, in the fight (see Downs): enough, and they've won. */
+  private foeDowns = new Downs();
+  /** The foe beaten, as of this step (see foeDowns). */
+  private foeBeaten = false;
+  /** How long this fight has gone on (s: see wornOut()). */
+  private fightT = 0;
+  /** Sat down on the floor, worn out, having given up a fight: for so long more (s). */
+  private sitOutT = 0;
+  /** Stepping to catch a lean since when (`t`) and from where (x of the chest): see stumbleSpeed(). */
+  private stumbleFrom: { t: number; x: number } | null = null;
+  /** Leaning on something that holds them up, which way and how far (capture point, m): see stumbleSpeed(). */
+  private propped: { dir: number; cap: number } | null = null;
+  /** Themselves kept down, or knocked down, in the fight (see Downs, FIGHT.beaten). */
+  private downs = new Downs();
   /** The arm (and leg) targets last sent in the fight, when (by `t`), and whether they're still catching up (see fightIK()). */
   private fightPose = new Map<LimbKey, number>();
   private fightPoseT = 0;
@@ -952,6 +970,44 @@ export class Human extends Entity implements Holder {
     // whoever it frees trying in turn): fewer goes, as animals on a heap get
     if (this.getupFails >= (this.amongBodies() ? 2 : GIVE_UP)) this.gaveUp = { x: this.L('upperTorso').part.x, y: this.L('upperTorso').part.y };
     this.setState('down');
+    this.shedScraps();
+  }
+
+  /**
+   * After a failed try at getting up: the scraps they're tangled in (pieces of gore,
+   * bits of debris, each too light to hold anyone down: see PIN_EACH) no longer get
+   * in their way. Lying on a heap of them, feet propped up on them or standing on two,
+   * they rolled under them and propped them up for good; pushed aside, they settle
+   * through to the floor.
+   */
+  private shedScraps(): void {
+    const world = this.game.physics.world;
+    const scraps = new Set<Entity>();
+    // (found first, let through after: Rapier can't change a collider in the middle of a query)
+    for (const l of this.order) {
+      if (l.gone || !l.attached) continue;
+      for (const c of l.part.colliders) {
+        world.contactPairsWith(c, (o) => {
+          const op = this.game.physics.partOf(o);
+          const e = op?.entity;
+          if (!e || e === this || op.frozen || (e.def.id !== 'gore' && e.def.id !== 'debris') || scraps.has(e)) return;
+          world.contactPair(c, o, (m) => {
+            if (m.numSolverContacts() > 0) scraps.add(e);
+          });
+        });
+      }
+    }
+    for (const e of scraps) {
+      const live = e.parts.filter((p) => !p.destroyed);
+      if (live.reduce((kg, p) => kg + p.mass, 0) >= PIN_EACH || (e as Entity & { holder?: unknown }).holder) continue;
+      for (const q of live) {
+        for (const p of this.parts) {
+          if (p.destroyed) continue;
+          q.noCollideWith(p);
+          p.noCollideWith(q);
+        }
+      }
+    }
   }
 
   /** Touching someone else, a person or an animal. */
@@ -1523,6 +1579,7 @@ export class Human extends Entity implements Holder {
    */
   setPose(p: PoseName | null): void {
     this.pose = p;
+    this.sitOutT = 0;
     this.stopFighting();
     this.rouse();
     if (p === 'sit' || p === 'flat') this.setState('down');
@@ -1770,7 +1827,10 @@ export class Human extends Entity implements Holder {
     if (this.t - this.pinnedAt < 0.25) return this.wasPinned;
     this.pinnedAt = this.t;
     const world = this.game.physics.world;
-    let load = 0;
+    // (by what it is: things piled on them, bricks, planks, someone lying across them, hold
+    // them down; a scatter of scraps, bits of gore or shards each light, doesn't, however
+    // many there are)
+    const loads = new Map<Entity, number>();
     for (const k of ['head', 'upperTorso', 'midTorso', 'lowerTorso'] as LimbKey[]) {
       const l = this.L(k);
       if (l.gone) continue;
@@ -1779,11 +1839,13 @@ export class Human extends Entity implements Holder {
           const op = this.game.physics.partOf(o);
           if (!op || op.entity === this || op.frozen || op.y < l.part.y) return;
           world.contactPair(c, o, (m) => {
-            if (m.numSolverContacts() > 0) load += op.mass;
+            if (m.numSolverContacts() > 0) loads.set(op.entity, (loads.get(op.entity) ?? 0) + op.mass);
           });
         });
       }
     }
+    let load = 0;
+    for (const [e, kg] of loads) if (kg >= PIN_EACH || (e.def.id !== 'gore' && e.def.id !== 'debris')) load += kg;
     this.wasPinned = load > 6;
     return this.wasPinned;
   }
@@ -1963,7 +2025,11 @@ export class Human extends Entity implements Holder {
           this.getupBest = tilt;
           this.getupProgressT = this.stateT;
         }
-        if (tilt < 0.2 && col.grounded && this.stateT > 0.5) this.setState('stand'); else if (this.stateT - this.getupProgressT > 2.5 || this.stateT > 7) {
+        // (up on their feet but on something uneven, a scrap of gore or a stone under a foot,
+        // they lean a little and can't straighten past it: nearly upright, still, and no
+        // better for a second, that's up; standing's balance takes it from there)
+        const settled = tilt < GETUP_UNEVEN && Math.abs(col.omega) < 0.5 && this.stateT > 1.5 && this.stateT - this.getupProgressT > 1 && this.grounded(true);
+        if ((tilt < 0.2 && col.grounded && this.stateT > 0.5) || settled) this.setState('stand'); else if (this.stateT - this.getupProgressT > 2.5 || this.stateT > 7) {
           this.failGetup();
         }
       }
@@ -2026,6 +2092,13 @@ export class Human extends Entity implements Holder {
         } else if (!col.grounded && !this.feetT && look && !this.lyingOn().under) {
           // on the floor with the feet up in the air: let the legs down first (once each time they go down)
           this.feetT = 1e-3;
+        } else if (this.feetT >= 1.5 && look && !this.lyingOn().under) {
+          // the legs let down and the feet still not on anything (propped on a scrap, a step,
+          // the stump of a leg grown back): try anyway, pushing up off what there is. Failing
+          // counts as any try does, so they give up in the end rather than thrash for ever
+          this.getupBest = Math.abs(col.theta);
+          this.getupProgressT = 0;
+          this.setState('getup');
         }
         if (this.feetT > 0 && this.feetT < 1.5) {
           this.feetT = Math.min(1.5, this.feetT + dt);
@@ -2053,13 +2126,29 @@ export class Human extends Entity implements Holder {
     // posed (see setPose()): lurching about, or sitting up
     if (conscious && !this.held && this.pose === 'stumble' && this.state === 'stand' && !this.climbing && !this.jumping) this.lurch(dt);
     else if (conscious && !this.held && this.pose === 'sit' && !this.seat) this.sitUp(dt);
+    // (sat out a fight they gave up: up again after a while)
+    if (this.sitOutT > 0 && (this.sitOutT -= dt) <= 0 && this.pose === 'sit') this.setPose(null);
     // fighting: knocked out (or killed), it's over for them; the punch or swing
     // under way is lost when knocked off their feet
     if (this.foe && !stillUp(this)) this.stopFighting();
-    // knocked down and kept down as long as the foe waits over them (see closeIn()):
+    // kept down as long as the foe waits over them (see closeIn()), or knocked down again and again:
     // beaten, it's over for them too (up again, they'd only go at it once more)
-    this.downT = this.foe && this.state !== 'stand' ? this.downT + dt : 0;
-    if (this.downT > FIGHT.beaten) this.stopFighting();
+    // (and the foe watched the same way, every step: stumbling or getting up themselves, a knockdown still counts)
+    const foe = this.foe;
+    if (!foe) this.downs.reset();
+    else if (this.downs.step(this, dt, FIGHT.beaten)) this.stopFighting();
+    else {
+      this.foeBeaten = isLiving(foe) && this.foeDowns.step(foe, dt, FIGHT.beaten);
+      // (won: over then and there, down or getting up themselves, before the foe's back up)
+      if (this.foeBeaten && !this.zombie) this.stopFighting();
+      else if (this.wornOut(dt)) {
+        // (and it's over for both: the other doesn't go on at someone who's given up);
+        // they've had enough, and sit down on the floor a while
+        if (foe instanceof Human && foe.foe === this) foe.stopFighting();
+        this.setPose('sit');
+        this.sitOutT = FIGHT.sitOut;
+      }
+    }
     if (this.blow) {
       if (conscious && this.state === 'stand' && !this.held && !this.climbing && !this.jumping) this.strike(dt);
       else this.blow = null;
@@ -2309,7 +2398,10 @@ export class Human extends Entity implements Holder {
     this.foe = foe;
     this.goal = 'fight';
     // (a win in an earlier fight doesn't count towards this one)
-    this.foeDownT = 0;
+    this.foeDowns.reset();
+    this.downs.reset();
+    this.foeBeaten = false;
+    this.fightT = 0;
     // (sizing each other up: they don't swing at the same moment)
     this.blowT = 0.2 + Math.random() * 0.6;
     this.shotT = 0.3 + Math.random() * 0.5;
@@ -2326,6 +2418,21 @@ export class Human extends Entity implements Holder {
   /** An enemy machine (a tank) still in the fight, and a gun in hand to shoot it with, or one they're just picking up (fists do nothing to armour). */
   private canShootAt(e: Entity): boolean {
     return !this.zombie && isTeamMachine(e) && !e.destroyed && !e.wrecked && enemies(this, e) && (this.grips.some((g) => isGun(g.item)) || (!!this.fetch && isGun(this.fetch)));
+  }
+
+  /**
+   * A long fight between two people, neither knocked out nor kept down (fists
+   * wear each other down slowly): after FIGHT.tire s the one worse off (the
+   * less awake, or the more hurt about the head) has had enough and gives up.
+   * Not on a team (soldiers fight on, and pick the next), nor for a zombie.
+   */
+  private wornOut(dt: number): boolean {
+    const foe = this.foe;
+    this.fightT += dt;
+    if (this.fightT < FIGHT.tire || this.team || this.zombie || !(foe instanceof Human) || foe.zombie || foe.foe !== this) return false;
+    const head = (h: Human) => h.L('head').part.hp / h.L('head').part.maxHp;
+    const me = this.consciousness - foe.consciousness || head(this) - head(foe);
+    return me < 0;
   }
 
   /** Leaves off fighting. */
@@ -2423,9 +2530,8 @@ export class Human extends Entity implements Holder {
     const foe = this.foe;
     this.backstep = false;
     // (knocked down and staying down: beaten)
-    this.foeDownT = foe && isLiving(foe) && !onFeet(foe) ? this.foeDownT + dt : 0;
     // (a zombie goes on at them, down or out cold, until they're dead or bitten)
-    if (!foe || !stillUp(this) || (this.zombie ? foe.destroyed || !isLiving(foe) || !foe.alive || undead(foe) : !(isLiving(foe) ? stillUp(foe) : this.canShootAt(foe)) || this.foeDownT > FIGHT.beaten)) {
+    if (!foe || !stillUp(this) || (this.zombie ? foe.destroyed || !isLiving(foe) || !foe.alive || undead(foe) : !(isLiving(foe) ? stillUp(foe) : this.canShootAt(foe)) || this.foeBeaten)) {
       this.stopFighting();
       return 0;
     }
@@ -3656,8 +3762,19 @@ export class Human extends Entity implements Holder {
     if (!land || land.part?.entity.canWalk) return false;
     const drop = land.d - 0.2;
     if (drop < 0.25 || drop > CLIMB.down) return false;
-    // room down there to stand
-    for (const h of [0.25, 0.8, 1.4]) if (this.probe(c.x + f * edge, groundY - drop + h, f, 0, x1 - edge + 0.2)) return false;
+    // room down there to stand (the box they're getting down off isn't in the way: its top
+    // corner cut off, its side below sticks out past where the edge was found, and a look
+    // along from there starts inside it; looked at again from a little further out)
+    const from = this.probe(c.x, groundY + 0.2, 0, -1, 0.4)?.part?.entity;
+    const room = (h: number): boolean => {
+      for (let out = 0; out <= 0.15; out += 0.05) {
+        const r = this.probe(c.x + f * (edge + out), groundY - drop + h, f, 0, x1 - edge - out + 0.2);
+        if (!r) return true;
+        if (!from || r.part?.entity !== from || r.d > 0.02) return false;
+      }
+      return false;
+    };
+    for (const h of [0.25, 0.8, 1.4]) if (!room(h)) return false;
     // (standing tall down there: crouched, the legs would spring them back up off the floor)
     this.climbing = { kind: 'down', t: 0, dur: 0.4 + drop * 0.45, x0: c.x, y0: c.y, x1: c.x + f * x1, y1: groundY - drop + this.variant.frame.trunkY * PX + 0.02, peak: 0.04 };
     this.startClimb();
@@ -3923,7 +4040,28 @@ export class Human extends Entity implements Holder {
     const w0 = Math.sqrt(this.pull / col.h);
     const capture = col.h * (Math.sin(col.theta) + (col.omega * Math.cos(col.theta)) / w0);
     // (once stepping, they keep at it until they've really caught it)
-    if (Math.abs(capture) < (this.stumbling ? 0.06 : 0.2)) return 0;
+    if (Math.abs(capture) < (this.stumbling ? 0.06 : 0.2)) {
+      this.propped = null;
+      return 0;
+    }
+    // stepping and stepping and getting nowhere, the lean held where it is (leant on a heap,
+    // wedged against a wall): something's holding them up. They stop and lean on it, till
+    // the lean gets worse or goes the other way (stepped on the spot, they'd shake the heap for ever)
+    const x = this.L('upperTorso').part.x;
+    const p = this.propped;
+    if (p) {
+      if (Math.sign(capture) === p.dir && Math.abs(capture) < p.cap + 0.15) return 0;
+      this.propped = null;
+    }
+    if (!this.stumbling || !this.stumbleFrom) this.stumbleFrom = { t: this.t, x };
+    else if (this.t - this.stumbleFrom.t > PROPPED.secs) {
+      if (Math.abs(x - this.stumbleFrom.x) < PROPPED.m) {
+        this.propped = { dir: Math.sign(capture), cap: Math.abs(capture) };
+        this.stumbleFrom = null;
+        return 0;
+      }
+      this.stumbleFrom = { t: this.t, x };
+    }
     // quick short steps, not strides: a running leg swings far too high to catch anything
     return Math.sign(capture) * clamp(Math.abs(capture) * 3, 0.6, GAIT.walk * 1.2);
   }
