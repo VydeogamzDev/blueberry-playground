@@ -112,6 +112,23 @@ export const WARHEADS: Record<MissileVersion, Warhead> = {
 /** What a missile's look ahead sees: anything solid. */
 const SIGHT = groups(GROUP.DEBRIS, GROUP.STATIC | GROUP.DYNAMIC);
 
+/** A heat seeker looks about every SEEK_EVERY s, as far as SEEK_RANGE m, within a cone whose edge is at this cosine off its nose (about 40°). */
+const SEEK_EVERY = 0.1;
+const SEEK_RANGE = 400;
+const SEEK_CONE = 0.76;
+
+/**
+ * How hot something looks to a heat seeker (see Missile.seekHeat()): its own say
+ * (`heatSignature()`: a lit thruster, a jet, a flare), and its parts on fire.
+ */
+export function heatOf(e: Entity): number {
+  let h = (e as { heatSignature?(): number }).heatSignature?.() ?? 0;
+  let fire = 0;
+  for (const p of e.parts) if (!p.destroyed && p.burning > 0) fire += 150;
+  h += Math.min(fire, 600);
+  return h;
+}
+
 type Phase = 'eject' | 'turn' | 'boost' | 'coast';
 const PHASES: Phase[] = ['eject', 'turn', 'boost', 'coast'];
 
@@ -168,6 +185,11 @@ export class Missile extends Entity {
   /** That side, whose soldiers' bullets don't meet it (see Passing). */
   firedFor: string | null = null;
   private tail: V2 | null = null;
+  /** Heat-seeking (an air-to-air missile's, 0.4.0): it goes after the hottest thing ahead of it, a flare over an engine (see seekHeat()). */
+  heatSeek = false;
+  /** What it won't go after (what fired it, and who flies that). */
+  ignore: Set<Entity> | null = null;
+  private seekT = 0;
 
   /** The floating origin moved (see world/Origin): what it keeps of where things are in the world moves too. */
   shifted(dx: number, dy: number): void {
@@ -266,6 +288,10 @@ export class Missile extends Entity {
     if (!this.cleared && !passing && (!this.start || this.age > 2 || Math.hypot(p.x - this.start.x, p.y - this.start.y) > CLEAR)) {
       this.cleared = true;
       p.setNoCollide(this.salvo?.others(this) ?? null);
+    }
+    if (this.heatSeek && this.phase !== 'eject' && (this.seekT -= dt) <= 0) {
+      this.seekT = SEEK_EVERY;
+      this.seekHeat();
     }
     switch (this.phase) {
       case 'eject':
@@ -399,6 +425,38 @@ export class Missile extends Entity {
     const d = Math.hypot(dx, dy);
     if (d < 0.05) return null;
     return this.avoid({ x: dx / d, y: dy / d }, d, dt);
+  }
+
+  /**
+   * A heat seeker's look ahead: the hottest thing in its cone (see heatOf()), by how hot
+   * over how far, is what it goes after now. A flare thrown out burns far hotter than an
+   * engine: in its cone, it's what the missile goes for.
+   */
+  private seekHeat(): void {
+    const p = this.main;
+    const h = this.heading();
+    const hx = Math.cos(h);
+    const hy = Math.sin(h);
+    const g = this.guide;
+    const now = g.kind === 'target' ? g.entity : null;
+    let best: Entity | null = null;
+    let bestS = 0;
+    for (const e of this.game.entities) {
+      if (e.destroyed || e === this || e instanceof Missile || this.ignore?.has(e)) continue;
+      const heat = heatOf(e);
+      if (heat <= 0) continue;
+      const c = e.center();
+      const dx = c.x - p.x;
+      const dy = c.y - p.y;
+      const d = Math.hypot(dx, dy);
+      if (d > SEEK_RANGE || d < 0.3 || (dx * hx + dy * hy) / d < SEEK_CONE) continue;
+      const s = (heat / (d + 15)) * (e === now ? 1.2 : 1);
+      if (s > bestS) {
+        bestS = s;
+        best = e;
+      }
+    }
+    if (best && best !== now) this.guide = { kind: 'target', entity: best, part: null, local: { x: 0, y: 0 }, at: best.center() };
   }
 
   /** Where its target is now (followed as it moves: made again mirrored, it's the new one it goes for). */
@@ -575,6 +633,7 @@ export class Missile extends Entity {
     const g = this.guide;
     const x: Record<string, unknown> = { phase: this.phase, t: this.t, age: this.age, burn: this.burn, guide: g.kind };
     if (this.cold) x.cold = true;
+    if (this.heatSeek) x.heat = true;
     if (g.kind === 'target') x.at = [g.at.x, g.at.y];
     if (g.kind === 'cursor' && g.by !== 1) x.by = g.by;
     if (g.kind === 'cursor' && g.off) x.off = [g.off.x, g.off.y];
@@ -584,6 +643,7 @@ export class Missile extends Entity {
   protected restoreExtra(x: Record<string, unknown>): void {
     if (typeof x.age === 'number') this.age = x.age;
     this.cold = !!x.cold;
+    this.heatSeek = x.heat === true;
     const phase = PHASES.find((k) => k === x.phase) ?? 'coast';
     this.setPhase(phase);
     if (typeof x.t === 'number') this.t = x.t;

@@ -5,6 +5,8 @@ import { SOON, type TourInfo } from './Tutorial';
 export interface TutorialsUI {
   /** Every tour, and whether the player has been through it. */
   tours(): TourInfo[];
+  /** The flying challenges, and which are met (see systems/Challenges). */
+  challenges(): { title: string; blurb: string; done: boolean }[];
   /** Starts a tour (the panel, and the main menu if it's up, out of the way first). */
   start(id: string): void;
   /** Closes the panel (letting time run again, if it was opened from the pause menu). */
@@ -67,6 +69,10 @@ export class TutorialsPanel {
       row.appendChild(go);
     }
     for (const s of SOON) this.row(s.title, s.blurb, 'coming soon', false).classList.add('soon');
+    // (0.4.0: the flying challenges, each ticked once met)
+    const ch = this.ui.challenges();
+    this.list.appendChild(el('div', 'panel-title tour-section', `Challenges (${ch.filter((c) => c.done).length}/${ch.length})`));
+    for (const c of ch) this.row(c.title, c.blurb, c.done ? 'met' : '', c.done).classList.add('challenge');
   }
 
   private row(title: string, blurb: string, time: string, done: boolean): HTMLDivElement {

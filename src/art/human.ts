@@ -31,6 +31,11 @@ export const GRANT_SKIN: Skin = {
   skin: ramp('#c08a66', 0.85), hair: ramp('#3a2a20', 1.1), shirt: ramp('#34363b', 1.1),
   pants: ramp('#33435e'), shoes: ramp('#2e2622', 1.2), belt: ramp('#2a2420', 1.1),
 };
+/** A crash dummy: yellow all over, black shorts and a belt. */
+export const DUMMY_SKIN: Skin = {
+  skin: ramp('#d9b43a', 0.9), hair: ramp('#d9b43a', 0.9), shirt: ramp('#d9b43a', 0.9),
+  pants: ramp('#2c2c30', 1.1), shoes: ramp('#2c2c30', 1.1), belt: ramp('#1c1c20', 1.1),
+};
 /** His sunglasses, and the glint on them. */
 const SHADES = 0x15161a;
 const GLINT = 0x6a7a8c;

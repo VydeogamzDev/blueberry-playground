@@ -2,7 +2,8 @@ import { RAPIER } from '../engine/Physics';
 import { GROUP, PX, groups } from '../engine/constants';
 import { Prop, type PropConfig } from './Prop';
 import { toggleRun, setting, settingField, type HandSwitched } from './Machines';
-import { engineLevel, jobAction, pilotState, restorePilot, type Engine, type Job } from '../systems/Piloting';
+import { BURN } from '../systems/Fuel';
+import { AIR_GONE, engineLevel, jobAction, pilotState, restorePilot, type Engine, type Job } from '../systems/Piloting';
 import type { ValueEditor } from '../tools/Controls';
 import { PK } from '../systems/Particles';
 import { jetEngineArt, JET_INTAKE, JET_NOZZLE } from '../art/floats';
@@ -68,6 +69,9 @@ interface Caught {
  * them alight close up; its intake draws things in, and what reaches its fan
  * is torn up. Weld it to something to fly it.
  */
+/** The afterburner: how much more it pushes, the faster it can push to, and how much more fuel it burns. */
+const AFTERBURNER = { push: 0.6, top: 0.5, fuel: 2.5 };
+
 export class JetEngine extends Prop implements HandSwitched, Engine {
   on = false;
   heldOff = false;
@@ -76,10 +80,17 @@ export class JetEngine extends Prop implements HandSwitched, Engine {
   job: Job = 'auto';
   pilotOut: number | null = null;
   pilotT = 0;
+  /** The pilot's boost key held: its afterburner lights (see AFTERBURNER). */
+  boosting = false;
   /** The share of its throttle it was last run at (the pilot's, a throttle lever's: see Piloting.engineLevel()). */
   private level = 1;
   /** How far it's spooled up (0 to 1). */
   spool = 0;
+
+  /** How hot its exhaust looks to a heat seeker (see Missiles.heatOf()): spooled up, and more on afterburner. */
+  heatSignature(): number {
+    return this.spool * 900 * (this.boosting && this.spool > 0.8 ? 2.5 : 1);
+  }
   private caught: Caught[] = [];
   private lookT = 0;
   private glow = 0;
@@ -95,6 +106,32 @@ export class JetEngine extends Prop implements HandSwitched, Engine {
   get running(): boolean {
     if (this.pilotOut !== null) return this.pilotOut > 0 && this.works;
     return (this.on || this.powered) && !this.heldOff && this.works;
+  }
+
+  /** The fuel it burns at full from its build's tanks (kg/s). */
+  burnRate(): number {
+    return JET_FORCE * this.throttle * BURN.jet;
+  }
+
+  /** Out of fuel (see systems/Fuel): it winds down till its tanks are filled. */
+  dry = false;
+
+  get stageable(): boolean {
+    return true;
+  }
+
+  /** Its stage fired: it lights (and, flown, the throttle runs it). */
+  fireStage(): void {
+    this.staged = true;
+    if (!this.running && this.pilotOut === null) {
+      this.on = true;
+      this.heldOff = false;
+    }
+  }
+
+  /** Too high to burn (see AIR_GONE): switched on, it's flamed out, and lights again lower down. */
+  get starved(): boolean {
+    return this.game.air.thinness(this.main.y) < AIR_GONE;
   }
 
   activate(): void {
@@ -149,8 +186,17 @@ export class JetEngine extends Prop implements HandSwitched, Engine {
 
   preStep(dt: number): void {
     if (this.heldOff && !this.powered) this.heldOff = false;
-    const up = this.running;
+    // (flamed out in air too thin to burn: it winds down, dark and quiet, till it's lower)
+    let up = this.running && !this.starved;
     if (up) this.level = engineLevel(this, this.on);
+    // (it burns fuel for its push: none left in its tanks, it winds down)
+    // (the afterburner: fuel sprayed into its exhaust, when it's spooled up, for more push at a lot more fuel)
+    const ab = this.boosting && this.spool > 0.8 ? 1 : 0;
+    if (up) {
+      const kg = JET_FORCE * this.power * this.game.air.thinness(this.main.y) * BURN.jet * dt * (1 + AFTERBURNER.fuel * ab);
+      this.dry = this.game.fuel.draw(this, kg) <= 0;
+      if (this.dry) up = false;
+    } else if (!this.running) this.dry = false;
     this.spool = up ? Math.min(1, this.spool + dt / SPOOL_UP) : Math.max(0, this.spool - dt / SPOOL_DOWN);
     if (this.spool === 0) {
       this.caught.length = 0;
@@ -158,10 +204,10 @@ export class JetEngine extends Prop implements HandSwitched, Engine {
     }
     const p = this.main;
     const f = this.forward();
-    const k = this.power;
+    // it burns the air it takes in: in thin air it pushes that much less, and its blast and flame are that much less
+    const k = this.power * this.game.air.thinness(p.y) * (1 + AFTERBURNER.push * ab);
     if (!p.frozen && k > 0) {
-      // it burns the air it takes in: in thin air it pushes that much less
-      const push = JET_FORCE * k * this.game.air.thinness(p.y) * Math.min(1, Math.max(0, 1 - (p.vx * f.x + p.vy * f.y) / JET_TOP));
+      const push = JET_FORCE * k * Math.min(1, Math.max(0, 1 - (p.vx * f.x + p.vy * f.y) / (JET_TOP * (1 + AFTERBURNER.top * ab))));
       p.body.applyImpulse({ x: f.x * push * dt, y: f.y * push * dt }, true);
     }
     if ((this.lookT -= dt) <= 0) {

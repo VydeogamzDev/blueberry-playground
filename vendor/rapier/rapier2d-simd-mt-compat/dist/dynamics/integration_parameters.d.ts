@@ -42,6 +42,10 @@ export declare class IntegrationParameters {
      */
     get maxCcdSubsteps(): number;
     /**
+     * The fastest (m/s, times the length unit) any body may move: faster is clamped (default: `400`).
+     */
+    get normalizedMaxLinearVelocity(): number;
+    /**
      * Strain beyond which a soft-body constraint is re-solved after the contacts inside every
      * substep, so a light body buried under heavier ones is not torn (default: `0.75`).
      */
@@ -98,4 +102,5 @@ export declare class IntegrationParameters {
      */
     set numInternalPgsIterations(value: number);
     set maxCcdSubsteps(value: number);
+    set normalizedMaxLinearVelocity(value: number);
 }

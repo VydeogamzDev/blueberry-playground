@@ -99,6 +99,19 @@ export abstract class Entity {
    * a vehicle less, as heavy as it truly is (see CarConfig.trueKg).
    */
   blastPush = 1;
+  /**
+   * Its stage (0.4.0; 0: none): flown, Enter fires the next stage of the build, lowest
+   * number first (see Piloting.stage()). An engine with a stage stays off until its
+   * stage is fired; anything else does what activating it does (a decoupler lets go,
+   * a parachute opens). Kept in saves and copies.
+   */
+  stage = 0;
+  /** Its stage has been fired. */
+  staged = false;
+  /** Can it be given a stage (its menu offers one)? Engines, decouplers, parachutes and the like. */
+  get stageable(): boolean {
+    return false;
+  }
 
   constructor(game: Game, def: ItemDef, flipped = false) {
     this.id = Entity.nextId++;
@@ -152,6 +165,11 @@ export abstract class Entity {
   postStep(_dt: number): void {}
   frame(_dt: number): void {}
   activate(): void {}
+  /** Its stage fired (see stage): by default, as if activated. */
+  fireStage(): void {
+    this.staged = true;
+    this.activate();
+  }
   setActiveHeld(on: boolean): void {
     this.activeHeld = on;
   }
@@ -455,6 +473,7 @@ export abstract class Entity {
       ...(this.config ? { config: this.config } : {}),
       ...(this.layered ? { z: this.zBase } : {}),
       ...(this.fried ? { fried: true } : {}),
+      ...(this.stage ? { stage: this.stage, ...(this.staged ? { staged: true } : {}) } : {}),
       extra: this.serializeExtra(),
     };
   }
@@ -476,6 +495,10 @@ export abstract class Entity {
   restore(s: EntityState): void {
     if (typeof s.z === 'number' && Number.isFinite(s.z)) this.setDepth(s.z);
     if (s.fried === true) this.fried = true;
+    if (typeof s.stage === 'number' && Number.isInteger(s.stage) && s.stage >= 0 && s.stage <= 9) {
+      this.stage = s.stage;
+      this.staged = s.staged === true;
+    }
     s.parts.forEach((ps, i) => {
       const p = this.parts[i];
       if (!p) return;

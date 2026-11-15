@@ -12,7 +12,7 @@ import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
 import type { V2 } from '../engine/math';
 import type { ValueEditor } from '../tools/Controls';
 import { setting, settingField } from './Machines';
-import { jobAction, pilotState, restorePilot, type Engine, type Job } from '../systems/Piloting';
+import { AIR_GONE, jobAction, pilotState, restorePilot, type Engine, type Job } from '../systems/Piloting';
 
 /** The speeds a fan or propeller can be set to, as shares of its own (the context menu's). */
 export const AIR_SPEEDS = [0.25, 0.5, 1, 1.5, 2];
@@ -359,6 +359,11 @@ export class Propeller extends Airscrew implements Engine {
 
   pushAt(): V2 {
     return { x: this.main.x, y: this.main.y };
+  }
+
+  /** Too high for its blades to bite (see AIR_GONE): it turns, but pushes nothing. */
+  get starved(): boolean {
+    return this.game.air.thinness(this.main.y) < AIR_GONE;
   }
 
   protected drive(dt: number): void {

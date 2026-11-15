@@ -20,7 +20,7 @@ function item(
   make: (game: Game, def: ItemDef, x: number, y: number, opts: SpawnOptions) => Entity, tags: string[],
 ): ItemDef {
   const def: ItemDef = {
-    id, name, category: 'Machinery', description, tags,
+    id, name, category: 'Flight', description, tags,
     preview: previewOf(art),
     create: (game, x, y, opts) => make(game, def, x, y, opts),
   };

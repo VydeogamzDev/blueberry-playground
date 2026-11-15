@@ -44,11 +44,15 @@ export class Altitude {
         if (p.y + air.base > FULL_G) {
           const lost = 1 - air.gravityAt(p.y);
           const s = b.gravityScale();
-          if (lost > 0 && s !== 0) b.applyImpulse({ x: 0, y: b.mass() * pull * s * lost * dt }, false);
+          // (0.4.0: and going round the planet fast, it falls round it: sideways at v, as much
+          // of its weight is taken back as v² / (R + h) is of gravity: orbit, as fast as that's all of it)
+          const round = (p.vx * p.vx) / (air.radius + p.y + air.base) / Math.max(0.1, pull);
+          if ((lost > 0 || round > 0) && s !== 0) b.applyImpulse({ x: 0, y: b.mass() * pull * s * (lost + round) * dt }, false);
           // and its damping, the air's settling hold on it, fading with the air (in space, nothing
           // slows it): set again only when the air's changed by DAMP_STEP of it, a call now and then
           const want = p.linDamp * air.thinness(p.y);
-          if (Math.abs(want - p.linDampNow) > DAMP_STEP * p.linDamp) {
+          // (and all the way to none: the last step under DAMP_STEP would otherwise never be taken, and orbits decayed)
+          if (Math.abs(want - p.linDampNow) > DAMP_STEP * p.linDamp || (want < 0.01 * p.linDamp && p.linDampNow !== 0)) {
             p.linDampNow = want < 0.01 * p.linDamp ? 0 : want;
             b.setLinearDamping(p.linDampNow);
           }

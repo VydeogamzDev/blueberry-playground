@@ -63,6 +63,12 @@ function ridges(x: number, seed: number): number {
   return a * a * 0.75 + b * b * 0.25;
 }
 
+/** The planet's radius (m: see Atmosphere.radius) and the way round it: go this far and the land repeats. */
+export const PLANET_R = 30000;
+export const AROUND = 2 * Math.PI * PLANET_R;
+/** The last stretch (m) before the land meets its start again, blended into it. */
+const SEAM = 3000;
+
 export class TerrainGen {
   readonly seed: number;
 
@@ -70,8 +76,23 @@ export class TerrainGen {
     this.seed = seed | 0;
   }
 
-  /** The ground's height (m) at true x (m). */
+  /**
+   * The ground's height (m) at true x (m). Round the planet it comes back to where it
+   * started (0.4.0: one orbit, AROUND m, sees the same land again), the last stretch
+   * before the seam easing into what's past it.
+   */
   heightAt(x: number): number {
+    let w = ((x % AROUND) + AROUND * 1.5) % AROUND - AROUND / 2;
+    if (w > AROUND / 2 - SEAM) {
+      const t = smoothstep(AROUND / 2 - SEAM, AROUND / 2, w);
+      return this.rawHeight(w) * (1 - t) + this.rawHeight(w - AROUND) * t;
+    }
+    if (w < -AROUND / 2) w += AROUND;
+    return this.rawHeight(w);
+  }
+
+  /** The ground's height at x along the land as it's made, before it goes round. */
+  private rawHeight(x: number): number {
     const a = Math.abs(x);
     if (a <= FLAT) return 0;
     const s = this.seed;

@@ -20,10 +20,10 @@ import type { ContextAction, ItemDef, SpawnOptions } from '../world/types';
 // left half, outputs the right half, as on the gates and the timer.
 
 /** Seconds an output that fires stays powered (a timer's tick). */
-const BLINK = 0.15;
+export const BLINK = 0.15;
 
 /** Is any of `e`'s input wires powered? */
-function fedOf(e: Entity): boolean {
+export function fedOf(e: Entity): boolean {
   const C = e.game.connections;
   return C.wiresOf(e).some(({ c }) => C.roleOf(e, c) === 'in' && C.live(c));
 }
@@ -34,7 +34,7 @@ function fedOf(e: Entity): boolean {
  * true), each counted once. A pulse that comes with power (the timer's) is the
  * power's arrival, so it's counted then.
  */
-abstract class Listener extends Prop {
+export abstract class Listener extends Prop {
   /** Its input was powered at the last look. */
   protected fedWas = false;
 

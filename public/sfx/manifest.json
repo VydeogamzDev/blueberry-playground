@@ -675,6 +675,13 @@
     "sfx/weather/thunder_3.ogg",
     "sfx/weather/thunder_4.ogg"
   ],
+  "machine/horn": [
+    "sfx/machine/horn_1.ogg",
+    "sfx/machine/horn_2.ogg"
+  ],
+  "machine/tyre_screech_loop": [
+    "sfx/machine/tyre_screech_loop_1.ogg"
+  ],
   "loops": [
     "explosion/fuse_loop",
     "fire/crackle_loop",
@@ -695,6 +702,7 @@
     "fire/flare_loop",
     "weather/rain_loop",
     "weather/wind_loop",
-    "medical/ecg_flatline_loop"
+    "medical/ecg_flatline_loop",
+    "machine/tyre_screech_loop"
   ]
 }

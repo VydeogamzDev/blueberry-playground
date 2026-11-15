@@ -26,7 +26,16 @@ export class WeldUnits {
   /** Each part's mass, inertia, center of mass, velocity and spin, while one unit is worked out. */
   private s = new Float64Array(0);
 
+  /** Each welded part's unit. */
+  private of = new Map<Part, Part[]>();
+
   constructor(private game: Game) {}
+
+  /** The welded unit `p` is part of (null: it's welded to nothing). */
+  unitOf(p: Part): Part[] | null {
+    if (this.at !== this.game.connections.version) this.refresh();
+    return this.of.get(p) ?? null;
+  }
 
   private refresh(): void {
     const C = this.game.connections;
@@ -51,6 +60,8 @@ export class WeldUnits {
       u.push(p);
     }
     this.units = [...units.values()];
+    this.of.clear();
+    for (const u of this.units) for (const p of u) this.of.set(p, u);
     const most = this.units.reduce((n, u) => Math.max(n, u.length), 0);
     if (this.s.length < most * 7) this.s = new Float64Array(most * 7);
   }

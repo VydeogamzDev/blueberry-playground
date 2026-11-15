@@ -51,7 +51,7 @@ export class EditOverlay {
     const spin = c.spinHandle();
     const group = c.arrange.groupHandle();
     const reticle = c.touchMode && c.fingerDown && !!c.toolKind;
-    const busy = handles.length || c.draft || (c.shaping && c.draft === null) || hinges.length || ct.label || ct.ends.length || ct.hover?.part ||
+    const busy = handles.length || c.draft || c.railDraft || (c.shaping && c.draft === null) || hinges.length || ct.label || ct.ends.length || ct.hover?.part ||
       ghost || guides.length || overlaps.length || spin || group || reticle || c.resizePreview();
     const g = this.g;
     if (!busy) {
@@ -178,6 +178,24 @@ export class EditOverlay {
 
     // the connection tools: the points an end can go to, a ring where it will, and what it would make
     this.drawConnecting(reticle);
+
+    // the Rails tool's track being drawn
+    const rd = c.railDraft;
+    if (rd && rd.length) {
+      const pts = rd.map(scr);
+      const end = scr({ x: c.wx, y: c.wy });
+      g.setLineDash([]);
+      g.lineCap = 'round';
+      g.lineJoin = 'round';
+      for (const [w, col] of [[5, '#2a2f35'], [2, '#c8d2da']] as const) {
+        g.lineWidth = w;
+        g.strokeStyle = col;
+        g.beginPath();
+        pts.forEach((p, i) => (i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)));
+        g.lineTo(end.x, end.y);
+        g.stroke();
+      }
+    }
 
     // the Shape tool's outline
     const d = c.draft;

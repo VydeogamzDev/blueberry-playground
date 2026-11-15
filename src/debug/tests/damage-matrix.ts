@@ -16,7 +16,8 @@ export default function tests({ game, kit }: TestCtx): Test[] {
     for (const d of ITEMS) {
       if (!d.create || d.tool || d.snapshot) continue;
       kit.reset();
-      const e = kit.spawn(d.id, 0, 1.5);
+      // (standing clear of the floor: a launch pad is 5 m tall)
+      const e = kit.spawn(d.id, 0, Math.max(1.5, (d.halfHeight ?? 0) + 0.2));
       if (!e || e.destroyed || isLiving(e) || !pick(e)) continue;
       kit.advance(0.3);
       if (e.destroyed) continue;
@@ -48,12 +49,26 @@ export default function tests({ game, kit }: TestCtx): Test[] {
       return bad.length ? `${bad.length} weren’t fried: ${bad.join(', ')}` : true;
     }],
     ['extra: damage matrix: everything in the toybox (not alive) is hurt, holed or set off by rifle rounds', () => {
-      const bad = each(() => true, (e) => {
+      // (what touches nothing, a race gate or a fuel pump set in the background, rounds go past by design)
+      const bad = each((e) => !e.parts[0].noCollideAll, (e) => {
         const p = e.parts.reduce((a, q) => (q.w * q.h > a.w * a.h ? q : a));
         const sum = () => e.parts.reduce((s, q) => s + (q.destroyed ? 0 : q.hp - q.holeCount), 0);
         const before = sum();
+        // (through its middle, its collider, and its most solid row: a thing drawn in a corner of its picture, an airbag packed small, is hit, not the air beside it)
+        let row = Math.floor(p.h / 2);
+        let most = -1;
+        for (let iy = 0; iy < p.h; iy++) {
+          let n = 0;
+          for (let ix = 0; ix < p.w; ix++) if (p.solidAt(ix, iy)) n++;
+          if (n > most) {
+            most = n;
+            row = iy;
+          }
+        }
+        // (each read as it's fired: a thing still falling has moved since the last)
+        const aim = (i: number) => [p.y, p.colliders[0]?.translation().y ?? p.y, p.pixelToWorld(p.w / 2, row + 0.5).y][i];
         for (let i = 0; i < 3 && !e.destroyed && !p.destroyed; i++) {
-          game.projectiles.fire(p.x - 3, p.y, 1, 0, 900, { energy: 1500, damage: 34, push: 0.004 });
+          game.projectiles.fire(p.x - 3, aim(i), 1, 0, 900, { energy: 1500, damage: 34, push: 0.004 });
           kit.advance(0.15);
         }
         if (e.destroyed || p.destroyed) return null;

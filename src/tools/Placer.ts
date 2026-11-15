@@ -183,6 +183,12 @@ export class Placer {
       this.placedWith(made);
     } else if (g.def) {
       made = this.spawn(g.def, g.flip, g.at, g.angle);
+      // (symmetry on: its mirror image across the axis too, facing the other way, turned the other way)
+      const ax = c.symmetryX;
+      if (ax !== null && Math.abs(g.at.x - ax) > 0.05) {
+        this.weldIfFixing(made);
+        made = this.spawn(g.def, !g.flip, { x: 2 * ax - g.at.x, y: g.at.y }, -g.angle);
+      }
     }
     this.weldIfFixing(made);
     return made;
@@ -341,6 +347,9 @@ export class Placer {
       return;
     }
     this.weldIfFixing(this.spawn(def, left, { x: c.wx, y: c.wy }, 0));
+    // (symmetry on: its mirror image across the axis too, facing the other way)
+    const ax = c.symmetryX;
+    if (ax !== null && Math.abs(c.wx - ax) > 0.05) this.weldIfFixing(this.spawn(def, !left, { x: 2 * ax - c.wx, y: c.wy }, 0));
   }
 
   /** Spawns one thing with its middle at `at` (kept out of the floor and the map's ground). */

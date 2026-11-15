@@ -93,6 +93,7 @@ export function rebase(game: Game, sx: number, sy: number): void {
   game.fluid.shift(dx, dy);
   game.weather.shift(dx, dy);
   game.connections.shift(dx, dy);
+  game.races.shifted(dx, dy);
   if (game.cursor) game.cursor = { x: game.cursor.x + dx, y: game.cursor.y + dy };
   for (const h of o.listeners) h(dx, dy);
 }

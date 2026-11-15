@@ -4,6 +4,7 @@ import { Prop, type PropConfig } from './Prop';
 import { toggleRun, type HandSwitched } from './Machines';
 import { Human } from './Human';
 import { placeInSeat, type SeatSpec } from './Car';
+import { cushionOf } from './Safety';
 import { PK } from '../systems/Particles';
 import { jobAction, pilotState, restorePilot, type Engine, type Job, type Steadier } from '../systems/Piloting';
 import { GYRO_FRAMES, HOVER_NOZZLE, LEVER_STEPS, COCKPIT, gyroArt, hoverThrusterArt, keyTriggerArt, throttleLeverArt } from '../art/flight';
@@ -381,7 +382,19 @@ const COCKPIT_SEAT: SeatSpec = {
 export class Cockpit extends Prop {
   /** It's a cockpit (see Piloting.assemble()). */
   readonly cockpit = true;
-  private rider: { who: Human; joint: RAPIER.ImpulseJoint; ghosts: Part[] } | null = null;
+  protected rider: { who: Human; joint: RAPIER.ImpulseJoint; ghosts: Part[] } | null = null;
+  /** Sealed in (a capsule): its pilot breathes the air of its build's oxygen tank, in space or under water. */
+  readonly sealed: boolean = false;
+  /** Its seat belt done up: a crash hurts its pilot less (see cushion()). */
+  belted = false;
+  /**
+   * The g its pilot feels head to foot (smoothed), and how near it has them to blacking
+   * out (0 to 1.5): past 4.5 g for long the blood drains from the head, the view greys
+   * from the edges (0.5) and then goes (1: out cold till it eases off).
+   */
+  gz = 1;
+  strain = 0;
+  private lastV: { x: number; y: number; t: number } | null = null;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
@@ -409,7 +422,7 @@ export class Cockpit extends Prop {
     return true;
   }
 
-  private seat(h: Human): void {
+  protected seat(h: Human): void {
     const b = this.main;
     placeInSeat(h, b, COCKPIT_SEAT);
     const hips = h.limbs.get('lowerTorso')!.part;
@@ -450,15 +463,45 @@ export class Cockpit extends Prop {
     }
     const h = r.who;
     if (h.destroyed) return;
+    h.gStrain = 0;
     h.sit(null, stand);
     h.zBase = this.game.allocZ();
     for (const p of h.parts) if (!p.destroyed) p.updateZ();
   }
 
-  preStep(): void {
+  /** How much of a jolt its pilot takes (see Human.jolted()): a seat belt, an airbag in the build. */
+  cushion(): number {
+    return cushionOf(this.game, this);
+  }
+
+  preStep(dt = 0): void {
     const r = this.rider;
     // (deleted, cut loose at the hips, or the seat broken: they're out)
     if (r && (r.who.destroyed || !r.joint.isValid() || r.who.seat === null)) this.release(false);
+    this.feelG(dt);
+  }
+
+  /** The g down through the seat (see gz, strain), and what it does to whoever sits in it. */
+  private feelG(dt: number): void {
+    const p = this.main;
+    const g = this.game;
+    const now = { x: p.vx, y: p.vy, t: g.time };
+    const was = this.lastV;
+    this.lastV = now;
+    if (!was || now.t <= was.t || now.t - was.t > 0.5 || p.frozen) return;
+    const d = now.t - was.t;
+    const grav = g.gravity * (g.map.world ? g.air.gravityAt(p.y) : 1);
+    const ax = (now.x - was.x) / d;
+    const ay = (now.y - was.y) / d - grav;
+    const up = p.localDir(0, 1);
+    // (pressed down into the seat: up through it is the way it's pushed)
+    const gz = (ax * up.x + ay * up.y) / 9.81;
+    this.gz += (gz - this.gz) * Math.min(1, dt * 6);
+    // (a crash's spike is over before it drains the head: only what lasts counts)
+    const pull = Math.min(this.gz, 12);
+    this.strain = clamp(this.strain + (pull > 4.5 ? (pull - 4.5) / 4 : -0.4) * dt, 0, 1.5);
+    const h = this.rider?.who;
+    if (h && !h.destroyed) h.gStrain = this.strain;
   }
 
   protected onDestroy(): void {
@@ -467,7 +510,16 @@ export class Cockpit extends Prop {
   }
 
   contextActions(): ContextAction[] {
-    return this.rider ? [{ label: 'Get out', action: () => this.release(true) }] : [];
+    const belt: ContextAction = { label: 'Seat belt', checked: this.belted, action: () => (this.belted = !this.belted) };
+    return this.rider ? [{ label: 'Get out', action: () => this.release(true) }, belt] : [belt];
+  }
+
+  protected serializeExtra(): Record<string, unknown> {
+    return this.belted ? { belted: true } : {};
+  }
+
+  protected restoreExtra(x: Record<string, unknown>): void {
+    this.belted = x.belted === true;
   }
 
   serializeLinks(ref: (e: Entity) => number): Record<string, unknown> | undefined {

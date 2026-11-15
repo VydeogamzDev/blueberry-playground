@@ -614,6 +614,7 @@ export class RawIntegrationParameters {
     lengthUnit: number;
     maxCcdSubsteps: number;
     normalizedAllowedLinearError: number;
+    normalizedMaxLinearVelocity: number;
     normalizedPredictionDistance: number;
     numInternalPgsIterations: number;
     numSolverIterations: number;
@@ -2051,6 +2052,7 @@ export interface InitOutput {
     readonly rawintegrationparameters_maxCcdSubsteps: (a: number) => number;
     readonly rawintegrationparameters_new: () => number;
     readonly rawintegrationparameters_normalizedAllowedLinearError: (a: number) => number;
+    readonly rawintegrationparameters_normalizedMaxLinearVelocity: (a: number) => number;
     readonly rawintegrationparameters_normalizedPredictionDistance: (a: number) => number;
     readonly rawintegrationparameters_numInternalPgsIterations: (a: number) => number;
     readonly rawintegrationparameters_numSolverIterations: (a: number) => number;
@@ -2059,6 +2061,7 @@ export interface InitOutput {
     readonly rawintegrationparameters_set_lengthUnit: (a: number, b: number) => void;
     readonly rawintegrationparameters_set_maxCcdSubsteps: (a: number, b: number) => void;
     readonly rawintegrationparameters_set_normalizedAllowedLinearError: (a: number, b: number) => void;
+    readonly rawintegrationparameters_set_normalizedMaxLinearVelocity: (a: number, b: number) => void;
     readonly rawintegrationparameters_set_normalizedPredictionDistance: (a: number, b: number) => void;
     readonly rawintegrationparameters_set_numInternalPgsIterations: (a: number, b: number) => void;
     readonly rawintegrationparameters_set_numSolverIterations: (a: number, b: number) => void;

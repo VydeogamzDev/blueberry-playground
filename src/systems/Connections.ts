@@ -24,6 +24,8 @@ export type WireRole = 'in' | 'out' | 'both';
 
 interface WiredDevice {
   wireRole?(c: Connection): WireRole;
+  /** Whether its power and pulses go out along this output wire just now (a step sequencer feeds one at a time; others feed all). */
+  feeds?(c: Connection): boolean;
   onPulse?(c: Connection): void;
   isPowerSource?(): boolean;
   conducts?(): boolean;
@@ -730,7 +732,7 @@ export class Connections {
     return this.list.filter((k) => !k.b && RIGID_KINDS.has(k.kind) && set.has(k.a.entity));
   }
 
-  assemblyOf(ents: Iterable<Entity>, physicalOnly = true): Entity[] {
+  assemblyOf(ents: Iterable<Entity>, physicalOnly = true, stop?: (e: Entity) => boolean): Entity[] {
     const out: Entity[] = [];
     const seen = new Set<Entity>();
     const add = (e: Entity) => {
@@ -754,6 +756,8 @@ export class Connections {
     }
     for (let i = 0; i < out.length; i++) {
       const e = out[i];
+      // (`stop`: reached, but not gone through: a decoupler between a rocket's stages, for its fuel)
+      if (i > 0 && stop?.(e)) continue;
       for (const n of links.get(e) ?? []) add(n);
       for (const n of e.attachedEntities()) add(n);
     }
@@ -1033,6 +1037,7 @@ export class Connections {
     try {
       for (const { c, n } of this.wiresOf(from)) {
         if (this.roleOf(from, c) === 'in' || this.roleOf(n, c) === 'out') continue;
+        if ((from as Entity & WiredDevice).feeds?.(c) === false) continue;
         // (the power that came with it already drives it, or set it off)
         if (fromPower && (n.usesPower || this.firedByPower(n))) continue;
         if (wave.heard.has(n) || this.jammed.has(n)) continue;
@@ -1136,7 +1141,7 @@ export class Connections {
         const rev = back.has(e) !== !!d.flips?.();
         const out = (level.get(e) ?? 1) * (d.passes?.() ?? 1);
         for (const { c, n } of this.wiresOf(e)) {
-          if (this.roleOf(e, c) === 'in') continue;
+          if (this.roleOf(e, c) === 'in' || d.feeds?.(c) === false) continue;
           const rn = this.roleOf(n, c);
           if (rn === 'out' || this.jammed.has(n)) continue;
           live.add(c);

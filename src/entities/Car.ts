@@ -14,6 +14,7 @@ import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
 import type { Debris } from './Debris';
+import { bagCushion, cushionOf } from './Safety';
 
 export interface CarConfig {
   body: () => PixelArt;
@@ -511,13 +512,18 @@ export class Car extends Entity implements HandSwitched {
       }
       if (!hit) continue;
       // thrown about in the seat: the head and chest take it
-      const harm = (jolt - JOLT.from) ** 2 * JOLT.k * (this.belts ? JOLT.belted : 1);
+      const harm = (jolt - JOLT.from) ** 2 * JOLT.k * (this.belts ? JOLT.belted : 1) * bagCushion(this.game, this);
       for (const key of ['head', 'upperTorso'] as LimbKey[]) {
         const l = h.limbs.get(key);
         if (l && !l.gone) h.damage(l.part, harm * 0.5, 'blunt', { x: l.part.x, y: l.part.y });
       }
       if (stop && !this.belts && !h.destroyed) this.release(i, 'thrown', { x: this.cruiseX * 0.8, y: this.cruiseY * 0.8 + 1.5 });
     }
+  }
+
+  /** How much of a jolt its riders take (see Human.jolted(), entities/Safety). */
+  cushion(): number {
+    return cushionOf(this.game, this);
   }
 
   /** Is the hand dragging this rider pulling them hard out of the seat (for long enough to count)? */

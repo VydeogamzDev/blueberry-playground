@@ -221,6 +221,33 @@ index 46aafccc..f9826607 100644
      /**
       * Internal function, do not call directly.
       * @param handle
+diff --git a/bindings/typescript/src.ts/dynamics/integration_parameters.ts b/bindings/typescript/src.ts/dynamics/integration_parameters.ts
+index 9ebb61c4..9cc7490b 100644
+--- a/bindings/typescript/src.ts/dynamics/integration_parameters.ts
++++ b/bindings/typescript/src.ts/dynamics/integration_parameters.ts
+@@ -76,6 +76,13 @@ export class IntegrationParameters {
+         return this.raw.maxCcdSubsteps;
+     }
+ 
++    /**
++     * The fastest (m/s, times the length unit) any body may move: faster is clamped (default: `400`).
++     */
++    get normalizedMaxLinearVelocity(): number {
++        return this.raw.normalizedMaxLinearVelocity;
++    }
++
+     /**
+      * Strain beyond which a soft-body constraint is re-solved after the contacts inside every
+      * substep, so a light body buried under heavier ones is not torn (default: `0.75`).
+@@ -200,4 +207,8 @@ export class IntegrationParameters {
+     set maxCcdSubsteps(value: number) {
+         this.raw.maxCcdSubsteps = value;
+     }
++
++    set normalizedMaxLinearVelocity(value: number) {
++        this.raw.normalizedMaxLinearVelocity = value;
++    }
+ }
 diff --git a/bindings/typescript/src.ts/dynamics/rigid_body_set.ts b/bindings/typescript/src.ts/dynamics/rigid_body_set.ts
 index cb6191d1..fe124888 100644
 --- a/bindings/typescript/src.ts/dynamics/rigid_body_set.ts
@@ -627,6 +654,34 @@ index b7ba1bf0..c99f7f44 100644
      /// Applies the given JavaScript function to the integer handle of each joint attached to the given rigid-body.
      ///
      /// # Parameters
+diff --git a/bindings/typescript/src/dynamics/integration_parameters.rs b/bindings/typescript/src/dynamics/integration_parameters.rs
+index 9c603068..9788aa12 100644
+--- a/bindings/typescript/src/dynamics/integration_parameters.rs
++++ b/bindings/typescript/src/dynamics/integration_parameters.rs
+@@ -47,6 +47,11 @@ impl RawIntegrationParameters {
+         self.0.max_ccd_substeps
+     }
+ 
++    #[wasm_bindgen(getter)]
++    pub fn normalizedMaxLinearVelocity(&self) -> f32 {
++        self.0.normalized_max_linear_velocity
++    }
++
+     #[wasm_bindgen(getter)]
+     pub fn lengthUnit(&self) -> f32 {
+         self.0.length_unit
+@@ -156,6 +161,11 @@ impl RawIntegrationParameters {
+         self.0.max_ccd_substeps = value
+     }
+ 
++    #[wasm_bindgen(setter)]
++    pub fn set_normalizedMaxLinearVelocity(&mut self, value: f32) {
++        self.0.normalized_max_linear_velocity = value
++    }
++
+     #[wasm_bindgen(setter)]
+     pub fn set_lengthUnit(&mut self, value: f32) {
+         self.0.length_unit = value
 diff --git a/bindings/typescript/src/dynamics/rigid_body.rs b/bindings/typescript/src/dynamics/rigid_body.rs
 index 3d828ba4..4fc772a8 100644
 --- a/bindings/typescript/src/dynamics/rigid_body.rs

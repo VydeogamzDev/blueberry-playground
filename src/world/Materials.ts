@@ -131,3 +131,14 @@ export const ELECTRONICS: PhysMaterial = {
   ...MAT.plastic, name: 'Electronics', density: 90, sound: 'plastic', bulletResistance: 600, flammability: 0.3, debrisColor: 0x2f6b3a,
   strength: 30, brittle: 0.6, toughness: 20, heatCap: 1100, melt: 250, conducts: true,
 };
+
+/** A heat shield's (0.4.0): light and tough, it takes the air's heat coming down from space without melting (it burns slowly away instead: see Rocketry HeatShield). */
+/** Armour plate (0.4.0): hardened steel, thick; rifle rounds stop in it, and it takes a blast. */
+export const ARMOUR: PhysMaterial = {
+  ...MAT.metal, name: 'Armour', density: 300, bulletResistance: 40000, strength: 900, toughness: 160, debrisColor: 0x596068,
+};
+
+export const ABLATOR: PhysMaterial = {
+  ...MAT.plastic, name: 'Ablator', density: 120, sound: 'plastic', bulletResistance: 1500, flammability: 0, debrisColor: 0x2b2a28,
+  strength: 60, brittle: 0.3, toughness: 45, heatCap: 2600, melt: 3200, conducts: false,
+};

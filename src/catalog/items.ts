@@ -5,6 +5,7 @@ import { Shape, readShapeConfig } from '../entities/Shape';
 import { Bacon } from '../entities/Bacon';
 import { Gore, readGoreConfig } from '../entities/Gore';
 import { Debris, readDebrisConfig } from '../entities/Debris';
+import { Track, readTrackConfig } from '../entities/Rails';
 import { baconArt } from '../art/bacon';
 import { Barrel, Bucket, BUCKET_SHAPES, DRUM_SHAPES } from '../entities/Bucket';
 import { MAT, GLASS } from '../world/Materials';
@@ -154,6 +155,13 @@ export function registerProps(): void {
     id: 'debris', name: 'Debris', category: 'Objects', description: 'A piece broken off something: scrap, a splinter, a shard, rubble.', tags: ['scrap', 'shard', 'splinter', 'rubble', 'piece'],
     preview: previewOf(debrisArt), hidden: true,
     create: (game, x, y, opts) => new Debris(game, debris, readDebrisConfig(opts.config), x, y, opts),
+  });
+  // laid with the Rails tool (not in the toybox)
+  const trackPreview = lazyArt(() => new PixelArt(16, 6).rect(0, 2, 16, 2, 0x8a949d));
+  const track: ItemDef = register({
+    id: 'track', name: 'Track', category: 'Objects', description: 'Laid with the Rails tool.', tags: ['track', 'rail'],
+    preview: previewOf(trackPreview), hidden: true,
+    create: (game, x, y, opts) => new Track(game, track, readTrackConfig(opts.config) ?? { pts: [-32, 0, 32, 0] }, x, y, opts),
   });
   // drawn with the Shape tool (not in the toybox)
   const shapeArt = lazyArt(() => A.materialArt(new PixelArt(16, 16).rect(0, 0, 16, 16, 0), 'wood'));

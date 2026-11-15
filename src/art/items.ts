@@ -373,6 +373,11 @@ export function toolIcon(kind: string): PixelArt {
         ['....d.......', '...dwd......', '..dwwwd.....', '.dwwwwwd....', 'dwwwwwwwd...', '.dwwwwwwwd..', '..dwwwwwwwd.', '...dwwwwwwd.', '....dwwwwwd.', '.....dwwwwd.', '......ddddd.'],
         { w: WOOD_PALE[3], d: dark },
       );
+    case 'rails':
+      return icon(
+        ['............', '..........ss', '........ssss', '......sss.w.', '....sss..w..', '..sss...w...', 'sss..w.w....', 's...w.w.....', '...w.w......', '..w.w.......', '.w..........', '............'],
+        { s: steel, w: WOOD_PALE[2] },
+      );
     case 'wire':
       return icon(
         ['rr..........', 'rrr.........', '.rrr.....rr.', '..rrr...rrrr', '...rrrrrr.rr', '....rrrr..rr', '..........rr', '..dd.....rr.', '.dddd...rr..', '..dd....rr..'],

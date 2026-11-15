@@ -1,9 +1,11 @@
+import { dragOf } from './Aero';
 import type { Game } from '../world/Game';
 import type { Entity } from '../world/Entity';
 import type { Part } from '../world/Part';
 import type { V2 } from '../engine/math';
 import { PX, WORLD } from '../engine/constants';
 import { wrapAngle } from '../engine/math';
+import { PK } from './Particles';
 import type { ContextAction } from '../world/types';
 
 /**
@@ -49,7 +51,15 @@ export interface Engine {
   pushAt(): V2;
   /** A hover thruster: the throttle is the height it holds (see HoverThruster). */
   readonly hovers?: boolean;
+  /** Pushing nothing for want of air: a jet flamed out, a propeller in space (see AIR_GONE). */
+  readonly starved?: boolean;
 }
+
+/**
+ * Air this thin (a share of the ground's, about 3 km up on the World) is too little for
+ * a jet to burn or a propeller to bite: the jet flames out, and both push nothing.
+ */
+export const AIR_GONE = 0.03;
 
 /** Something piloting turns: a gyroscope, the angle it holds turned by Q and E. */
 export interface Steadier {
@@ -78,6 +88,8 @@ export function restorePilot(e: Engine, x: Record<string, unknown>): void {
  * throttle lever's: see Entity.powerLevel).
  */
 export function engineLevel(e: Entity & Engine, on: boolean): number {
+  // (given a stage, it waits for it: see Entity.stage)
+  if (e.stage > 0 && !e.staged) return 0;
   if (e.pilotOut !== null) return Math.abs(e.pilotOut);
   return on ? 1 : e.powered ? e.powerLevel : 0;
 }
@@ -95,6 +107,65 @@ export interface PilotInput {
   x: number;
   t: number;
   r: number;
+  /** Held: the craft's guns fire (see Piloting.weapons()); its boost (nitro, afterburners) burns. */
+  fire?: boolean;
+  boost?: boolean;
+}
+
+/**
+ * The menu entry that steps a part's stage (see Entity.stage) on: none, 1 to 9, none.
+ * (Its label starts STAGE_LABEL for a guest's pick to be found by: see Host.)
+ */
+export const STAGE_LABEL = 'Stage: ';
+export function stageAction(e: Entity): ContextAction {
+  return {
+    label: `${STAGE_LABEL}${e.stage ? `${e.stage}${e.staged ? ' (fired)' : ''}` : 'none'}`,
+    hint: 'next',
+    action: () => {
+      e.stage = (e.stage + 1) % 10;
+      e.staged = false;
+    },
+  };
+}
+
+/** A pilot's one-off orders (0.4.0): the next stage, stability assist, the landing gear, the parachutes, ejecting. */
+export type PilotCommand = 'stage' | 'assist' | 'gear' | 'chutes' | 'eject' | 'lights' | 'horn' | 'autopilot' | 'bombs' | 'flares';
+export const PILOT_COMMANDS: PilotCommand[] = ['stage', 'assist', 'gear', 'chutes', 'eject', 'lights', 'horn', 'autopilot', 'bombs', 'flares'];
+
+/** Something a pilot's orders reach (see PilotCommand): legs and gear, parachutes, ejection seats. */
+export interface Commanded {
+  pilotCommand(cmd: PilotCommand): boolean;
+}
+
+function isCommanded(e: Entity): e is Entity & Commanded {
+  return typeof (e as Partial<Commanded>).pilotCommand === 'function';
+}
+
+/** Something a pilot fires (a gun built into the craft): held, it fires. */
+export interface PilotWeapon {
+  pilotFire(on: boolean): void;
+}
+
+function isWeaponOf(e: Entity): e is Entity & PilotWeapon {
+  return typeof (e as Partial<PilotWeapon>).pilotFire === 'function';
+}
+
+/** An engine that swivels to turn the craft (a gimballed thruster, a control flap): told the turn wanted (-1 to 1, + anticlockwise) and the craft's middle. */
+export interface Swiveller {
+  pilotSwivel(u: number, com: V2): void;
+}
+
+export function isSwiveller(e: Entity): e is Entity & Swiveller {
+  return typeof (e as Partial<Swiveller>).pilotSwivel === 'function';
+}
+
+/** Something a craft's boost key works: nitro, an afterburner. */
+export interface Booster {
+  boosting: boolean;
+}
+
+function isBooster(e: Entity): e is Entity & Booster {
+  return typeof (e as Partial<Booster>).boosting === 'boolean';
 }
 
 /** How an engine on Auto answers the pilot (see remix()). */
@@ -107,6 +178,8 @@ interface Mix {
   rot: number;
   /** A wheel motor: A and D drive it. */
   drive: boolean;
+  /** Its push's lever about the middle (m): its turn at full is its push times this. */
+  arm?: number;
 }
 
 /** A build being piloted. */
@@ -132,9 +205,38 @@ export interface Craft {
   links: number;
   /** Its middle, frame and size as remix() last found them. */
   com: V2;
+  /** Its middle in the frame of `ref` (see remix()), for between looks. */
+  comL?: V2;
+  /** How hard it is to turn (kg m², about its middle: see remix()). */
+  inertia?: number;
+  /** Its speed against the speed of sound, last step (see wake()). */
+  mach: number;
   frame: number;
   /** The angle it's held at, in its frame (see fly()): where it was when Q or E was last let go of. */
   hold: number;
+  /**
+   * Stability assist (0.4.0; on unless turned off): Q and E turn it at a steady rate, and
+   * let go, every engine and gyroscope that can brakes the turn and holds the angle it was
+   * at. Without it, let go of in space (where no air slows a spin) a craft tumbled on.
+   */
+  assist: boolean;
+  /**
+   * Autopilot (0.4.0): holds the height it was at when turned on (true height) with the
+   * throttle, and its angle with the stability assist, till turned off or the pilot touches
+   * the throttle or turns it.
+   */
+  auto: { alt: number } | null;
+  /** Things in it the pilot's orders and fire key reach. */
+  commanded: (Entity & Commanded)[];
+  /** What swivels to turn it (see Swiveller). */
+  swivels: (Entity & Swiveller)[];
+  weapons: (Entity & PilotWeapon)[];
+  boosters: (Entity & Booster)[];
+  /** Was the fire key held last step (a gun's let go of once). */
+  firing: boolean;
+  /** Its velocity last step, and the g its pilot feels (smoothed; see fly()). */
+  lastV: V2 | null;
+  g: number;
   /**
    * Can its lifting engines level it (see fly())? Only with some turning it each way:
    * one alone off the middle (a plane's one engine under its wing), eased off to level
@@ -145,6 +247,8 @@ export interface Craft {
 
 /** What the HUD shows of a craft (see Piloting.hudOf()). */
 export interface PilotHud {
+  /** Its pilot near blacking out from g (see Cockpit.strain): 0.5 greying, 1 out. */
+  strain?: number;
   /** m/s */
   speed: number;
   /** Above the floor (m). */
@@ -153,19 +257,81 @@ export interface PilotHud {
   climb: number;
   /** 0 to 1. */
   throttle: number;
-  /** Its engines, and how many are running now. */
+  /** Its engines, how many are running now, and how many would be but for the air (see Engine.starved). */
   engines: number;
   running: number;
+  noAir?: number;
   /** Fixed to the background somewhere (see Connections.fixedOf()): nothing it does moves it. */
   fixed?: boolean;
+  /** Its tanks: fuel left and what they hold (kg), when it has any; engines starved of it. */
+  fuel?: number;
+  fuelCap?: number;
+  noFuel?: number;
+  /** Its stages: the next to fire (0: none left) and how many there are. */
+  stageNext?: number;
+  stages?: number;
+  /** Stability assist on (see Craft.assist). */
+  assist?: boolean;
+  /** What it is, for its dashboard: a car (wheels driven), a plane (wings), a rocket (stages, tanks), or anything else. */
+  kind?: 'car' | 'plane' | 'rocket' | 'craft';
+  /** Its angle from upright (rad, + anticlockwise), how hard it's turning (rad/s), and the g its pilot feels. */
+  tilt?: number;
+  spin?: number;
+  g?: number;
+  /** As high as it will get coasting from here, going up (true height, m; the World only). */
+  apo?: number;
+  /** The bottom of its path round the planet (true height, m), if that's above the ground: it's in orbit. */
+  peri?: number;
+  /** A plane's: its wings' angle to the air (rad) and whether they've stalled. */
+  aoa?: number;
+  stall?: boolean;
+  /** A car's: its engine's revs and gear (see entities/Vehicles2). */
+  rpm?: number;
+  gear?: number;
   /** On the World: its true height (m), and the air there: density (kg/m³) and temperature (°C). */
   alt?: number;
   air?: number;
   temp?: number;
 }
 
+/**
+ * Its path round the planet (the World: see Altitude's falling round it), from its true
+ * height `h` and velocity: the top and bottom of it, as heights (m). Going fast enough to
+ * leave, the top is Infinity.
+ */
+export function orbitOf(h: number, vx: number, vy: number, R: number, g0: number): { apo: number; peri: number } {
+  const mu = g0 * R * R;
+  const r = R + Math.max(0, h);
+  const e2 = (vx * vx + vy * vy) / 2 - mu / r;
+  if (e2 >= 0) return { apo: Infinity, peri: Infinity };
+  const L = r * vx;
+  const ecc = Math.sqrt(Math.max(0, 1 + (2 * e2 * L * L) / (mu * mu)));
+  const a = -mu / (2 * e2);
+  return { apo: a * (1 + ecc) - R, peri: a * (1 - ecc) - R };
+}
+
+/** A build's numbers, while building (0.4.0: see Piloting.buildStats()). */
+export interface BuildStats {
+  /** Its weight (kg) and middle. */
+  mass: number;
+  com: V2;
+  /** Its engines' push at full (N, the way most of it goes), where that acts and which way; against its weight. */
+  thrust: number;
+  cot: V2 | null;
+  dir: V2 | null;
+  twr: number;
+  /** How long (s) its tanks' fuel lasts at full (Infinity: no tank, it runs free). */
+  burn: number;
+  /** The middle of its wings' and fins' lift (their area's), if it has any. */
+  col: V2 | null;
+  /** How fast it's going (m/s): the marks are shown only near still. */
+  speed: number;
+}
+
 /** How fast W and S move the throttle (a share a second). */
 const T_RATE = 0.6;
+/** The fastest (m/s) the autopilot climbs or sinks to the height it holds. */
+const AUTO_CLIMB = 6;
 /** How long (s) a pilot's word holds without being renewed (a guest's arrives every few steps). */
 const HOLD = 0.3;
 /** How long (s) a pilot's keys count without being said again: after that they're let go of (still flown, till HOLD). */
@@ -185,6 +351,12 @@ const TURNS = 0.2;
 const TURNS_MAX = 0.5;
 /** Levelling (see fly()): how hard the engines answer being off the angle held (per rad), and turning (per rad/s). */
 const LEVEL = { k: 2.5, d: 0.8 };
+/**
+ * Stability assist (see fly()): the turn Q and E ask for (rad/s), how fast it turns back
+ * to the angle held (per rad off), how hard the engines answer a turn off what's wanted
+ * (per rad/s), and below what (of their full answer) it leaves them be.
+ */
+const ASSIST = { rate: 0.9, k: 1.6, d: 2.5, dead: 0.04, tau: 0.25 };
 
 export class Piloting {
   private game: Game;
@@ -228,9 +400,13 @@ export class Piloting {
     const ents = this.game.connections.assemblyOf(sel);
     const engines = ents.filter(isEngine);
     const steadiers = ents.filter(isSteadier);
-    if (!engines.length && !steadiers.length) return null;
+    const commanded = ents.filter(isCommanded);
+    const weapons = ents.filter(isWeaponOf);
+    const boosters = ents.filter(isBooster);
+    const swivels = ents.filter(isSwiveller);
+    if (!engines.length && !steadiers.length && !commanded.length && !swivels.length && !ents.some((e) => e.stage > 0)) return null;
     const cockpit = ents.find((e) => (e as { cockpit?: boolean }).cockpit && !e.destroyed);
-    const ref = (cockpit ?? engines[0] ?? steadiers[0]).parts[0];
+    const ref = (cockpit ?? engines[0] ?? steadiers[0] ?? swivels[0] ?? commanded[0] ?? ents[0]).parts[0];
     let T = 0;
     for (const e of engines) T = Math.max(T, e.pilotT);
     return {
@@ -241,6 +417,7 @@ export class Piloting {
       mix: new Map(), mixAt: -Infinity, madeAt: this.game.time, links: this.game.connections.list.length,
       com: { x: ref.x, y: ref.y }, frame: 0,
       hold: cockpit ? wrapAngle(ref.bodyAngle) : 0, levels: false,
+      assist: true, auto: null, commanded, weapons, boosters, swivels, firing: false, lastV: null, g: 1, mach: 0,
     };
   }
 
@@ -290,7 +467,7 @@ export class Piloting {
             continue;
           }
           for (const e of c.engines) if (!again.engines.includes(e)) this.release(e);
-          Object.assign(again, { T: c.T, input: c.input, told: c.told, mine: c.mine, ref: c.ref, a0: c.a0, hold: c.hold });
+          Object.assign(again, { T: c.T, input: c.input, told: c.told, mine: c.mine, ref: c.ref, a0: c.a0, hold: c.hold, assist: c.assist, auto: c.auto, firing: c.firing, lastV: c.lastV, g: c.g, mach: c.mach });
           this.crafts[i] = c = again;
         }
       }
@@ -301,14 +478,62 @@ export class Piloting {
   private fly(c: Craft, dt: number): void {
     // (keys not said again for a moment are let go of: the pilot's gone, or a guest's word is late)
     const fresh = this.game.time - c.told <= KEYS_LAST;
-    const { x, t, r } = fresh ? c.input : NO_KEYS;
-    const T = (c.T = Math.min(1, Math.max(0, c.T + t * T_RATE * dt)));
+    const input = fresh ? c.input : NO_KEYS;
+    const { x, t, r } = input;
+    // (the pilot's hand on the throttle or the turn takes it off autopilot)
+    if (c.auto && (t || r)) c.auto = null;
+    let T = (c.T = Math.min(1, Math.max(0, c.T + t * T_RATE * dt)));
+    if (c.auto) {
+      // autopilot: climb (or sink) toward the height it holds, no faster than AUTO_CLIMB,
+      // the throttle eased to make the climb wanted
+      const p = c.ref;
+      const alt = p.y + (this.game.map.world ? this.game.air.base : 0);
+      const want = Math.max(-AUTO_CLIMB, Math.min(AUTO_CLIMB, (c.auto.alt - alt) * 0.6));
+      // (the throttle kept creeps toward what holds it; on top, a nudge for the climb missing now)
+      const miss = want - p.vy;
+      c.T = Math.min(1, Math.max(0, c.T + miss * 0.3 * dt));
+      T = Math.min(1, Math.max(0, c.T + miss * 0.04));
+    }
     if (this.game.time - c.mixAt > REMIX) this.remix(c);
-    // levelling: flying with no gyroscope in it, the engines that turn it ease off (or
-    // push harder) to hold it at the angle it was left at, as a drone's do
     const now = wrapAngle(c.ref.bodyAngle - c.a0);
+    const av = c.ref.av;
     if (r) c.hold = now;
-    const level = !r && T > 0.02 && !c.steadiers.some((g) => !g.destroyed) ? Math.min(1, Math.max(-1, LEVEL.k * wrapAngle(c.hold - now) - LEVEL.d * c.ref.av)) : 0;
+    // the g its pilot feels: its acceleration less the pull of gravity (1 sat still, 0 falling free)
+    {
+      const p = c.ref;
+      if (c.lastV) {
+        const gy = this.game.gravity * (this.game.map.world ? this.game.air.gravityAt(p.y) : 1);
+        const ax = (p.vx - c.lastV.x) / dt;
+        const ay = (p.vy - c.lastV.y) / dt - gy;
+        const g = Math.hypot(ax, ay) / 9.81;
+        c.g += (Math.min(g, 40) - c.g) * Math.min(1, dt * 6);
+      }
+      c.lastV = { x: p.vx, y: p.vy };
+    }
+    // the turn wanted, -1 to 1 (+ anticlockwise)
+    let u = 0;
+    // levelling (no assist): with no gyroscope in it, the engines that turn it ease off (or
+    // push harder) to hold it at the angle it was left at, as a drone's do
+    let level = 0;
+    if (c.assist) {
+      // stability assist: Q and E ask for a steady turn; let go, a turn back to the angle
+      // held, braked as it gets there. Only while flying (or asked): one sat on its pad
+      // at no throttle, a little off level, doesn't fire its engines to right itself.
+      const p = c.ref;
+      const airborne = T > 0.02 || Math.hypot(p.vx, p.vy) > 1.5 || p.y - this.game.env.groundAt(p.x, p.y) > 2.5;
+      if (r || airborne) {
+        const want = r ? r * ASSIST.rate : Math.max(-ASSIST.rate, Math.min(ASSIST.rate, ASSIST.k * wrapAngle(c.hold - now)));
+        // (as hard as closes the gap in ASSIST.tau for how hard its engines can turn it: a
+        // light craft with strong engines far out, pushed full, overshot every step and back)
+        const turnAcc = this.authority(c, r ? 1 : T) / Math.max(1e-3, c.inertia ?? 0);
+        const gain = turnAcc > 0 ? Math.min(ASSIST.d, 1 / (turnAcc * Math.max(ASSIST.tau, dt * 2))) : ASSIST.d;
+        u = Math.max(-1, Math.min(1, (want - av) * gain));
+        if (!r && Math.abs(u) < ASSIST.dead) u = 0;
+      }
+    } else {
+      u = r;
+      level = !r && T > 0.02 && !c.steadiers.some((g) => !g.destroyed) ? Math.min(1, Math.max(-1, LEVEL.k * wrapAngle(c.hold - now) - LEVEL.d * av)) : 0;
+    }
     for (const e of c.engines) {
       if (e.destroyed) continue;
       e.pilotT = T;
@@ -333,15 +558,142 @@ export class Piloting {
         continue;
       }
       const isLift = job === 'throttle' || (job === 'auto' && m.lift);
-      const lift = !isLift ? 0 : level && m.rot && c.levels ? T * (1 + level * m.rot) : T;
       // (set to Move or Turn by hand, an engine that does neither fires on D, or on Q)
       const mx = job === 'move' && !m.mx ? 1 : m.mx;
       const rot = job === 'rotate' && !m.rot ? 1 : m.rot;
       const mv = (job === 'move' || job === 'auto') && x * mx > 0 ? 1 : 0;
-      const turn = (job === 'rotate' || job === 'auto') && r ? r * rot : 0;
-      e.pilotOut = job === 'rotate' ? (turn > 0 ? 1 : 0) : Math.min(1, Math.max(0, lift + mv + turn));
+      let lift = 0;
+      let turn = 0;
+      if (isLift) {
+        lift = T;
+        // (one engine alone off the middle, eased off to turn the craft, would only let it fall: see Craft.levels)
+        if (level && rot && c.levels) lift = T * (1 + level * rot);
+        // (assisted: Q or E held, it turns as hard as it can; let go, it holds its angle by
+        // easing off or pushing harder in proportion to the throttle, as levelling does)
+        if (c.assist && rot) {
+          if (r) turn = u * rot;
+          else if (T > 0.02 && c.levels) lift = T * (1 + u * rot);
+        } else if (!c.assist && r) turn = r * rot;
+      } else if (job === 'rotate' || job === 'auto') turn = Math.max(0, u * rot);
+      e.pilotOut = job === 'rotate' ? Math.max(0, u * rot) : Math.min(1, Math.max(0, lift + mv + turn));
     }
     for (const g of c.steadiers) if (!g.destroyed) g.pilotTurn(r, dt);
+    // what swivels to turn it (gimballed thrusters, flaps) turns as the engines do
+    if (c.swivels.length) {
+      const com = c.comL && !c.ref.destroyed ? c.ref.localToWorld(c.comL.x, c.comL.y) : c.com;
+      for (const e of c.swivels) if (!e.destroyed) e.pilotSwivel(c.assist ? u : r, com);
+    }
+    // its guns, held to fire; its boost
+    const fire = !!input.fire;
+    if (fire || c.firing) for (const w of c.weapons) if (!w.destroyed) w.pilotFire(fire);
+    c.firing = fire;
+    for (const b of c.boosters) if (!b.destroyed) b.boosting = !!input.boost;
+    this.wake(c);
+  }
+
+  /**
+   * What the air makes of a fast craft (0.4.0): through the speed of sound (as fast as
+   * the air there is warm), a boom; fast through the cold air high up, contrails behind
+   * its engines.
+   */
+  private wake(c: Craft): void {
+    const g = this.game;
+    const p = c.ref;
+    if (p.destroyed) return;
+    const v = Math.hypot(p.vx, p.vy);
+    const rho = g.air.densityAt(p.y);
+    const temp = g.air.tempAt(p.y);
+    const sound = Math.sqrt(1.4 * 287 * Math.max(50, temp + 273.15));
+    const mach = v / sound;
+    if (c.mach < 1 && mach >= 1 && rho > 0.02) {
+      g.sound.play('explosion/large', { gain: 0.5, x: p.x, vary: 0.15 });
+      for (let i = 0; i < 24; i++) {
+        const a = (i / 24) * Math.PI * 2;
+        g.particles.emit(PK.Smoke, p.x, p.y, { vx: Math.cos(a) * 6 + p.vx * 0.6, vy: Math.sin(a) * 6 + p.vy * 0.6, life: 0.7, size: 0.2, size1: 0.9, color: 0xffffff, color1: 0xdfe6ee, alpha: 0.6, alpha1: 0, gravity: 0, drag: 3 });
+      }
+    }
+    c.mach = mach;
+    // (contrails: the cold high air, fast; from each engine running, or the craft itself)
+    if (v > 90 && temp < -25 && rho > 0.004 && Math.random() < 0.8) {
+      const from = c.engines.filter((e) => !e.destroyed && (e.pilotOut ?? 0) > 0.05);
+      const list = from.length ? from.map((e) => e.pushAt()) : [{ x: p.x, y: p.y }];
+      for (const at of list.slice(0, 4)) {
+        g.particles.emit(PK.Smoke, at.x - p.vx * 0.02, at.y - p.vy * 0.02, { vx: p.vx * 0.05, vy: p.vy * 0.05, life: 5, size: 0.12, size1: 0.7, color: 0xffffff, color1: 0xe6ecf2, alpha: 0.75, alpha1: 0, gravity: 0, drag: 0.3 });
+      }
+    }
+  }
+
+  /**
+   * A pilot's order to the craft `sel` is part of (see PilotCommand): whether anything
+   * heard it. The next stage fires every part of the lowest stage number not yet fired.
+   */
+  command(sel: readonly Entity[], cmd: PilotCommand): boolean {
+    const c = this.craftOf(sel);
+    if (!c) return false;
+    if (cmd === 'assist') {
+      c.assist = !c.assist;
+      c.hold = wrapAngle(c.ref.bodyAngle - c.a0);
+      return true;
+    }
+    if (cmd === 'autopilot') {
+      if (c.auto) c.auto = null;
+      else {
+        c.auto = { alt: c.ref.y + (this.game.map.world ? this.game.air.base : 0) };
+        c.assist = true;
+        c.hold = wrapAngle(c.ref.bodyAngle - c.a0);
+      }
+      return true;
+    }
+    if (cmd === 'stage') return this.stage(c);
+    let heard = false;
+    for (const e of c.commanded) if (!e.destroyed && e.pilotCommand(cmd)) heard = true;
+    return heard;
+  }
+
+  /**
+   * How hard (N m at full) the craft's engines can turn it (see fly()): the engines that
+   * turn it by firing harder (lift engines, as hard as the throttle has them) and those
+   * that only turn it; gyroscopes and swivelling parts keep their own.
+   */
+  private authority(c: Craft, T: number): number {
+    let tq = 0;
+    for (const e of c.engines) {
+      if (e.destroyed || e.job === 'wire' || e.job === 'always') continue;
+      const m = c.mix.get(e);
+      if (!m || !m.rot || !m.arm || m.drive || e.hovers) continue;
+      const isLift = e.job === 'throttle' || (e.job === 'auto' && m.lift);
+      tq += e.pushForce() * m.arm * (isLift ? Math.max(T, 0.05) : 1);
+    }
+    return tq;
+  }
+
+  /** Fires the craft's next stage (see Entity.stage): false if none is left. */
+  private stage(c: Craft): boolean {
+    const next = this.nextStage(c.ents);
+    if (!next) return false;
+    for (const e of c.ents) if (!e.destroyed && e.stage === next && !e.staged) e.fireStage();
+    // (a stage let go: what's flown is what's held together now)
+    c.madeAt = -Infinity;
+    return true;
+  }
+
+  /** The lowest stage number among these not yet fired (0: none). */
+  private nextStage(ents: readonly Entity[]): number {
+    let next = 0;
+    for (const e of ents) if (!e.destroyed && e.stage > 0 && !e.staged && (!next || e.stage < next)) next = e.stage;
+    return next;
+  }
+
+  /** Is the autopilot on for the craft these are part of? */
+  autopilotOf(sel: readonly Entity[]): boolean {
+    for (const c of this.crafts) if (sel.some((e) => c.ents.includes(e))) return !!c.auto;
+    return false;
+  }
+
+  /** Is stability assist on for the craft these are part of? */
+  assistOf(sel: readonly Entity[]): boolean {
+    for (const c of this.crafts) if (sel.some((e) => c.ents.includes(e))) return c.assist;
+    return true;
   }
 
   /** Works out what each engine on Auto does (see Mix): which way it pushes in the craft's frame, and about its centre of mass. */
@@ -361,6 +713,18 @@ export class Piloting {
     }
     if (m <= 0) return;
     const com = (c.com = { x: mx / m, y: my / m });
+    // (how hard it is to turn: each part's own, and its mass out from the middle)
+    let inertia = 0;
+    for (const e of c.ents) {
+      if (e.destroyed) continue;
+      for (const p of e.parts) {
+        if (p.destroyed || p.detached) continue;
+        inertia += p.body.principalInertia() + p.mass * ((p.x - com.x) ** 2 + (p.y - com.y) ** 2);
+      }
+    }
+    c.inertia = inertia;
+    // (kept in its frame too: it goes where the craft goes between looks)
+    c.comL = c.ref.worldToLocal(com.x, com.y);
     // (how far it reaches from there: to its parts' far corners, not just their middles: one long plank is as big as it is long)
     let size = 0.5;
     for (const e of c.ents) {
@@ -409,6 +773,7 @@ export class Piloting {
         mx: !lift && Math.abs(dc.x) > 0.5 ? Math.sign(dc.x) : 0,
         rot,
         drive: false,
+        arm: Math.abs(tq) * size,
       });
     });
     c.levels = up && down;
@@ -452,17 +817,159 @@ export class Piloting {
     let T = 0;
     let n = 0;
     let running = 0;
+    let noAir = 0;
+    let noFuel = 0;
     for (const e of c.engines) {
       if (e.destroyed) continue;
       n++;
       T = Math.max(T, e.pilotT);
-      if ((e.pilotOut ?? 0) !== 0) running++;
+      if ((e.pilotOut ?? 0) === 0 && !(e as { on?: boolean }).on) continue;
+      if (e.stage > 0 && !e.staged) continue;
+      if (e.starved) noAir++;
+      else if ((e as { dry?: boolean }).dry) noFuel++;
+      else running++;
     }
     // (over the ground under it on the World, where the floor is far down out of sight)
     const g = this.game;
     const height = g.env.world ? p.y - g.env.groundAt(p.x, p.y) : p.y - WORLD.floor;
     const fixed = g.connections.fixedOf(c.ents).length > 0;
-    return { speed: Math.hypot(p.vx, p.vy), height, climb: p.vy, throttle: T, engines: n, running, ...(fixed ? { fixed } : {}), ...(g.map.world ? { alt: p.y + g.origin.y, air: g.air.densityAt(p.y), temp: g.air.tempAt(p.y) } : {}) };
+    const tank = g.fuel.levelOf(c.ents);
+    let stages = 0;
+    const seen = new Set<number>();
+    for (const e of c.ents) if (!e.destroyed && e.stage > 0 && !seen.has(e.stage)) {
+      seen.add(e.stage);
+      stages++;
+    }
+    const next = this.nextStage(c.ents);
+    // what it is, for its dashboard
+    const wing = c.ents.find((e) => !e.destroyed && typeof (e as { aoa?: number }).aoa === 'number') as { aoa: number; stalled: boolean } | undefined;
+    const motor = c.ents.find((e) => !e.destroyed && typeof (e as { rpm?: number }).rpm === 'number') as { rpm: number; gear: number } | undefined;
+    const drives = [...c.mix.values()].some((m) => m.drive);
+    // (its pilot's g strain: the view greying, going)
+    const seat = c.ents.find((e) => !e.destroyed && typeof (e as { strain?: number }).strain === 'number' && (e as { pilot?: unknown }).pilot) as { strain: number } | undefined;
+    const kind = stages || tank.capacity ? 'rocket' : wing ? 'plane' : motor || drives ? 'car' : 'craft';
+    // as high as it gets coasting up (no air in the way: on the World, gravity weaker up high)
+    // (on the World, its path round the planet: the top of it and, if it's going round, the bottom)
+    let apo: number | undefined;
+    let peri: number | undefined;
+    if (g.map.world) {
+      const o = orbitOf(p.y + g.air.base, p.vx, p.vy, g.air.radius, Math.abs(g.gravity));
+      if (p.vy > 0 || o.peri > 0) apo = o.apo;
+      if (o.peri > 0) peri = o.peri;
+    }
+    return {
+      speed: Math.hypot(p.vx, p.vy), height, climb: p.vy, throttle: T, engines: n, running,
+      ...(noAir ? { noAir } : {}), ...(noFuel ? { noFuel } : {}), ...(fixed ? { fixed } : {}),
+      ...(tank.capacity ? { fuel: tank.fuel, fuelCap: tank.capacity } : {}),
+      ...(stages ? { stageNext: next, stages } : {}),
+      assist: c.assist, kind, tilt: wrapAngle(p.bodyAngle - c.a0), spin: p.av, g: c.g,
+      ...(apo !== undefined ? { apo } : {}), ...(peri !== undefined ? { peri } : {}),
+      ...(wing ? { aoa: (wing.aoa * Math.PI) / 180, stall: wing.stalled } : {}),
+      ...(motor ? { rpm: motor.rpm, gear: motor.gear + 1 } : {}),
+      ...(seat && seat.strain > 0 ? { strain: seat.strain } : {}),
+      ...(g.map.world ? { alt: p.y + g.origin.y, air: g.air.densityAt(p.y), temp: g.air.tempAt(p.y) } : {}),
+    };
+  }
+
+  /** The numbers of the build `sel` is part of (see BuildStats), or null if it has no engines nor wings. */
+  buildStats(sel: readonly Entity[]): BuildStats | null {
+    const g = this.game;
+    const ents = g.connections.assemblyOf(sel);
+    let m = 0;
+    let mx = 0;
+    let my = 0;
+    let la = 0;
+    let lx = 0;
+    let ly = 0;
+    let ref: Part | null = null;
+    for (const e of ents) {
+      if (e.destroyed) continue;
+      for (const p of e.parts) {
+        if (p.destroyed) continue;
+        ref ??= p;
+        m += p.mass;
+        mx += p.x * p.mass;
+        my += p.y * p.mass;
+        // (wings, fins, flaps: deep into the picture, their area against the air)
+        if ((p.depth ?? 0) >= 0.3) {
+          const a = p.w * PX * (p.depth ?? 0);
+          la += a;
+          lx += p.x * a;
+          ly += p.y * a;
+        }
+      }
+    }
+    const engines = ents.filter((e): e is Entity & Engine => isEngine(e) && !e.destroyed && !e.hovers);
+    if (!ref || m <= 0 || (!engines.length && !la)) return null;
+    let fx = 0;
+    let fy = 0;
+    let f = 0;
+    let cx = 0;
+    let cy = 0;
+    let rate = 0;
+    for (const e of engines) {
+      const d = e.pushDir();
+      if (!d) continue;
+      const F = e.pushForce();
+      const at = e.pushAt();
+      fx += d.x * F;
+      fy += d.y * F;
+      f += F;
+      cx += at.x * F;
+      cy += at.y * F;
+      rate += (e as { burnRate?(): number }).burnRate?.() ?? 0;
+    }
+    const thrust = Math.hypot(fx, fy);
+    const weight = m * Math.abs(g.gravity) * (g.map.world ? g.air.gravityAt(my / m) : 1);
+    const tank = g.fuel.levelOf(ents);
+    const burn = g.fuel.mode === 'infinite' || (!tank.capacity && g.fuel.mode === 'normal') ? Infinity : rate > 0 ? tank.fuel / rate : Infinity;
+    return {
+      mass: m, com: { x: mx / m, y: my / m },
+      thrust, cot: f > 0 ? { x: cx / f, y: cy / f } : null, dir: thrust > 0 ? { x: fx / thrust, y: fy / thrust } : null,
+      twr: weight > 0 ? thrust / weight : 0, burn,
+      col: la > 0 ? { x: lx / la, y: ly / la } : null,
+      speed: Math.hypot(ref.vx, ref.vy),
+    };
+  }
+
+  /**
+   * Where the craft flown here goes coasting from now (0.4.0: its trajectory line):
+   * points along its path (local) for up to `secs` s, till it meets the ground, its
+   * engines and the air left out (gravity weaker up high, and falling round the planet,
+   * as on the World). Empty if nothing's flown, or it's sat still.
+   */
+  trajectory(secs = 90): V2[] {
+    const c = this.mine;
+    const g = this.game;
+    if (!c || c.ref.destroyed) return [];
+    const p = c.ref;
+    let x = p.x;
+    let y = p.y;
+    let vx = p.vx;
+    let vy = p.vy;
+    const v = Math.hypot(vx, vy);
+    if (v < 4 || y - g.env.groundAt(x, y) < 2) return [];
+    const world = g.map.world;
+    const g0 = Math.abs(g.gravity);
+    const out: V2[] = [{ x, y }];
+    // (the air holding it back, as thick as it is where it'll be)
+    const k = dragOf(c.ents.flatMap((e) => e.parts));
+    // (steps short enough for a fair curve: longer the faster, it's going a long way)
+    const dt = Math.min(1, Math.max(0.05, 25 / Math.max(v, 1)));
+    for (let t = 0; t < secs && out.length < 400; t += dt) {
+      const gy = world ? -g0 * g.air.gravityAt(y) + (vx * vx) / (g.air.radius + y + g.air.base) : -g0;
+      const s = Math.hypot(vx, vy);
+      // (drag no more than stops it in a step)
+      const d = Math.min(1 / dt, k * g.air.densityAt(y) * s);
+      vx -= vx * d * dt;
+      vy -= vy * d * dt;
+      vy += gy * dt;
+      x += vx * dt;
+      y += vy * dt;
+      out.push({ x, y });
+      if (y < g.env.groundAt(x, y)) break;
+    }
+    return out;
   }
 
   /** Forgets every craft (a scene cleared or loaded). */

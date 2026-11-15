@@ -16,6 +16,11 @@ import { Fire } from '../systems/Fire';
 import { Heat } from '../systems/Heat';
 import { Aero } from '../systems/Aero';
 import { Piloting } from '../systems/Piloting';
+import { Power } from '../systems/Power';
+import { Wheels } from '../systems/Wheels';
+import { Seafaring } from '../systems/Seafaring';
+import { Fuel } from '../systems/Fuel';
+import { Oxygen } from '../systems/Oxygen';
 import { Atmosphere } from './Atmosphere';
 import { Structure } from '../systems/Structure';
 import { Weather } from '../systems/Weather';
@@ -26,6 +31,8 @@ import { stats } from './Stats';
 import { Puddles } from '../systems/Puddles';
 import { ContactGroups } from '../systems/ContactGroups';
 import { WeldUnits } from '../systems/WeldUnits';
+import { Rails } from '../systems/Rails';
+import { Races } from '../systems/Races';
 import { liftOutOfGround } from '../systems/GroundLift';
 import { maybeRebase, Origin } from './Origin';
 import { Altitude } from '../systems/Altitude';
@@ -82,6 +89,8 @@ export class Game {
   readonly connections: Connections;
   readonly contactGroups: ContactGroups;
   readonly weldUnits: WeldUnits;
+  readonly rails: Rails;
+  readonly races: Races;
   readonly fire: Fire;
   /** Every part's temperature (see systems/Heat). */
   readonly heat: Heat;
@@ -93,6 +102,12 @@ export class Game {
   readonly aero: Aero;
   /** Builds flown by the keys (see systems/Piloting). */
   readonly piloting: Piloting;
+  /** What engines burn, from the tanks in their builds (see systems/Fuel). */
+  readonly fuel: Fuel;
+  readonly power: Power;
+  readonly wheels: Wheels;
+  readonly seafaring: Seafaring;
+  readonly oxygen: Oxygen;
   /** The World's heights: lighter up high, and nothing left fallen through the ground (see systems/Altitude). */
   readonly altitude = new Altitude(this);
   /** What's far from every view on the World, taken out of it until someone comes near (see world/Parking). */
@@ -240,10 +255,17 @@ export class Game {
     this.connections = new Connections(this);
     this.contactGroups = new ContactGroups(this);
     this.weldUnits = new WeldUnits(this);
+    this.rails = new Rails(this);
+    this.races = new Races(this);
     this.fire = new Fire(this);
     this.heat = new Heat(this);
     this.aero = new Aero(this);
     this.piloting = new Piloting(this);
+    this.fuel = new Fuel(this);
+    this.power = new Power(this);
+    this.wheels = new Wheels(this);
+    this.seafaring = new Seafaring(this);
+    this.oxygen = new Oxygen(this);
     this.structure = new Structure(this);
     // (the sea first: the weather's drops stop at its surface)
     this.water = new Water(this);
@@ -492,6 +514,10 @@ export class Game {
     this.casings.clear();
     this.connections.clearAll();
     this.piloting.clear();
+    this.fuel.clear();
+    this.wheels.clear();
+    this.races.reset();
+    this.oxygen.clear();
     this.parking.clear();
   }
 
@@ -984,6 +1010,7 @@ export class Game {
     lap?.('step: groups');
     this.physics.step();
     this.weldUnits.step();
+    this.rails.step(dt);
     this.physics.readPoses(this.entities);
     resleepSettled(this);
     lap?.('step: physics');
@@ -991,6 +1018,7 @@ export class Game {
     this.projectiles.step(dt);
     lap?.('step: impacts');
     for (const e of this.entities) if (!e.destroyed) e.postStep(dt);
+    this.races.step(dt);
     lap?.('step: control');
     const tick = Math.floor(this.time / REST_CHECK);
     if (tick !== this.restTick) {
@@ -1004,6 +1032,9 @@ export class Game {
     lap?.('step: sync');
     this.fire.step(dt);
     this.heat.step(dt);
+    if (!this.net?.guest) this.power.step(dt);
+    this.wheels.step(dt);
+    this.seafaring.step(dt);
     this.weather.step(dt);
     this.water.step(dt);
     lap?.('step: effects');

@@ -70,6 +70,9 @@ the first time: the threaded build rebuilds Rust's standard library.
 - **Builds**: wasm-opt's `-O4` without inlining big functions into their only caller (that
   made the narrow phase slower), and each package loads its `.wasm` from the file beside it.
 
+- **The speed cap can be set.** `IntegrationParameters.normalizedMaxLinearVelocity`: Rapier
+  clamps every body to it (400 m/s by default), too slow for an orbit on the World map.
+
 ## Remaking the patches
 
 In the checkout `build.sh` made (`~/.cache/bp-rapier/rapier`, or `$RAPIER_WORK`), after

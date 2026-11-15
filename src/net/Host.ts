@@ -1,3 +1,4 @@
+import { PILOT_COMMANDS, STAGE_LABEL, stageAction, type PilotCommand } from '../systems/Piloting';
 import type { Game, NetRole } from '../world/Game';
 import type { Entity } from '../world/Entity';
 import type { Part } from '../world/Part';
@@ -750,7 +751,12 @@ export class NetHost {
       case 'key': pressKey(game, String(m.code), !!m.down); break;
       case 'pilot': {
         const ents = this.entities(m.ids);
-        if (ents.length) game.piloting.drive(ents, { x: clamp(Number(m.x) || 0, -1, 1), t: clamp(Number(m.t) || 0, -1, 1), r: clamp(Number(m.r) || 0, -1, 1) }, false);
+        if (ents.length) game.piloting.drive(ents, { x: clamp(Number(m.x) || 0, -1, 1), t: clamp(Number(m.t) || 0, -1, 1), r: clamp(Number(m.r) || 0, -1, 1), fire: m.fire === true, boost: m.boost === true }, false);
+        break;
+      }
+      case 'pilotCmd': {
+        const ents = this.entities(m.ids);
+        if (ents.length && (PILOT_COMMANDS as string[]).includes(m.cmd)) game.piloting.command(ents, m.cmd as PilotCommand);
         break;
       }
       case 'freezePart': {
@@ -911,6 +917,8 @@ export class NetHost {
         if (act && !act.disabled) act.action();
         // (or Repair, which every thing has: see Controls)
         else if (e && m.path?.[0] === 'Repair' && !isLiving(e) && e.damaged) e.repair();
+        // (or its stage, which every engine, decoupler and chute has: see Controls)
+        else if (e?.stageable && String(m.path?.[0]).startsWith(STAGE_LABEL)) stageAction(e).action();
         break;
       }
       case 'time':

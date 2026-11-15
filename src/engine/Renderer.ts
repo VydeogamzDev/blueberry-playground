@@ -173,20 +173,33 @@ vec3 worldSky(vec2 sp, vec2 world) {
   }
 #endif
 #if SKY_PLANET
-  // high up, the planet's edge under the view: a dark curve, its air glowing along it
+  // high up, the planet's edge low under the view, far off behind everything: a dark
+  // curve of sea, land and cloud, hazy toward its edge, its air glowing along it. Drawn
+  // by the screen (it's a long way down), in coarse pixels; its seas and clouds keep
+  // their size whatever the zoom, follow its curve, and drift by slowly as you fly along.
   float hc = uCam.y + uOrigin.w;
   float vis = smoothstep(${PLANET_FROM.toFixed(1)}, 20000.0, hc);
   if (vis > 0.0) {
-    vec2 px = gl_FragCoord.xy;
+    float b = max(2.0, floor(uScale * uPx * 2.0));
+    vec2 px = floor(gl_FragCoord.xy / b) * b;
     float R = uRes.x * mix(9.0, 1.1, smoothstep(4000.0, 80000.0, hc));
-    vec2 o = vec2(uRes.x * 0.5, uRes.y * 0.24 * vis - R);
+    vec2 o = vec2(uRes.x * 0.5, uRes.y * 0.12 * vis - R);
     float d = length(px - o) - R;
     float rim = uRes.y * 0.012;
     if (d < 0.0) {
-      vec2 g = floor(px / (uScale * uPx * 4.0));
-      float n = noise(g * 0.07 + 3.0);
-      c = mix(vec3(0.05, 0.11, 0.17), vec3(0.16, 0.24, 0.2), step(0.55, n));
-      c = mix(c, vec3(0.85, 0.88, 0.92), step(0.7, noise(g * 0.13 + 9.0)) * 0.6);
+      // (cells a sixth of the screen wide, a whole number of them round the wrap: no seam)
+      float N = max(1.0, floor(SKY_WRAP / (uRes.x / 6.0)));
+      float S = SKY_WRAP / N;
+      // along its edge (1 km flown: 50 px) and down from it
+      float along = mod(px.x + uCam.x * 0.05 + uOrigin.y, SKY_WRAP);
+      vec2 q = vec2(along / S, -d / S);
+      float n = noiseP(q, N) * 0.6 + noiseP(vec2(q.x * 2.0, q.y * 2.0 + 5.0), N * 2.0) * 0.3 + noiseP(vec2(q.x * 4.0, q.y * 4.0 + 11.0), N * 4.0) * 0.1;
+      c = n > 0.56 ? mix(vec3(0.085, 0.125, 0.095), vec3(0.15, 0.135, 0.1), step(0.66, n)) : vec3(0.03, 0.07, 0.135);
+      // clouds: long streaks
+      float cl = noiseP(vec2(q.x * 1.5, q.y * 5.0 + 23.0), N * 1.5) * 0.7 + noiseP(vec2(q.x * 3.0, q.y * 9.0 + 41.0), N * 3.0) * 0.3;
+      c = mix(c, vec3(0.6, 0.64, 0.7), step(0.64, cl) * 0.45);
+      // hazy toward its edge, where you look through more of its air
+      c = mix(c, vec3(0.22, 0.38, 0.6), (1.0 - smoothstep(0.0, rim * 4.0, -d)) * 0.5);
     } else if (d < rim) c = mix(c, vec3(0.45, 0.7, 1.0), (1.0 - floor(d / rim * 3.0) / 3.0) * 0.8);
   }
 #endif
@@ -625,6 +638,68 @@ export class Renderer {
     }
     this.sprites.flush();
     this.gl.render(this.scene, cam);
+    // (0.4.0: the views of camera parts: on in-world screens, and the picture-in-picture box)
+    if (this.views.length) this.renderViews(cx, cy, scale);
+  }
+
+  /**
+   * Other views of the scene asked for this frame (0.4.0, see entities/Cameras): each a
+   * camera part's, centred on (x, y) at `zoom` px a metre, drawn into its own texture
+   * (an in-world screen shows it) or into a box on the screen (`box`, CSS px from the top
+   * left: picture-in-picture). Asked again each frame they're wanted.
+   */
+  views: { x: number; y: number; zoom: number; target?: THREE.WebGLRenderTarget; box?: { left: number; top: number; w: number; h: number } }[] = [];
+
+  private renderViews(mx: number, my: number, mscale: number): void {
+    const gl = this.gl;
+    const cam = this.camera;
+    const u = this.bgMat.uniforms;
+    const dpr = this.dpr;
+    for (const v of this.views) {
+      const w = v.box ? v.box.w : v.target!.width / dpr;
+      const h = v.box ? v.box.h : v.target!.height / dpr;
+      cam.left = v.x - w / 2 / v.zoom;
+      cam.right = v.x + w / 2 / v.zoom;
+      cam.top = v.y + h / 2 / v.zoom;
+      cam.bottom = v.y - h / 2 / v.zoom;
+      cam.updateProjectionMatrix();
+      const scale = v.zoom * dpr;
+      // (where its middle is on the drawing surface, gl's way up: the sky and lights work from it)
+      const midX = v.box ? (v.box.left + w / 2) * dpr : (w / 2) * dpr;
+      const midY = v.box ? (this.height - v.box.top - h / 2) * dpr : (h / 2) * dpr;
+      for (const m of [this.bgMat, this.bgMesh.material as THREE.ShaderMaterial]) {
+        m.uniforms.uCam?.value.set(v.x, v.y);
+        m.uniforms.uCenter?.value.set(midX, midY);
+        if (m.uniforms.uScale) m.uniforms.uScale.value = scale;
+        m.uniforms.uRes?.value.set(w * dpr, h * dpr);
+      }
+      const lu = this.lightMat.uniforms;
+      lu.uCam.value.set(v.x, v.y);
+      lu.uCenter.value.set(midX, midY);
+      lu.uScale.value = scale;
+      if (v.target) {
+        gl.setRenderTarget(v.target);
+        gl.render(this.scene, cam);
+        gl.setRenderTarget(null);
+      } else if (v.box) {
+        const b = v.box;
+        gl.setScissorTest(true);
+        gl.setScissor(b.left, this.height - b.top - h, w, h);
+        gl.setViewport(b.left, this.height - b.top - h, w, h);
+        gl.render(this.scene, cam);
+        gl.setScissorTest(false);
+        gl.setViewport(0, 0, this.width, this.height);
+      }
+    }
+    this.views.length = 0;
+    // (back as the main view has them, for anything drawn after)
+    u.uCam.value.set(mx, my);
+    u.uCenter.value.set(this.centerX * dpr, (this.height * dpr) / 2);
+    u.uScale.value = mscale;
+    u.uRes.value.set(this.width * dpr, this.height * dpr);
+    this.lightMat.uniforms.uCam.value.set(mx, my);
+    this.lightMat.uniforms.uCenter.value.set(this.centerX * dpr, (this.height * dpr) / 2);
+    this.lightMat.uniforms.uScale.value = mscale;
   }
 
   /** Draw calls in the last rendered frame. */

@@ -177,7 +177,8 @@ export type GuestOp =
   /** A key trigger's key pressed or let go (see entities/Flight). */
   | { op: 'key'; code: string; down: boolean }
   /** Flying a build (see systems/Piloting): its keys (A/D, W/S, Q/E: -1, 0 or 1), renewed while it's selected. */
-  | { op: 'pilot'; ids: number[]; x: number; t: number; r: number }
+  | { op: 'pilot'; ids: number[]; x: number; t: number; r: number; fire?: boolean; boost?: boolean }
+  | { op: 'pilotCmd'; ids: number[]; cmd: string }
   | { op: 'freezePart'; p: PartRef }
   | { op: 'rebuild'; id: number; config?: EntityConfig; at?: V2 }
   /** Takes hold of a part (`ids`: the selection, which moves with it; with time paused, their assemblies too, or with `alone` just them). */

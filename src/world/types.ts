@@ -4,7 +4,7 @@ import type { Entity } from './Entity';
 import type { Part } from './Part';
 import type { Snapshot } from './Snapshot';
 
-export type Category = 'Characters' | 'Objects' | 'Weapons' | 'Melee' | 'Explosives' | 'Medical' | 'Machinery' | 'Vehicles' | 'Contraptions' | 'Tools';
+export type Category = 'Characters' | 'Objects' | 'Weapons' | 'Melee' | 'Explosives' | 'Medical' | 'Machinery' | 'Vehicles' | 'Flight' | 'Contraptions' | 'Tools';
 
 export const CATEGORIES: { id: Category; icon: string; label: string }[] = [
   { id: 'Characters', icon: 'human', label: 'Characters' },
@@ -15,6 +15,7 @@ export const CATEGORIES: { id: Category; icon: string; label: string }[] = [
   { id: 'Medical', icon: 'syringe', label: 'Medical' },
   { id: 'Machinery', icon: 'gear', label: 'Machinery' },
   { id: 'Vehicles', icon: 'car', label: 'Vehicles' },
+  { id: 'Flight', icon: 'rocket', label: 'Flight & space' },
   { id: 'Contraptions', icon: 'blueprint', label: 'Contraptions' },
   { id: 'Tools', icon: 'wrench', label: 'Tools' },
 ];
@@ -134,6 +135,9 @@ export interface EntityState {
   z?: number;
   /** Fried by an EMP (see Entity.fried). */
   fried?: boolean;
+  /** Its stage, and whether it's been fired (see Entity.stage). */
+  stage?: number;
+  staged?: boolean;
   /** Which entity it was (undo's own captures only, never saved: see History). */
   uid?: number;
 }

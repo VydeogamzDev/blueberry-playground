@@ -27,9 +27,14 @@ export interface WeatherState {
   lightning: number;
   /** The world's light without lamps: 1 day, 0.55 dusk, 0.2 night (see Renderer.ambient). */
   light: number;
+  /** The wind (0.4.0): -1 .. 1, a share of WIND_MOST, + blowing right (see windAt()). */
+  wind: number;
 }
 
-export const CLEAR: Readonly<WeatherState> = { rain: 0, snow: 0, fog: 0, lightning: 0, light: 1 };
+/** The strongest wind (m/s), down low; it blows harder higher up. */
+export const WIND_MOST = 14;
+
+export const CLEAR: Readonly<WeatherState> = { rain: 0, snow: 0, fog: 0, lightning: 0, light: 1, wind: 0 };
 
 /** Weather as read from a save or a host, made safe: each value a number in its range (else `base`'s). */
 export function cleanWeather(raw: unknown, base: Readonly<WeatherState> = CLEAR): WeatherState {
@@ -38,7 +43,7 @@ export function cleanWeather(raw: unknown, base: Readonly<WeatherState> = CLEAR)
     const v = r[k];
     return typeof v === 'number' && Number.isFinite(v) ? clamp(v, lo, hi) : base[k];
   };
-  return { rain: num('rain', 0, 1), snow: num('snow', 0, 1), fog: num('fog', 0, 1), lightning: num('lightning', 0, 100), light: num('light', 0.05, 1) };
+  return { rain: num('rain', 0, 1), snow: num('snow', 0, 1), fog: num('fog', 0, 1), lightning: num('lightning', 0, 100), light: num('light', 0.05, 1), wind: num('wind', -1, 1) };
 }
 
 /** Columns of ground tops the drops and settled snow are measured against, round the view (see tops). */
@@ -341,6 +346,26 @@ export class Weather {
   /** Drops and flakes drawn the last frame (none while there's no weather). */
   get drawn(): number {
     return this.rain.count + this.snow.count;
+  }
+
+  /**
+   * The air's own motion at (x, y) (m/s): the wind, stronger higher up (twice as strong by
+   * 500 m), and on the World by day, thermals, columns of warm air rising off the ground
+   * (strongest low down, gone by 1.5 km).
+   */
+  windAt(x: number, y: number): { x: number; y: number } {
+    const g = this.game;
+    const s = this.state;
+    const h = Math.max(0, y - (g.env.world ? g.env.groundAt(x, y) : WORLD.floor));
+    const wx = s.wind * WIND_MOST * Math.min(2, 1 + h / 500);
+    let wy = 0;
+    if (g.map.world && s.light > 0.5 && h > 2 && h < 1500) {
+      const tx = x + g.origin.x;
+      // (a column about 60 m across every 400 m or so)
+      const c = Math.sin(tx / 63.7) * Math.sin(tx / 173.1 + 1.3);
+      if (c > 0.55) wy = ((c - 0.55) / 0.45) * 4 * Math.min(1, h / 30) * (1 - h / 1500) * s.light;
+    }
+    return { x: wx, y: wy };
   }
 
   /** Changes the weather (Settings > World; in someone else's game, the host's is everyone's). */

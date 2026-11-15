@@ -463,7 +463,7 @@ interface RawJoints {
   jointConfigureMotorPosition(handle: number, axis: number, target: number, stiffness: number, damping: number): void;
   jointSetMotorMaxForce(handle: number, axis: number, force: number): void;
 }
-const rawJoints = (j: RAPIER.ImpulseJoint) => (j as unknown as { rawSet: RawJoints }).rawSet;
+export const rawJoints = (j: RAPIER.ImpulseJoint) => (j as unknown as { rawSet: RawJoints }).rawSet;
 
 /**
  * How far (m) a piston's rod gives either way across its stroke, and how stiffly

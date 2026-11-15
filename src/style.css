@@ -1795,6 +1795,36 @@ body:not(.touch) .touch-only {
   background: #f2a33a;
 }
 
+/* its dashboard row (rocket, plane or car) and its fuel */
+.pilot-dash {
+  color: #b9c3cc;
+}
+
+.pilot-dash.warn {
+  color: #ff8a6a;
+}
+
+.pilot-fuel.hidden {
+  display: none;
+}
+
+.pilot-fuel {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.pilot-fuel-fill {
+  height: 100%;
+  width: 0;
+  background: #5fc0ff;
+}
+
+.pilot-fuel-fill.low {
+  background: #ff6a4a;
+}
+
 .pad-btn {
   position: absolute;
   width: 64px;
@@ -3466,4 +3496,71 @@ body.touch.driving .tut-card {
   .touch .tb-sep {
     margin: 0 2px;
   }
+}
+
+/* picture-in-picture: a camera part's view while flying (the renderer draws into it) */
+.pip-box {
+  position: absolute;
+  right: calc(12px + env(safe-area-inset-right));
+  top: calc(120px + env(safe-area-inset-top));
+  width: 240px;
+  height: 150px;
+  border: 2px solid rgba(232, 236, 239, 0.7);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.pip-box.hidden {
+  display: none;
+}
+
+/* the flight recorder's graph in the pilot's readout */
+.flight-graph {
+  width: 100%;
+  height: 36px;
+  image-rendering: pixelated;
+}
+
+@media (max-width: 700px) {
+  .pip-box {
+    width: 160px;
+    height: 100px;
+  }
+}
+
+/* the g veil (0.4.0): a pilot greying out under hard g, then blacking out (see UI.showStrain()) */
+.g-veil {
+  --veil: 0;
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  backdrop-filter: grayscale(var(--veil));
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) calc((1 - var(--veil)) * 55%), rgba(0, 0, 0, calc(0.5 + 0.5 * var(--veil))) calc((1 - var(--veil)) * 55% + 30%));
+}
+.g-veil.hidden {
+  display: none;
+}
+
+/* the race line (0.4.0): a lap's time, the next checkpoint, the stunt points (see UI.showRace()) */
+.race-line {
+  position: fixed;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: rgba(16, 18, 22, 0.72);
+  color: #f2f2ee;
+  font: 600 14px/1.3 var(--font, system-ui), sans-serif;
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 5;
+}
+.race-line.hidden {
+  display: none;
 }

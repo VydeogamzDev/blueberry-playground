@@ -5,10 +5,12 @@ import { registerArsenal } from './arsenal';
 import { registerMissiles } from './missiles';
 import { registerMachines2 } from './machines2';
 import { registerFlight } from './flight';
+import { registerRocketry } from './rocketry';
+import { registerVehicles2, registerBoats, registerCombat, registerRails, registerPlaces } from './vehicles2';
 import { registerFloats } from './floats';
 import { registerPotions } from './potions';
 import { Human, VARIANTS, HUMAN_HALF_HEIGHT, GRANT_HALF_HEIGHT } from '../entities/Human';
-import { figurePreview, GRANT_SKIN } from '../art/human';
+import { figurePreview, GRANT_SKIN, DUMMY_SKIN } from '../art/human';
 import { grantMode } from '../world/GrantMode';
 import { Creature, SPECIES, creaturePreview, creatureHalfHeight } from '../entities/Creature';
 import type { ItemDef } from '../world/types';
@@ -35,6 +37,16 @@ function registerCharacters(): void {
     })(),
     halfHeight: HUMAN_HALF_HEIGHT,
     create: (game, x, y, opts) => new Human(game, android, VARIANTS.android, x, y, opts),
+  });
+  const dummy: ItemDef = register({
+    id: 'crash-dummy', name: 'Crash Dummy', category: 'Characters', tags: ['dummy', 'crash', 'test', 'ragdoll', 'car', 'safety'],
+    description: 'A crash test dummy: never wakes, never bleeds, but is hurt just as a person would be. Sit it in what you build and crash it; its menu says whether a person would have lived. Build a g-meter in to see what the crash put it through.',
+    preview: (() => {
+      let c: HTMLCanvasElement | null = null;
+      return () => (c ??= figurePreview('human', DUMMY_SKIN, 'dummy'));
+    })(),
+    halfHeight: HUMAN_HALF_HEIGHT,
+    create: (game, x, y, opts) => new Human(game, dummy, VARIANTS.dummy, x, y, opts),
   });
   // (in the toybox only in Grant mode: see world/GrantMode)
   const grant: ItemDef = register({
@@ -89,5 +101,11 @@ export function registerAll(): void {
   registerMissiles();
   registerMachines2();
   registerFlight();
+  registerRocketry();
+  registerVehicles2();
+  registerBoats();
+  registerCombat();
+  registerRails();
+  registerPlaces();
   registerFloats();
 }

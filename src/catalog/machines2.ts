@@ -3,6 +3,9 @@ import { MAT, type PhysMaterial } from '../world/Materials';
 import { PX } from '../engine/constants';
 import { PixelArt } from '../art/PixelArt';
 import * as M from '../art/machines2';
+import * as P from '../art/power';
+import type { SensorKind } from '../art/power';
+import { Sensor, Toggle, Sequencer, SolarPanel, Generator, SOLAR_W, GENERATOR_W } from '../entities/Sensors';
 import { artRect, densityFor } from '../entities/Item';
 import { Turret, type TurretSpec } from '../entities/Turrets';
 import { Fan, Propeller } from '../entities/Air';
@@ -230,6 +233,48 @@ function registerLogic(): void {
     ['servo', 'arm', 'rotate', 'angle', 'actuator', 'hinge']);
 }
 
+function registerPower(): void {
+  const chipShapes = rects(16, 12, [[0, 0, 16, 12]]);
+  const SENSORS: [SensorKind, string, string, string, string[]][] = [
+    ['altimeter', 'altimeter', 'Altimeter', 'its height over the ground', ['height', 'altitude', 'altimeter', 'ground', 'parachute', 'landing']],
+    ['speed', 'speed-sensor', 'Speed Sensor', 'its speed', ['speed', 'velocity', 'speedometer', 'fast']],
+    ['tilt', 'tilt-sensor', 'Tilt Sensor', 'how far it’s tipped from upright', ['tilt', 'angle', 'level', 'upright', 'gyro']],
+    ['fuel', 'fuel-gauge', 'Fuel Gauge', 'the fuel left in its build’s tanks (a share of what they hold)', ['fuel', 'gauge', 'tank', 'empty', 'staging']],
+    ['proximity', 'proximity-sensor', 'Proximity Sensor', 'how near the nearest thing not built into it is', ['proximity', 'near', 'distance', 'close', 'touch']],
+  ];
+  for (const [kind, id, name, what, tags] of SENSORS) {
+    const art = (on: boolean) => P.sensorArt(`${kind}:${on ? 1 : 0}`);
+    item(id, name,
+      `A sensor: reads ${what}, and while that’s above (or below) what it’s set to in its menu, powers its wires and sends a pulse as it gets there. Build it in: wire it to a parachute, a decoupler, a thruster, a lamp. Activate switches it off and on.`,
+      () => art(false), (game, def, x, y, opts) =>
+        new Sensor(game, def, cfg(() => art(false), MAT.plastic, chipShapes, 0.5), kind, P.sensorArt, x, y, opts),
+      [...tags, 'sensor', 'logic', 'trigger']);
+  }
+  item('toggle', 'Toggle',
+    'A flip-flop: each pulse (or power arriving) on its input (left) flips it on or off; while it’s on, its output (right) is powered. Activate flips it by hand.',
+    () => P.toggleArt(false), (game, def, x, y, opts) =>
+      new Toggle(game, def, cfg(() => P.toggleArt(false), MAT.plastic, chipShapes, 0.5), P.toggleArt, x, y, opts),
+    ['toggle', 'flip flop', 'latch', 'memory', 'logic']);
+  const seqShapes = rects(16, 18, [[0, 0, 16, 18]]);
+  item('step-sequencer', 'Step Sequencer',
+    'Four outputs down its right side: each pulse (or power arriving) on its input (left) moves it on to the next, round and round, and only the output it’s on is powered. Fire stages, light lamps in turn, work a machine step by step. Activate steps it by hand; its menu sets 2, 3 or 4 steps.',
+    () => P.sequencerArt(0), (game, def, x, y, opts) =>
+      new Sequencer(game, def, cfg(() => P.sequencerArt(0), MAT.plastic, seqShapes, 0.6), P.sequencerArt, x, y, opts),
+    ['sequencer', 'step', 'sequence', 'order', 'logic', 'staging']);
+  const solarShapes = rects(24, 8, [[0, 0, 24, 4], [10, 4, 4, 4]]);
+  item('solar-panel', 'Solar Panel',
+    `Facing the sky in daylight, it powers its wires and charges the batteries on them: up to ${SOLAR_W} W at noon, less tipped away or under cloud, none at night. Stronger above the air.`,
+    () => P.solarArt(false), (game, def, x, y, opts) =>
+      new SolarPanel(game, def, cfg(() => P.solarArt(false), MAT.metal, solarShapes, 6), P.solarArt, x, y, opts),
+    ['solar', 'sun', 'panel', 'power', 'charge', 'energy', 'satellite']);
+  const genShapes = rects(20, 14, [[0, 3, 20, 11], [2, 0, 4, 3]]);
+  item('generator', 'Generator',
+    `Started (activate, or a pulse), it burns fuel from the tanks built in with it and makes ${GENERATOR_W} W: it powers its wires and charges the batteries on them. With no tank it runs free, as engines do (Settings’ fuel).`,
+    () => P.generatorArt(0), (game, def, x, y, opts) =>
+      new Generator(game, def, cfg(() => P.generatorArt(0), MAT.metal, genShapes, 45), P.generatorArt, x, y, opts),
+    ['generator', 'power', 'engine', 'fuel', 'charge', 'electric']);
+}
+
 /** Registers the contraption toys (after the rest: see registry.ts). */
 export function registerMachines2(): void {
   registerTurrets();
@@ -237,5 +282,6 @@ export function registerMachines2(): void {
   registerElectric();
   registerMovers();
   registerLogic();
+  registerPower();
   registerEmp();
 }

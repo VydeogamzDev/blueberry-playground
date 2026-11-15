@@ -117,9 +117,10 @@ export class Breath {
    * half out of the water they're still in it); awake, they hold their breath;
    * treading, they tire. Returns whether they've just come up gasping.
    */
-  step(game: Game, dt: number, mouth: V2, middle: V2, awake: boolean, treading: boolean): boolean {
+  step(game: Game, dt: number, mouth: V2, middle: V2, awake: boolean, treading: boolean, oxygen = false): boolean {
     const level = (this.level = waterOver(game, mouth.x, mouth.y));
-    this.under = level !== null && level + LAPS > mouth.y;
+    // (a sealed helmet with air of its own: they breathe under water and in space alike)
+    this.under = !oxygen && level !== null && level + LAPS > mouth.y;
     this.deep = level !== null && level > middle.y - DEEP;
     this.depth = level === null ? 0 : level - game.env.groundAt(middle.x, middle.y);
     let gasp = false;
@@ -133,7 +134,7 @@ export class Breath {
       this.least = 1;
       // (high up on the World the air's too thin to hold a full breath: they fade toward as
       // much as it gives, out cold short of FAINT, and with none at all they starve of it)
-      const most = thinAir(game.air.thinness(mouth.y));
+      const most = oxygen ? 1 : thinAir(game.air.thinness(mouth.y));
       if (this.air > most) this.air = Math.max(most, this.air - dt / (awake ? THIN_FADE : THIN_FADE * 1.4));
       else this.air = Math.min(most, this.air + dt / REFILL);
       if (this.air <= 0) this.starved += dt;

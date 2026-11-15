@@ -1,3 +1,8 @@
+import type { FuelMode } from '../systems/Fuel';
+import type { PilotHud } from '../systems/Piloting';
+import { CameraPart } from '../entities/Cameras';
+import { FlightRecorder } from './FlightRecorder';
+import { CHALLENGES, Challenges } from '../systems/Challenges';
 import type { Game } from '../world/Game';
 import { POWERS, TOOLS, slotVariants, toolSlot, type Controls, type PowerId, type ToolId, type UIBridge, type ValueEditor } from '../tools/Controls';
 import { ANGLE_STEPS, GRID_SIZES } from '../tools/Arrange';
@@ -195,6 +200,19 @@ export class UI implements UIBridge {
   private pilotHud!: HTMLDivElement;
   private pilotText = '';
   private pilotBar!: HTMLDivElement;
+  private pilotDash!: HTMLSpanElement;
+  private gVeil!: HTMLDivElement;
+  private raceLine!: HTMLDivElement;
+  private raceText = '';
+  private strainShown = 0;
+  private pilotFuel!: HTMLDivElement;
+  private dashText = '';
+  private pipBox!: HTMLDivElement;
+  /** The flying challenges (see systems/Challenges), and when they last looked. */
+  private challenges: Challenges;
+  private challengeAt = 0;
+  /** The flight recorder: what's flown here, its height and speed over the last minute, graphed (see FlightRecorder). */
+  private recorder = new FlightRecorder();
   private matBar!: HTMLDivElement;
   private matBtns = new Map<string, HTMLButtonElement>();
   /** Under the tool bar: the kinds of the slot in hand (Rope, Fuse cord), or the Spring's stiffnesses. */
@@ -292,8 +310,14 @@ export class UI implements UIBridge {
       download: (name, text) => this.download(name, text),
     });
     this.army = new ArmyPanel(game, controls, root, { toast: (msg) => this.toast(msg), close: () => this.hide(this.army.overlay), tellGuests: (msg) => this.session.host?.tellGuests(msg) });
+    this.challenges = new Challenges(game);
+    this.challenges.onMet = (c) => {
+      this.toast(`Challenge met: ${c.title}!`);
+      this.game.sound.ui('confirm');
+    };
     this.tutorials = new TutorialsPanel(game, root, {
       tours: () => this.tutorial.tours(),
+      challenges: () => CHALLENGES.map((c) => ({ title: c.title, blurb: c.blurb + (c.world ? ' (World map)' : ''), done: this.challenges.isDone(c.id) })),
       start: (id) => this.startTour(id),
       close: () => this.hide(this.tutorials.overlay),
     });
@@ -823,8 +847,22 @@ export class UI implements UIBridge {
     const bar = el('div', 'pilot-throttle');
     this.pilotBar = el('div', 'pilot-throttle-fill');
     bar.appendChild(this.pilotBar);
-    this.pilotHud.append(el('span', 'pilot-text'), bar);
+    // (0.4.0: a dashboard row for its kind, rocket, plane or car, and its fuel)
+    this.pilotDash = el('span', 'pilot-dash');
+    const fuel = el('div', 'pilot-fuel hidden');
+    this.pilotFuel = el('div', 'pilot-fuel-fill');
+    fuel.appendChild(this.pilotFuel);
+    this.pilotHud.append(el('span', 'pilot-text'), bar, this.pilotDash, fuel, this.recorder.canvas);
     this.root.appendChild(this.pilotHud);
+    // (the race line: see showRace())
+    this.raceLine = el('div', 'race-line hidden');
+    this.root.appendChild(this.raceLine);
+    // (the g veil: see showStrain())
+    this.gVeil = el('div', 'g-veil hidden');
+    this.root.insertBefore(this.gVeil, this.root.firstChild);
+    // (the picture-in-picture box: the renderer draws a camera part's view in it, see showPip())
+    this.pipBox = el('div', 'pip-box hidden');
+    this.root.appendChild(this.pipBox);
     // building: what Alt, Shift and Ctrl do with a mouse, as switches (see Controls.freeAnchor...)
     this.buildBar = el('div', 'touchbar buildbar hidden');
     const sw = (label: string, title: string, fn: () => void, on?: () => boolean, show?: () => boolean) => {
@@ -1336,6 +1374,12 @@ export class UI implements UIBridge {
       choice('set-water', [[0, 'Limited'], [1, 'Infinite']], fluid.infinite ? 1 : 0, (v) => (fluid.infinite = v === 1)),
       'Infinite: all the water you pour stays water (past the usual limit, the more there is, the slower the game runs)',
     );
+    const fuel = this.game.fuel;
+    row(
+      'Fuel',
+      choice('set-fuel', [['normal', 'Tanks run dry'], ['infinite', 'Infinite'], ['required', 'Engines need a tank']] as [FuelMode, string][], fuel.mode, (v) => (fuel.mode = v)),
+      'Thrusters, jets and engines burn the fuel in the tanks built in with them (a build with no tank runs free). Infinite: tanks never run dry. Engines need a tank: one with none in its build doesn’t run',
+    );
     this.syncIterations = () => {
       // a guest's game shows the host's world: the host's setting is the one that counts
       const host = this.session.guest?.hostIterations || 0;
@@ -1373,6 +1417,9 @@ export class UI implements UIBridge {
     row('Snow', snow, 'Falls and settles on the ground, melting away once it stops');
     const fog = choice('set-fog', FOGS, 0, (v) => ws.set({ fog: v }));
     row('Fog', fog, 'Hides what’s far off behind a haze');
+    const WINDS: [number, string][] = [[-1, 'Gale ←'], [-0.4, 'Breeze ←'], [0, 'Still'], [0.4, 'Breeze →'], [1, 'Gale →']];
+    const wind = choice('set-wind', WINDS, 0, (v) => ws.set({ wind: v }));
+    row('Wind', wind, 'Blows what’s in the air along (harder higher up): sails fill, planes drift, smoke streams away. On the World by day, warm air rises in thermals too');
     const bolts = el('span', 'set-iters');
     const chance = el('input', 'set-lightning');
     chance.type = 'range';
@@ -1408,9 +1455,10 @@ export class UI implements UIBridge {
       rain.value = nearest(FALLS, s.rain);
       snow.value = nearest(FALLS, s.snow);
       fog.value = nearest(FOGS, s.fog);
+      wind.value = nearest(WINDS, s.wind);
       chance.value = String(s.lightning);
       chanceNote.textContent = `${Math.round(s.lightning)}%`;
-      for (const i of [light, rain, snow, fog, chance]) {
+      for (const i of [light, rain, snow, fog, wind, chance]) {
         i.disabled = guest;
         i.title = guest ? 'Set by the host' : '';
       }
@@ -2007,18 +2055,80 @@ export class UI implements UIBridge {
   private showPilot(): void {
     const hud = this.controls.pilotHud();
     if (this.pilotHud.classList.contains('hidden') !== !hud) this.pilotHud.classList.toggle('hidden', !hud);
-    if (!hud) return;
+    this.showPip(!!hud);
+    if (!hud) {
+      this.showStrain(0);
+      return;
+    }
+    this.recorder.add(this.game.time, hud);
+    // (challenges: what's flown here, watched for the goals it meets)
+    const craft = this.game.piloting.mine;
+    if (craft) {
+      const now = this.game.time;
+      const dt = Math.max(0, Math.min(0.5, now - this.challengeAt));
+      this.challengeAt = now;
+      const crewed = craft.ents.some((e) => { const h = (e as { pilot?: { alive: boolean } | null }).pilot; return !!h && h.alive; });
+      this.challenges.watch(craft, hud, crewed, dt);
+    }
     const climb = Math.abs(hud.climb) < 0.05 ? '0.0' : `${hud.climb > 0 ? '▲' : '▼'} ${Math.abs(hud.climb).toFixed(1)}`;
     // (on the World: how high it truly is, and the air there)
     const air = hud.alt === undefined ? '' : ` · alt ${altText(hud.alt)} · air ${(hud.air ?? 0) < 0.01 ? (hud.air ?? 0).toExponential(1) : (hud.air ?? 0).toFixed(2)} kg/m³ ${Math.round(hud.temp ?? 0)} °C`;
     // (fixed to the background: said first, or a player wonders why full throttle does nothing)
     const fixed = hud.fixed ? 'Fixed to the background (right-click it: Free from the background) · ' : '';
-    const text = `${fixed}${hud.speed.toFixed(1)} m/s · ${hud.height.toFixed(1)} m up · climb ${climb} m/s · throttle ${Math.round(hud.throttle * 100)}% · ${hud.running}/${hud.engines} running${air}`;
+    // (jets flamed out up high, propellers with nothing to bite: said, or full throttle and nothing happening is a mystery)
+    const noAir = hud.noAir ? ` · ${hud.noAir} out of air (jets and propellers need it: rocket thrusters don’t)` : '';
+    const text = `${fixed}${hud.speed.toFixed(1)} m/s · ${hud.height.toFixed(1)} m up · climb ${climb} m/s · throttle ${Math.round(hud.throttle * 100)}% · ${hud.running}/${hud.engines} running${noAir}${air}`;
     if (text !== this.pilotText) {
       this.pilotText = text;
       (this.pilotHud.firstChild as HTMLElement).textContent = text;
       this.pilotBar.style.width = `${Math.round(hud.throttle * 100)}%`;
     }
+    const dash = dashboardText(hud, (id) => this.controls.bindings.label(id));
+    if (dash !== this.dashText) {
+      this.dashText = dash;
+      this.pilotDash.textContent = dash;
+      this.pilotDash.classList.toggle('warn', !!hud.stall || (hud.g ?? 1) > 6 || (hud.noFuel ?? 0) > 0 || (hud.strain ?? 0) >= 0.5);
+    }
+    this.showStrain(hud.strain ?? 0);
+    const cap = hud.fuelCap ?? 0;
+    const fuelBox = this.pilotFuel.parentElement!;
+    if (fuelBox.classList.contains('hidden') !== !cap) fuelBox.classList.toggle('hidden', !cap);
+    if (cap) {
+      const f = Math.max(0, Math.min(1, (hud.fuel ?? 0) / cap));
+      this.pilotFuel.style.width = `${Math.round(f * 1000) / 10}%`;
+      this.pilotFuel.classList.toggle('low', f < 0.15);
+    }
+  }
+
+  /** Races and stunts (0.4.0: systems/Races): what's said as toasts, the race's state in a line at the top. */
+  private showRace(): void {
+    const r = this.game.races;
+    while (r.news.length) this.toast(r.news.shift()!.text);
+    const text = r.status();
+    if (text === this.raceText) return;
+    this.raceText = text;
+    this.raceLine.textContent = text;
+    this.raceLine.classList.toggle('hidden', !text);
+  }
+
+  /** The g veil (0.4.0): the pilot's view greying in from the edges under hard g, and going black (see Cockpit.strain). */
+  private showStrain(strain: number): void {
+    const k = Math.round(Math.max(0, Math.min(1, (strain - 0.3) / 0.7)) * 50) / 50;
+    if (k === this.strainShown) return;
+    this.strainShown = k;
+    this.gVeil.classList.toggle('hidden', k <= 0);
+    this.gVeil.style.setProperty('--veil', String(k));
+  }
+
+  /** Picture-in-picture (0.4.0): a camera part in what's flown here, its view in a box in the corner. */
+  private showPip(flying: boolean): void {
+    const craft = flying ? this.game.piloting.mine : null;
+    const cam = craft?.ents.find((e): e is CameraPart => e instanceof CameraPart && e.pip && !e.destroyed) ?? null;
+    if (this.pipBox.classList.contains('hidden') !== !cam) this.pipBox.classList.toggle('hidden', !cam);
+    if (!cam) return;
+    const b = this.pipBox.getBoundingClientRect();
+    const v = cam.viewAt();
+    this.game.renderer.views.push({ x: v.x, y: v.y, zoom: cam.zoom, box: { left: b.left, top: b.top, w: b.width, h: b.height } });
   }
 
   isPanelOpen(): boolean {
@@ -2108,6 +2218,7 @@ export class UI implements UIBridge {
     for (const b of this.aimBtns) if (b.classList.contains('hidden') !== !drive?.aim) b.classList.toggle('hidden', !drive?.aim);
     for (const b of this.turnBtns) if (b.classList.contains('hidden') !== !drive?.turn) b.classList.toggle('hidden', !drive?.turn);
     this.showPilot();
+    this.showRace();
     if (targets.length) {
       const label = targets.every((e) => e.frozen) ? 'Unfreeze' : 'Freeze';
       if (this.btnFreeze.textContent !== label) this.btnFreeze.textContent = label;
@@ -2122,4 +2233,37 @@ export class UI implements UIBridge {
 /** A height for the pilot's readout: metres, or kilometres once it's that high. */
 function altText(m: number): string {
   return Math.abs(m) < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(m < 10000 ? 2 : 1)} km`;
+}
+
+/**
+ * A craft's dashboard row (0.4.0), by what it is: a rocket's fuel, stages, the top of
+ * its climb and the g; a plane's angle to the air (and STALL); a car's revs and gear.
+ * Then what's said of any: stability assist, out of fuel. `key` names a command's key.
+ */
+export function dashboardText(hud: PilotHud, key: (id: ActionId) => string): string {
+  const out: string[] = [];
+  const kind = hud.kind ?? 'craft';
+  const k = (id: ActionId) => key(id) || '—';
+  if (hud.fuelCap) out.push(`fuel ${Math.round(((hud.fuel ?? 0) / hud.fuelCap) * 100)}% (${Math.round(hud.fuel ?? 0)} kg)`);
+  if (kind === 'rocket' || hud.stages) {
+    if (hud.stages) out.push(hud.stageNext ? `next stage ${hud.stageNext} of ${hud.stages} [${k('stage')}]` : 'all stages fired');
+    if (hud.peri !== undefined && hud.peri > 0) out.push(hud.peri === Infinity ? 'escaping the planet' : `in orbit ${altText(hud.peri)} to ${altText(hud.apo ?? hud.peri)}`);
+    else if (hud.apo !== undefined && hud.climb > 1) out.push(`top ${hud.apo === Infinity ? '∞' : altText(hud.apo)}`);
+  }
+  if (kind === 'plane') {
+    if (hud.aoa !== undefined) out.push(`wings ${((hud.aoa * 180) / Math.PI).toFixed(0)}°`);
+    if (hud.stall) out.push('STALL');
+  }
+  if (kind === 'car') {
+    if (hud.rpm !== undefined) out.push(`${Math.round(hud.rpm)} rpm`);
+    if (hud.gear !== undefined) out.push(hud.gear < 0 ? 'gear R' : hud.gear === 0 ? 'gear N' : `gear ${hud.gear}`);
+    out.push(`${Math.round(hud.speed * 3.6)} km/h`);
+  }
+  if (hud.tilt !== undefined && kind !== 'car') out.push(`tilt ${Math.round((hud.tilt * 180) / Math.PI)}°`);
+  if (hud.g !== undefined) out.push(`${hud.g.toFixed(1)} g`);
+  if ((hud.strain ?? 0) >= 1) out.push('BLACKOUT');
+  else if ((hud.strain ?? 0) >= 0.5) out.push('GREYOUT');
+  out.push(`assist ${hud.assist === false ? 'off' : 'on'} [${k('assist')}]`);
+  if (hud.noFuel) out.push(`${hud.noFuel} out of fuel`);
+  return out.join(' · ');
 }

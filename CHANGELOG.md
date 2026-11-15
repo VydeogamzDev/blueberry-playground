@@ -4,6 +4,73 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.4.0 — 2026-11-14
+
+Powered things: fuel and power that run out, sensors and logic, rockets, planes, boats, home-made cars,
+rails and cranes, combat in the air, safety gear, places to race, and tutorials for all of it.
+
+### New
+- **Fuel.** Fuel tanks feed the engines built in with them and get lighter as they burn. Empty, the engines
+  stop and the flight readout says why. Shot, a tank leaks, and it can catch fire. Settings > Physics >
+  Fuel can make it infinite, or make engines need a tank.
+- **Power that runs down.** A battery's charge is used by what it powers, and its menu shows what's left.
+  A solar panel makes power while the sun is on it. A generator burns fuel to make it.
+- **Sensors:** an altimeter, a speed sensor, a tilt sensor, a fuel gauge, a proximity sensor and a g-meter.
+  Each powers what it's wired to past the value set in its menu.
+- **Logic:** a toggle that flips on each pulse and remembers, and a step sequencer that powers its
+  outputs one after another.
+- **Stages.** Every part has a stage in its menu. Flying, Enter fires the next one: decouplers let go,
+  boosters light, chutes open.
+- **Stability assist** (`): holds a craft's angle and stops it spinning, in the air and in space.
+- **Dashboards** for cars, planes and rockets, and a chase camera (End) that zooms out with speed.
+- **Rocket parts:** landing legs and plane landing gear ([), parachutes (]) that tear if opened too fast,
+  a backpack parachute that opens by itself as someone falls, an ejection seat ('), gimbal thrusters,
+  RCS puffers, solid boosters, fins, steering flaps and elevators, launch clamps and docking ports.
+- **Space:** a spacesuit helmet and an oxygen tank, and a sealed capsule seat. Wearing both, or sealed in
+  with a tank, someone breathes in space and under water. Coming back down fast, things heat up in the air
+  ahead of them; a heat shield takes that heat and burns away. Fast enough sideways on the World, a craft
+  falls round the planet in orbit, and the readout gives the top and bottom of its path.
+- **Flying:** a trajectory line, build readouts while building (centre of mass, of thrust and of lift,
+  weight, thrust to weight, burn time), symmetry building, an autopilot that holds height (Insert), a
+  sonic boom through the speed of sound and contrails high up. A flight recorder graphs height and speed.
+  A camera part shows its view on a screen wired to it, and in a picture-in-picture box while it's flown.
+- **Challenges** in the Tutorials panel: a hop, a soft landing, a kilometre up, the sound barrier, space,
+  crewed spaceflight, orbit, there and back.
+- **Home-made cars:** an engine with a gearbox for motor wheels, suspension struts, nitro (hold ;),
+  headlights (,), a horn (/), a tow hitch, a crash dummy and a g-meter. Tyres grip less in rain and snow,
+  skid and smoke, and go flat when shot.
+- **Planes, helicopters and boats:** wings that lift and stall, a helicopter rotor, a jet engine's
+  afterburner (hold ;), wind (Settings > World) with thermals, a boat propeller, an outboard motor, a sail,
+  a ballast tank to dive and surface, and an anchor. The sea crushes a hull too deep for what it's made of.
+- **The Ocean map:** 200 m deep, with a wreck on its bed and a long beach.
+- **Rails:** the Shape tool's second kind lays track where you draw it. Its menu makes it a chain lift or a
+  launch. A coaster car rides it, round loops and upside down, and rail wheels under a plank make a wagon.
+- **Cranes:** a claw that shuts on what's between its jaws, and a crane hook that catches what swings
+  into it.
+- **Combat:** guns built into what you fly fire on the fire key (\). A heat-seeker pod's missiles chase
+  the hottest thing ahead, and flares (Caps Lock) are hotter than any engine. A bomb bay drops bombs (0)
+  that arm as they fall. An armour plate stops rifle rounds.
+- **Safety:** seat belts (a seat's menu) and an airbag soften a crash for whoever is aboard. Hard g greys
+  a pilot's view, then blacks it out. An automatic fire extinguisher puts out its build.
+- **Places:** a ramp, a runway, a launch pad, a fuel pump that fills what stops beside it, and race gates.
+  Through the start, every checkpoint in order and back again is a timed lap. Air time and flips land
+  stunt points. The World map has a pump, ramps, a launch pad, a runway and a race course by its start.
+- **Seven new tutorials:** flying, cars you build, air and sea, power and logic, combat, rails and cranes,
+  and everything breaking. They cover what's come since the first tutorials as well as this update.
+
+### Fixes
+- Jets flame out where the air is too thin to burn, about 3 km up on the World map. They go dark and quiet
+  and light again on the way back down. The flight readout says how many engines are out of air: jets and
+  propellers need it, rocket thrusters don't. Before, a jet in space still showed its flame and smoke, still
+  roared, and the readout called it running while it pushed nothing. A rocket climbing on jets just fell
+  back with no hint why. On the way up, their flame and blast now shrink with the air, as their push
+  already did.
+- Smoke, flames and sparks move through the air that's there. Up in space, smoke no longer rises or hangs
+  back, and everything falls at the gravity at that height.
+- The planet seen from high up on the World map now sits low behind everything: a far-off curve of sea,
+  land and cloud. It used to be a camouflage pattern across the lower quarter of the view, with blobs that
+  jumped in size when you zoomed, and rockets seemed to plunge into it.
+
 ## 0.3.1 — 2026-11-14
 
 ### Fixes

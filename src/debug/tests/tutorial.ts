@@ -1250,6 +1250,175 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
         tidy();
       }
     }],
+    // ---- the 0.4.0 tours, played through
+    ['extra: tutorial: the flying tour played through: a pilot seated, throttled up, tilted and landed; a rocket staged; a crate let down on a parachute', () => {
+      kit.reset();
+      const sel = (name: string) => (controls.selection = new Set([ref(name)]));
+      try {
+        return keepingProgress(() => play('flight', {
+          'fl-board': () => {
+            const s = ref('seat') as Entity & { takeIn(h: Human, at: { x: number; y: number }): boolean };
+            s.takeIn(ref<Human>('pilot'), s.parts[0].pixelToWorld(9, 12));
+          },
+          'fl-climb': [() => { sel('seat'); holdKey('aimUp', 'fl-climb', 8); }, 1],
+          'fl-tilt': [() => { sel('seat'); holdKey('turnRight', 'fl-tilt', 4); }, 1],
+          'fl-land': [() => { sel('seat'); holdKey('aimDown', 'fl-land', 1.5); }, 15],
+          'fl-stage': [() => { sel('rocketSeat'); kit.press(keyOf('stage')); }, 2],
+          'fl-chute': [() => { ref('chute').activate(); ref('chuteCrate').setFrozen(false); }, 3],
+        }));
+      } finally {
+        tidy();
+      }
+    }],
+    ['extra: tutorial: the cars-you-build tour played through: driven, boosted, lit, jumped, filled up and raced', () => {
+      kit.reset();
+      const chassis = () => ref('chassis');
+      const hold = (ids: ActionId[], step: string, s: number) => {
+        controls.selection = new Set([chassis()]);
+        for (const id of ids) kit.key(keyOf(id), true);
+        until(step, s);
+        for (const id of ids) kit.key(keyOf(id), false);
+      };
+      try {
+        return keepingProgress(() => play('drive', {
+          'd-drive': [() => hold(['driveRight'], 'd-drive', 10), 1],
+          'd-boost': [() => hold(['driveLeft', 'boost'], 'd-boost', 5), 1],
+          'd-lights': () => {
+            controls.selection = new Set([chassis()]);
+            kit.press(keyOf('lights'));
+          },
+          'd-ramp': [() => hold(['driveRight'], 'd-ramp', 12), 4],
+          'd-pump': [() => {
+            const pump = ref('pump');
+            const dir: ActionId = pump.parts[0].x > chassis().parts[0].x ? 'driveRight' : 'driveLeft';
+            controls.selection = new Set([chassis()]);
+            kit.key(keyOf(dir), true);
+            for (let i = 0; i < 600 && Math.abs(chassis().parts[0].x - pump.parts[0].x) > 2.5; i++) game.advance(1 / 60);
+            kit.key(keyOf(dir), false);
+            // (and the brakes: the other way till it all but stops)
+            const back: ActionId = dir === 'driveRight' ? 'driveLeft' : 'driveRight';
+            kit.key(keyOf(back), true);
+            for (let i = 0; i < 300 && Math.abs(chassis().parts[0].vx) > 0.8; i++) game.advance(1 / 60);
+            kit.key(keyOf(back), false);
+          }, 8],
+          'd-race': [() => {
+            const dir: ActionId = ref('checkpoint').parts[0].x > chassis().parts[0].x ? 'driveRight' : 'driveLeft';
+            hold([dir], 'd-race', 12);
+          }, 1],
+        }));
+      } finally {
+        tidy();
+      }
+    }],
+    ['extra: tutorial: the air-and-sea tour played through: a helicopter lifts, a raft is driven on the sea, a ballast tank floods', () => {
+      kit.reset();
+      try {
+        return keepingProgress(() => play('airsea', {
+          'as-heli': [() => { controls.selection = new Set([ref('heliSeat')]); holdKey('aimUp', 'as-heli', 12); }, 1],
+          'as-boat': [() => { controls.selection = new Set([ref('raft')]); holdKey('aimUp', 'as-boat', 10); }, 1],
+          'as-sub': [() => ref('ballast').activate(), 6],
+        }));
+      } finally {
+        tidy();
+        controls.switchMap(LAB);
+      }
+    }],
+    ['extra: tutorial: the power tour played through: a solar panel lights a bulb, a crate trips a sensor, a button flips a toggle', () => {
+      kit.reset();
+      /** A wire from a's middle (or `la` m along it) to b's (or `lb`): the toggle's ports are either side of its. */
+      const wire = (a: Entity, b: Entity, la = 0, lb = 0) =>
+        game.connections.create('wire', a.parts[0], a.parts[0].localToWorld(la, 0), b.parts[0], b.parts[0].localToWorld(lb, 0));
+      const L = 6 / 32;
+      try {
+        return keepingProgress(() => play('power', {
+          'pw-solar': () => wire(ref('solar'), ref('bulb')),
+          'pw-sensor': [() => {
+            const c = ref('crate');
+            const s = ref('sensor');
+            const at = c.center();
+            kit.down(at.x, at.y);
+            for (let i = 1; i <= 30; i++) {
+              kit.move(at.x + (s.center().x + 0.6 - at.x) * (i / 30), at.y + 0.3);
+              game.advance(1 / 60);
+            }
+            kit.up(s.center().x + 0.6, at.y + 0.3);
+          }, 3],
+          'pw-toggle': () => {
+            wire(ref('button'), ref('toggle'), 0, -L);
+            wire(ref('toggle'), ref('bulb2'), L, 0);
+            game.advance(0.1);
+            ref('button').activate();
+          },
+        }));
+      } finally {
+        tidy();
+      }
+    }],
+    ['extra: tutorial: the combat tour played through: a guided missile steered into a car, a round stopped by armour, a heat seeker after a burning thruster, a bomb dropped', () => {
+      kit.reset();
+      try {
+        return keepingProgress(() => play('combat', {
+          'cb-missile': [() => {
+            const c = ref('target').center();
+            kit.move(c.x, c.y);
+            ref('launcher').activate();
+            for (let i = 0; i < 480 && on() === 'cb-missile'; i++) {
+              kit.move(c.x, c.y);
+              game.advance(1 / 60);
+            }
+          }, 1],
+          'cb-armour': () => ref('sniper').activate(),
+          'cb-seeker': [() => ref('pod').activate(), 10],
+          'cb-bomb': [() => ref('bay').activate(), 6],
+        }));
+      } finally {
+        tidy();
+      }
+    }],
+    ['extra: tutorial: the rails tour played through: track laid, a coaster launched round its loop, a claw shut on a crate', () => {
+      kit.reset();
+      try {
+        return keepingProgress(() => play('rails', {
+          'rl-lay': () => {
+            const x = game.renderer.camX;
+            controls.layTrack([{ x: x - 3, y: WORLD.floor + 0.6 }, { x: x + 3, y: WORLD.floor + 1.5 }]);
+          },
+          'rl-ride': [() => choose(ref('launch'), 'Launch (18 m/s)'), 8],
+          'rl-claw': [() => {
+            ref('claw').activate();
+            ref('claw').setFrozen(false);
+          }, 3],
+        }));
+      } finally {
+        tidy();
+      }
+    }],
+    ['extra: tutorial: the breaking tour played through: a box shot full of holes, a beam heated red, a car blown apart and repaired', () => {
+      kit.reset();
+      try {
+        return keepingProgress(() => play('breaking', {
+          'br-shoot': [() => {
+            for (let i = 0; i < 4 && on() === 'br-shoot'; i++) {
+              ref('gun').activate();
+              game.advance(0.3);
+            }
+          }, 3],
+          'br-heat': [() => ref('torch').activate(), 15],
+          'br-blast': [() => ref('button').activate(), 3],
+          'br-repair': [() => {
+            // (its menu, as a right-click opens it: Repair is the game's, not the car's own)
+            const p = ref('wreck').parts.find((q) => !q.destroyed)!;
+            kit.down(p.x, p.y, 2);
+            kit.up(p.x, p.y, 2);
+            const item = [...document.querySelectorAll<HTMLElement>('.ctx-item')].find((d) => (d.textContent ?? '').replace(/^[☑☐] /, '').startsWith('Repair'));
+            if (!item) throw new Error('no Repair in the wreck’s menu');
+            item.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true }));
+          }, 3],
+        }));
+      } finally {
+        tidy();
+      }
+    }],
     ['extra: tutorial: every new tour skipped through (with a mouse, and on a touch screen), each step putting out what the next ones need', () => {
       const touch0 = controls.touchMode;
       const living = (e: Entity | null | undefined): e is Human => e instanceof Human && !e.destroyed && e.alive;
@@ -1305,6 +1474,10 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
         'a-walk': () => (has('dog') && has('owner') ? null : 'no dog, or no one for it to follow'),
         'a-cow': () => (has('cow') && has('pistol') ? null : 'no cow, or no pistol'),
         'a-bacon': () => (has('pig') && has('c4') ? null : 'no pig, or no C4'),
+        'fl-climb': () => ((tut().ref('seat') as { pilot?: unknown } | null)?.pilot ? null : 'no pilot in the craft'),
+        'd-boost': () => (has('chassis') && has('nitro-bottle') ? null : 'no car, or no nitro'),
+        'rl-claw': () => (has('claw') && has('load') ? null : 'no claw, or no crate'),
+        'as-sub': () => (game.map.id === 'sea' ? null : 'not on the sea'),
       };
       try {
         return keepingProgress(() => {
@@ -1351,7 +1524,7 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
           ui().showTutorials();
           const panel = document.querySelector('.tutorials-panel');
           if (!panel || panel.closest('.overlay')?.classList.contains('hidden')) return 'the Tutorials panel did not open';
-          const rows = [...panel.querySelectorAll<HTMLElement>('.tour-row')];
+          const rows = [...panel.querySelectorAll<HTMLElement>('.tour-row:not(.challenge)')];
           if (rows.length !== TOURS.length + SOON.length) return `${rows.length} rows for ${TOURS.length} tours and ${SOON.length} to come`;
           for (const t of TOURS) {
             const row = panel.querySelector<HTMLElement>(`.tour-row[data-tour="${t.id}"]`);

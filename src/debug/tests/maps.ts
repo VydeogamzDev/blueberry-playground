@@ -45,7 +45,9 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
         // a crate thrown at each end wall stops against it
         const thrown = [-1, 1].map((side) => {
           const x = side * (m.width / 2 - 1.5);
-          const c = kit.spawn('crate', x, top(x) + 2);
+          // (over the sea, along its top: on the Ocean's bed, 200 m down, a crate is crushed)
+          const w = m.water && x >= m.water.x0 && x <= m.water.x1 ? m.water.level : -Infinity;
+          const c = kit.spawn('crate', x, Math.max(top(x), w) + 2);
           c.parts[0].body.setLinvel({ x: side * 8, y: 0 }, true);
           return { side, c };
         });

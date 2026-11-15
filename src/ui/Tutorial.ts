@@ -6,7 +6,7 @@ import type { V2 } from '../engine/math';
 import type { ConnKind, Connection } from '../systems/Connections';
 import type { Category } from '../world/types';
 import { getItem } from '../catalog/items';
-import { ENDLESS, LAB } from '../world/Maps';
+import { ENDLESS, LAB, WORLD_MAP, builtinMap } from '../world/Maps';
 import { PX, WORLD } from '../engine/constants';
 import { wrapAngle } from '../engine/math';
 import { isLiving } from '../systems/Fighting';
@@ -67,9 +67,11 @@ export interface TutorialStep {
  * medicine, weapons, vehicles, the world, editing and saving, animals, and
  * building machines.
  */
-export type TourId = 'basics' | 'people' | 'weapons' | 'vehicles' | 'world' | 'editing' | 'animals' | 'building';
+export type TourId =
+  | 'basics' | 'people' | 'weapons' | 'vehicles' | 'world' | 'editing' | 'animals' | 'building'
+  | 'flight' | 'drive' | 'airsea' | 'power' | 'combat' | 'rails' | 'breaking';
 /** (kept up here, not read off TOURS: progress is read before the steps further down are defined, if need be) */
-const TOUR_IDS: TourId[] = ['basics', 'people', 'weapons', 'vehicles', 'world', 'editing', 'animals', 'building'];
+const TOUR_IDS: TourId[] = ['basics', 'people', 'weapons', 'vehicles', 'world', 'editing', 'animals', 'building', 'flight', 'drive', 'airsea', 'power', 'combat', 'rails', 'breaking'];
 
 /** A tour: its steps, and how the Tutorials panel (and the main menu) offer it. */
 export interface Tour {
@@ -3256,6 +3258,776 @@ export const ANIMALS: TutorialStep[] = [
   },
 ];
 
+// ---- the 0.4.0 tours: flying, cars you build, air and sea, power and logic, combat, rails, breaking things ----
+
+/** Puts a toy out at (x, y) as given (y from the floor up), not stood on the ground: a build's parts where they go. */
+const putAt = (t: Tutorial, id: string, x: number, y: number, o: { angle?: number; flip?: boolean; frozen?: boolean; config?: Record<string, unknown> } = {}): Entity | null => {
+  const def = getItem(id);
+  if (!def) return null;
+  const e = t.game.spawn(def, x, WORLD.floor + y, { angle: o.angle, flip: o.flip, ...(o.config ? { config: o.config } : {}) });
+  if (!e) return null;
+  if (o.frozen) e.setFrozen(true);
+  t.props.add(e);
+  return e;
+};
+/** Welds b to a at a point (a build put together for a step). */
+const weldAt = (t: Tutorial, a: Entity | null, b: Entity | null, x: number, y: number) => {
+  if (!a || !b || a.destroyed || b.destroyed || t.joined('weld', a, b)) return;
+  const at = { x, y: WORLD.floor + y };
+  t.game.connections.create('weld', a.parts[0], at, b.parts[0], at);
+};
+/** A clean floor for a step (Ctrl+Z brings back what was there). */
+const freshFloor = (t: Tutorial) => {
+  t.controls.clearScene('Tutorial');
+  t.props.clear();
+  t.refs.clear();
+  t.controls.setTool('drag');
+  t.controls.arm(null);
+};
+/** "Select it (click it)": worded for a mouse or a finger. */
+const selectIt = (t: Tutorial, what: string) => (t.touch ? `Tap ${what} to select it` : `Click ${what} to select it`);
+/** The key that does `id` (a keyboard's), or the touch pad's button. */
+const padKey = (t: Tutorial, id: ActionId, kbd: string, pad: string) => (t.touch ? `<b>${pad}</b>` : t.key(id, `<kbd>${kbd}</kbd>`));
+/** The craft's readout (see Piloting.hudOf()) for a thing, or null. */
+const hudOf = (t: Tutorial, e: Entity | null) => (e && !e.destroyed ? t.game.piloting.hudOf([e]) : null);
+/** Points at `e` until it's selected (then at nothing, or the touch pad). */
+const selectFirst = (t: Tutorial, e: Entity | null) => (e && !t.controls.selection.has(e) ? e : null);
+
+// -- flying
+
+/** The flight tour's craft: a plank with a thruster pointing up at each end and a cockpit seat in the middle. */
+const craftOut = (t: Tutorial, x: number) => {
+  const plank = t.keep('craft', putAt(t, 'plank', x, 0.3));
+  const l = t.keep('craftL', putAt(t, 'thruster', x - 0.75, 0.6, { angle: Math.PI / 2 }));
+  const r = t.keep('craftR', putAt(t, 'thruster', x + 0.75, 0.6, { angle: Math.PI / 2 }));
+  const seat = t.keep('seat', putAt(t, 'cockpit', x, 0.75));
+  const py = 0.35;
+  weldAt(t, plank, l, x - 0.75, py);
+  weldAt(t, plank, r, x + 0.75, py);
+  weldAt(t, plank, seat, x, py);
+  return seat;
+};
+/** A cockpit seat (see entities/Flight: read by what it does, so the tutorial needn't load it). */
+type Seat = Entity & { readonly pilot: Human | null; takeIn(who: Human, at: V2): boolean };
+const asSeat = (e: Entity | null): Seat | null => (e && !e.destroyed && typeof (e as Partial<Seat>).takeIn === 'function' ? (e as Seat) : null);
+const seatOfCraft = (t: Tutorial): Seat | null => asSeat(t.ref('seat'));
+/** Sits someone in a cockpit, as letting go of them over it does. */
+const sitIn = (c: Seat | null, h: Entity | null) => !!c && h instanceof Human && h.alive && !h.seat && c.takeIn(h, c.parts[0].pixelToWorld(9, 12));
+
+export const FLIGHT: TutorialStep[] = [
+  {
+    id: 'fl-hello',
+    title: 'Fly what you build',
+    text: () => 'Anything with engines in it can be flown: a <b>Cockpit Seat</b> built in, someone in it, and the keys fly it. You’ll fly a little craft, fire a rocket’s stages and open a parachute.',
+    info: 'Let’s fly',
+  },
+  {
+    id: 'fl-board',
+    title: 'A pilot',
+    text: () => 'Here’s a craft: two <b>Thrusters</b> on a plank and a <b>Cockpit Seat</b>. Grab the person, lift them over the seat and let go: they sit in it.',
+    setup: (t) => {
+      const x = t.game.renderer.camX;
+      craftOut(t, x);
+      t.keep('pilot', t.put('human', x - 3));
+    },
+    done: (t) => !!seatOfCraft(t)?.pilot,
+    target: (t) => (t.controls.grab ? seatOfCraft(t)?.parts[0].pixelToWorld(9, -30) ?? null : t.ref('pilot')),
+    skipped: (t) => {
+      const s = seatOfCraft(t);
+      if (s && !s.pilot) sitIn(s, t.ref('pilot') ?? t.put('human', t.game.renderer.camX - 3));
+    },
+  },
+  {
+    id: 'fl-climb',
+    title: 'Throttle up',
+    text: (t) =>
+      `${selectIt(t, 'the cockpit')}, then hold ${padKey(t, 'aimUp', 'W', '▲')}: the throttle goes up, the thrusters burn and it climbs. ` +
+      `Let go and the throttle stays where it is; ${padKey(t, 'aimDown', 'S', '▼')} takes it down. The readout at the bottom shows its speed, height and throttle.`,
+    setup: (t) => {
+      t.memo.y = t.ref('craft')?.parts[0].y ?? 0;
+    },
+    done: (t) => (t.ref('craft')?.parts[0].y ?? -Infinity) > t.memo.y + 3,
+    target: (t) => selectFirst(t, t.ref('seat')),
+    follow: (t) => (t.ref('craft') && t.speed(t.ref('craft')!) > 0.5 ? t.ref('craft')!.center() : null),
+    allow: { actions: ['aimUp', 'aimDown'] },
+  },
+  {
+    id: 'fl-tilt',
+    title: 'Tilt',
+    text: (t) =>
+      `${padKey(t, 'turnLeft', 'Q', '⟲')} and ${padKey(t, 'turnRight', 'E', '⟳')} tilt it, and it flies off that way. Let go and the stability assist levels it again ` +
+      `${t.touch ? '' : `(${t.key('assist', '<kbd>`</kbd>')} switches the assist off and on)`}.`,
+    setup: (t) => {
+      t.memo.tilt = 0;
+      const s = t.ref('seat');
+      if (s) t.controls.selection = new Set([s]);
+    },
+    done: (t) => {
+      const h = hudOf(t, t.ref('seat'));
+      t.memo.tilt = Math.max(t.memo.tilt, Math.abs(h?.tilt ?? 0));
+      return t.memo.tilt > 0.35;
+    },
+    target: (t) => selectFirst(t, t.ref('seat')),
+    follow: (t) => t.ref('craft')?.center() ?? null,
+    allow: { actions: ['turnLeft', 'turnRight', 'aimUp', 'aimDown', 'assist'] },
+  },
+  {
+    id: 'fl-land',
+    title: 'Land it',
+    text: (t) => `Ease the throttle down with ${padKey(t, 'aimDown', 'S', '▼')} (and up a touch with ${padKey(t, 'aimUp', 'W', '▲')}) until it comes down gently and stands on the floor.`,
+    done: (t) => {
+      const h = hudOf(t, t.ref('seat'));
+      return !!h && h.height < 0.8 && h.speed < 1.5;
+    },
+    target: (t) => selectFirst(t, t.ref('seat')),
+    follow: (t) => t.ref('craft')?.center() ?? null,
+    allow: { actions: ['turnLeft', 'turnRight', 'aimUp', 'aimDown', 'assist'] },
+  },
+  {
+    id: 'fl-stage',
+    title: 'Stages',
+    keyboard: true,
+    text: (t) =>
+      `A rocket in two stages: a <b>Decoupler</b> between them, and the top stage’s thruster set to fire second. ${selectIt(t, 'its cockpit')} and press ${t.key('stage', '<kbd>Enter</kbd>')}: ` +
+      'the decoupler throws off the bottom stage. Press it again and the top one lights. (A part’s menu sets its <b>Stage</b>.)',
+    setup: (t) => {
+      freshFloor(t);
+      const x = t.game.renderer.camX + 2;
+      const low = t.keep('low', putAt(t, 'big-fuel-tank', x, 0.75));
+      const dec = t.keep('decoupler', putAt(t, 'decoupler', x, 1.53));
+      const top = t.keep('top', putAt(t, 'fuel-tank', x, 1.98));
+      const thr = t.keep('topThruster', putAt(t, 'thruster', x + 0.45, 1.98, { angle: Math.PI / 2 }));
+      const seat = t.keep('rocketSeat', putAt(t, 'cockpit', x, 2.75));
+      weldAt(t, low, dec, x, 1.47);
+      weldAt(t, dec, top, x, 1.6);
+      weldAt(t, top, thr, x + 0.3, 1.98);
+      weldAt(t, top, seat, x, 2.4);
+      if (dec) dec.stage = 1;
+      if (thr) thr.stage = 2;
+    },
+    done: (t) => {
+      const d = t.ref('decoupler') as (Entity & { fired?: boolean }) | null;
+      return !!d?.fired;
+    },
+    target: (t) => selectFirst(t, t.ref('rocketSeat')),
+    allow: { actions: ['stage', 'aimUp', 'aimDown'] },
+  },
+  {
+    id: 'fl-chute',
+    title: 'Parachute',
+    text: (t) =>
+      `This crate hangs frozen high up with a <b>Parachute</b> on it. ${useOn(t, 'the parachute')} to open it, then ${menu(t)} the crate and choose <b>Unfreeze</b>: ` +
+      `down it floats. (Built into what you fly, the chutes key${keyNote(t, 'chutes')} opens them all.)`,
+    setup: (t) => {
+      freshFloor(t);
+      const x = t.game.renderer.camX;
+      const crate = t.keep('chuteCrate', putAt(t, 'crate', x, 5, { frozen: true }));
+      const chute = t.keep('chute', putAt(t, 'parachute', x, 5.6));
+      weldAt(t, crate, chute, x, 5.45);
+    },
+    done: (t) => {
+      const c = t.ref('chute') as (Entity & { state?: string }) | null;
+      const crate = t.ref('chuteCrate');
+      return !!c && c.state !== 'packed' && !!crate && !crate.frozen;
+    },
+    target: (t) => {
+      const c = t.ref('chute') as (Entity & { state?: string }) | null;
+      return c && c.state === 'packed' ? useAt(t, c) : t.ref('chuteCrate');
+    },
+    allow: { actions: ['activate', 'chutes', 'freeze'], menu: ['Open', 'Open it', 'Unfreeze'] },
+  },
+  {
+    id: 'fl-end',
+    title: 'Up and away',
+    text: (t) =>
+      'More for flying: <b>Landing Legs</b> (the gear key), an <b>Ejection Seat</b> (the eject key), <b>Gimbal Thrusters</b> and <b>RCS</b> puffers to steer, ' +
+      'a <b>Helmet</b> and an <b>Oxygen Tank</b> for space, a <b>Heat Shield</b> for coming back down, <b>Launch Clamps</b>, <b>Docking Ports</b>. ' +
+      `The <b>World</b> map goes up and up into space: fly fast enough sideways and you’re in orbit. ${t.touch ? '' : `${t.key('help', '<b>?</b>')} lists the keys.`}`,
+    info: 'Done',
+    alts: endAlts({
+      label: 'Fly on the World',
+      action: (t: Tutorial) => {
+        t.stop();
+        t.controls.switchMap(WORLD_MAP);
+      },
+    }),
+  },
+];
+
+// -- cars you build
+
+/** The drive tour's car: a plank on two Motor Wheels with an Engine, a fuel tank, a nitro bottle and a headlight on it. */
+const homeCar = (t: Tutorial, x: number) => {
+  const plank = t.keep('chassis', putAt(t, 'plank', x, 0.75));
+  const wheels = [-0.9, 0.9].map((dx) => putAt(t, 'motor-wheel', x + dx, 0.35));
+  const parts = ['car-engine', 'fuel-tank', 'nitro-bottle', 'headlight'].map((id, i) => t.keep(id, putAt(t, id, x - 0.75 + i * 0.5, 1.25)));
+  for (const w of wheels) if (w) weldAt(t, plank, w, w.parts[0].x, w.parts[0].y - WORLD.floor);
+  for (const p of parts) if (p) weldAt(t, plank, p, p.parts[0].x, 0.8);
+  return plank;
+};
+
+/** A clear floor and the car built again at its left, selected (for the next thing to drive at): where it starts. */
+const carAgain = (t: Tutorial): number => {
+  freshFloor(t);
+  const x = t.inSight().left + 3;
+  const c = homeCar(t, x);
+  if (c) t.controls.selection = new Set([c]);
+  return x;
+};
+
+export const DRIVE: TutorialStep[] = [
+  {
+    id: 'd-hello',
+    title: 'Cars you build',
+    text: () => 'Build your own car from parts: an <b>Engine</b> with a gearbox, <b>Motor Wheels</b>, nitro, lights; then race it, jump it and fill it up.',
+    info: 'Start your engines',
+  },
+  {
+    id: 'd-drive',
+    title: 'Drive it',
+    text: (t) =>
+      `Here’s one built: a plank on two <b>Motor Wheels</b>, an <b>Engine</b>, a fuel tank, a nitro bottle and a headlight. ${selectIt(t, 'its plank')} and hold ${padKey(t, 'driveRight', 'D', '▶')}: ` +
+      'the engine drives the wheels, changing up through its gears (the readout shows its revs and gear).',
+    setup: (t) => {
+      const x = t.inSight().left + 3;
+      homeCar(t, x);
+      t.memo.x = x;
+    },
+    done: (t) => (t.ref('chassis')?.parts[0].x ?? -Infinity) > t.memo.x + 6,
+    target: (t) => selectFirst(t, t.ref('chassis')),
+    follow: (t) => (t.ref('chassis') && t.speed(t.ref('chassis')!) > 0.5 ? t.ref('chassis')!.center() : null),
+    allow: { actions: ['driveLeft', 'driveRight'] },
+  },
+  {
+    id: 'd-boost',
+    title: 'Nitro',
+    keyboard: true,
+    text: (t) => `Hold ${t.key('driveLeft', '<kbd>A</kbd>')} to drive back, and ${t.key('boost', '<kbd>;</kbd>')} with it: the <b>Nitro Bottle</b> burns, and it goes harder.`,
+    setup: (t) => {
+      const c = t.ref('chassis');
+      if (c) t.controls.selection = new Set([c]);
+    },
+    done: (t) => {
+      const n = t.ref('nitro-bottle') as (Entity & { left?: number }) | null;
+      return !n || (n.left ?? 6) < 5;
+    },
+    target: (t) => selectFirst(t, t.ref('chassis')),
+    follow: (t) => t.ref('chassis')?.center() ?? null,
+    allow: { actions: ['driveLeft', 'driveRight', 'boost'] },
+  },
+  {
+    id: 'd-lights',
+    title: 'Lights',
+    keyboard: true,
+    text: (t) => `${t.key('lights', '<kbd>,</kbd>')} switches its <b>Headlight</b> on (and off). The horn is ${t.key('horn', '<kbd>/</kbd>')}, with a <b>Horn</b> built in.`,
+    done: (t) => {
+      const h = t.ref('headlight') as (Entity & { on?: boolean }) | null;
+      return !h || !!h.on;
+    },
+    target: (t) => selectFirst(t, t.ref('chassis')),
+    allow: { actions: ['lights', 'horn', 'driveLeft', 'driveRight'] },
+  },
+  {
+    id: 'd-ramp',
+    title: 'Jump!',
+    text: (t) =>
+      `A <b>Ramp</b>: drive at it fast (${padKey(t, 'driveRight', 'D', '▶')}) and fly off the top. Land on your wheels and the time in the air (and any flips) score stunt points, shown at the top.`,
+    setup: (t) => {
+      const x = carAgain(t);
+      t.keep('ramp', t.put('ramp', x + 10));
+      t.memo.s = t.game.races.score;
+      t.memo.air = 0;
+    },
+    done: (t) => {
+      const c = t.ref('chassis');
+      const r = t.ref('ramp');
+      if (c && r && c.parts[0].y > r.parts[0].y + 1.2) t.memo.air = 1;
+      return t.game.races.score > t.memo.s || (!!t.memo.air && !!c && t.speed(c) < 3);
+    },
+    target: (t) => selectFirst(t, t.ref('chassis')) ?? t.ref('ramp'),
+    follow: (t) => t.ref('chassis')?.center() ?? null,
+    allow: { actions: ['driveLeft', 'driveRight', 'boost'] },
+  },
+  {
+    id: 'd-pump',
+    title: 'Fill up',
+    text: (t) => `Its tank’s low and the nitro’s nearly gone. A <b>Fuel Pump</b>: drive up beside it and stop (${padKey(t, 'driveLeft', 'A', '◀')} and ${padKey(t, 'driveRight', 'D', '▶')}). It fills the car’s tank and refills its nitro, its screen lit.`,
+    setup: (t) => {
+      const x = carAgain(t);
+      t.keep('pump', t.put('fuel-pump', x + 7));
+      // (low on fuel and nitro: something to fill)
+      const tank = t.ref('fuel-tank') as (Entity & { fuel: number; take(kg: number): number }) | null;
+      tank?.take(tank.fuel * 0.8);
+      const n = t.ref('nitro-bottle') as (Entity & { left: number }) | null;
+      if (n) n.left = 1;
+    },
+    done: (t) => !!(t.ref('pump') as (Entity & { filling?: boolean }) | null)?.filling,
+    target: (t) => selectFirst(t, t.ref('chassis')) ?? t.ref('pump'),
+    follow: (t) => t.ref('chassis')?.center() ?? null,
+    allow: { actions: ['driveLeft', 'driveRight'] },
+  },
+  {
+    id: 'd-race',
+    title: 'Race',
+    text: (t) =>
+      `Two <b>Race Gates</b>: the chequered one is the start, the orange one checkpoint 1. Drive through the start, then the checkpoint (${padKey(t, 'driveLeft', 'A', '◀')} ${padKey(t, 'driveRight', 'D', '▶')}): ` +
+      'the line at the top times the lap. Back through the start and the lap’s done.',
+    setup: (t) => {
+      const x = carAgain(t);
+      t.keep('start', t.put('race-gate', x + 5));
+      const cp = t.put('race-gate', x + 13);
+      (cp as (Entity & { setIndex?(i: number): void }) | null)?.setIndex?.(1);
+      t.keep('checkpoint', cp);
+      t.game.races.reset();
+    },
+    done: (t) => !!t.game.races.lap && t.game.races.lap.next >= 2,
+    target: (t) => selectFirst(t, t.ref('chassis')) ?? t.ref(t.game.races.lap ? 'checkpoint' : 'start'),
+    follow: (t) => t.ref('chassis')?.center() ?? null,
+    allow: { actions: ['driveLeft', 'driveRight', 'boost'] },
+  },
+  {
+    id: 'd-end',
+    title: 'Pit stop',
+    text: () =>
+      'More parts on the Vehicles shelf: <b>Suspension Struts</b> (wheels on springs), a <b>Tow Hitch</b> for trailers, a <b>Horn</b>, a <b>Crash Dummy</b> and a <b>G-Meter</b> to see what a crash does, ' +
+      'an <b>Airbag</b> and seat belts (a seat’s menu), an <b>Auto Fire Extinguisher</b>. Tyres skid and smoke, grip less in rain and snow, and go flat when shot. ' +
+      'The <b>World</b> map has a fuel pump, ramps and a race course by its start.',
+    info: 'Done',
+    alts: endAlts(),
+  },
+];
+
+// -- air and sea
+
+export const AIRSEA: TutorialStep[] = [
+  {
+    id: 'as-hello',
+    title: 'Air and sea',
+    text: () => 'A helicopter, then the sea: a boat with a propeller, a sail and a submarine’s ballast tank.',
+    info: 'Let’s go',
+  },
+  {
+    id: 'as-heli',
+    title: 'Helicopter',
+    text: (t) =>
+      `A <b>Helicopter Rotor</b> on a plank with a cockpit. ${selectIt(t, 'the cockpit')} and hold ${padKey(t, 'aimUp', 'W', '▲')}: the rotor spins up (it takes a moment) and lifts it. ` +
+      `${padKey(t, 'turnLeft', 'Q', '⟲')} ${padKey(t, 'turnRight', 'E', '⟳')} tilt it to fly along.`,
+    setup: (t) => {
+      const x = t.game.renderer.camX;
+      const plank = t.keep('heli', putAt(t, 'plank', x, 0.3));
+      const seat = t.keep('heliSeat', putAt(t, 'cockpit', x - 0.4, 0.75));
+      const rotor = t.keep('rotor', putAt(t, 'heli-rotor', x + 0.4, 0.62));
+      weldAt(t, plank, seat, x - 0.4, 0.35);
+      weldAt(t, plank, rotor, x + 0.4, 0.35);
+      t.memo.y = plank?.parts[0].y ?? 0;
+    },
+    done: (t) => (t.ref('heli')?.parts[0].y ?? -Infinity) > t.memo.y + 2,
+    target: (t) => selectFirst(t, t.ref('heliSeat')),
+    follow: (t) => (t.ref('heli') && t.speed(t.ref('heli')!) > 0.5 ? t.ref('heli')!.center() : null),
+    allow: { actions: ['aimUp', 'aimDown', 'turnLeft', 'turnRight'] },
+  },
+  {
+    id: 'as-boat',
+    title: 'A boat',
+    text: (t) =>
+      `Out on the <b>Sea</b> map: a raft with a <b>Boat Propeller</b> under it. ${selectIt(t, 'the raft')} and hold ${padKey(t, 'aimUp', 'W', '▲')}: ` +
+      'the propeller is its engine, on the throttle as a plane’s is: under water it pushes the raft along (out of the water it only thrashes the air).',
+    setup: (t) => {
+      t.controls.switchMap(builtinMap('sea')!);
+      t.props.clear();
+      t.refs.clear();
+      const r = t.game.renderer;
+      r.camX = -60;
+      r.camY = 10;
+      const raft = t.keep('raft', t.game.spawn(getItem('plank')!, -60, 9.2, {}));
+      const prop = t.keep('prop', t.game.spawn(getItem('boat-propeller')!, -60, 8.85, {}));
+      for (const e of [raft, prop]) if (e) t.props.add(e);
+      if (raft && prop) t.game.connections.create('weld', raft.parts[0], { x: -60, y: 9.05 }, prop.parts[0], { x: -60, y: 9.05 });
+      t.memo.x = -60;
+    },
+    done: (t) => (t.ref('raft')?.parts[0].x ?? -Infinity) > t.memo.x + 4,
+    target: (t) => selectFirst(t, t.ref('raft')),
+    follow: (t) => t.ref('raft')?.center() ?? null,
+    allow: { actions: ['aimUp', 'aimDown', 'driveLeft', 'driveRight'] },
+  },
+  {
+    id: 'as-sub',
+    title: 'Dive',
+    text: (t) =>
+      `A float with a <b>Ballast Tank</b> under it. ${useOn(t, 'the ballast tank')}: it floods and down it goes. ${useKey(t)} again blows it out and it comes back up. ` +
+      '(Deep enough, the sea crushes a hull: the Ocean map is 200 m deep.)',
+    setup: (t) => {
+      const raft = t.ref('raft');
+      const x = (raft?.parts[0].x ?? -60) + 3;
+      const tube = t.keep('float', t.game.spawn(getItem('buoyancy-tube')!, x, 9.6, {}));
+      const tank = t.keep('ballast', t.game.spawn(getItem('ballast-tank')!, x, 9.0, {}));
+      for (const e of [tube, tank]) if (e) t.props.add(e);
+      if (tube && tank) t.game.connections.create('weld', tube.parts[0], { x, y: 9.2 }, tank.parts[0], { x, y: 9.2 });
+    },
+    done: (t) => ((t.ref('ballast') as (Entity & { fill?: number }) | null)?.fill ?? 1) > 0.3,
+    target: (t) => useAt(t, t.ref('ballast')),
+    follow: (t) => t.ref('float')?.center() ?? null,
+    allow: { actions: ['activate'], menu: ['Flood it (dive)', 'Blow it (rise)'] },
+  },
+  {
+    id: 'as-end',
+    title: 'Fair winds',
+    text: () =>
+      'More: a <b>Wing</b> (welded on with an engine in front, it’s a plane: tip it nose up and it lifts, too far and it stalls), a <b>Jet Engine</b> (its afterburner on the boost key), ' +
+      'a <b>Sail</b> (Settings › World › Wind fills it), an <b>Outboard Motor</b>, an <b>Anchor</b>. The autopilot key holds a craft’s height. ' +
+      'The <b>Ocean</b> map is 200 m deep.',
+    info: 'Done',
+    alts: endAlts(),
+  },
+];
+
+// -- power and logic
+
+/** A toggle's ports, either side of its middle (m): in on the left, out on the right. */
+const TOGGLE_PORT = 6 / 32;
+
+export const POWER: TutorialStep[] = [
+  {
+    id: 'pw-hello',
+    title: 'Power and logic',
+    text: () => 'Batteries that run down, the sun, a generator; sensors that switch things on; a toggle that remembers.',
+    info: 'Switch on',
+  },
+  {
+    id: 'pw-solar',
+    title: 'Solar power',
+    text: (t) =>
+      `${pick(t, 'wire', 'Wire')}: ${drag(t)} from the <b>Solar Panel</b> to the <b>Light Bulb</b>. While the sun’s on it, it powers what it’s wired to. ` +
+      '(A <b>Battery</b> runs down as it’s used: its menu shows its charge. A <b>Generator</b> burns fuel.)',
+    setup: (t) => {
+      const x = t.game.renderer.camX;
+      t.keep('solar', t.put('solar-panel', x - 3));
+      t.keep('bulb', t.put('light', x - 1));
+    },
+    done: (t) => !!t.ref('bulb')?.powered || (!!t.ref('solar') && t.game.weather.state.light < 0.5 && t.joined('wire', t.ref('solar')!, t.ref('bulb'))),
+    target: (t) => withTool(t, 'wire', 'Wire', t.ref('solar')),
+    skipped: (t) => join(t, 'wire', t.ref('solar'), t.ref('bulb')),
+  },
+  {
+    id: 'pw-sensor',
+    title: 'Sensors',
+    text: (t) =>
+      `A <b>Proximity Sensor</b> wired to a <b>Siren</b>: it powers it while anything is within 2 m. ${pick(t, 'drag', 'Drag')} the crate over to the sensor. ` +
+      '(The others: an <b>Altimeter</b>, a <b>Speed Sensor</b>, a <b>Tilt Sensor</b>, a <b>Fuel Gauge</b>, a <b>G-Meter</b>; each one’s menu sets what it switches on at.)',
+    setup: (t) => {
+      const x = t.game.renderer.camX;
+      const s = t.keep('sensor', t.put('proximity-sensor', x + 2));
+      const siren = t.keep('siren', t.put('siren', x + 3.5));
+      join(t, 'wire', s, siren);
+      t.keep('crate', t.put('crate', x + 6.5));
+      t.memo.on = 0;
+    },
+    done: (t) => {
+      if (t.ref('siren')?.powered) t.memo.on = 1;
+      return !!t.memo.on;
+    },
+    target: (t) => (t.controls.grab ? t.ref('sensor') : t.ref('crate')),
+  },
+  {
+    id: 'pw-toggle',
+    title: 'A toggle',
+    text: (t) =>
+      `${pick(t, 'wire', 'Wire')}: ${drag(t)} from the <b>Button</b> to the <b>Toggle</b>’s left end (its input), and from its right end (its output) to the bulb. Then ${useOn(t, 'the button')}: ` +
+      'the toggle flips on and stays on; press again, off. (A <b>Step Sequencer</b> powers its outputs one after another; <b>Radio Transmitters</b> reach receivers without wires.)',
+    setup: (t) => {
+      freshFloor(t);
+      const x = t.game.renderer.camX;
+      t.keep('button', t.put('button', x - 3));
+      t.keep('toggle', t.put('toggle', x - 1.5));
+      t.keep('bulb2', t.put('light', x));
+    },
+    done: (t) => !!(t.ref('toggle') as (Entity & { on?: boolean }) | null)?.on && !!t.ref('bulb2')?.powered,
+    target: (t) => {
+      const b = t.ref('button');
+      const g = t.ref('toggle');
+      if (b && g && !t.joined('wire', b, g)) return withTool(t, 'wire', 'Wire', b);
+      if (g && t.ref('bulb2') && !t.joined('wire', g, t.ref('bulb2'))) return withTool(t, 'wire', 'Wire', g.parts[0].localToWorld(TOGGLE_PORT, 0));
+      return useAt(t, b);
+    },
+    allow: { actions: ['activate'] },
+  },
+  {
+    id: 'pw-end',
+    title: 'Wired',
+    text: () => 'Sensors, gates, timers and the rest are on the Machinery shelf. A sensor’s output can fire a parachute, a gate can arm a bomb, a solar panel can drive a car.',
+    info: 'Done',
+    alts: endAlts(),
+  },
+];
+
+// -- combat
+
+export const COMBAT: TutorialStep[] = [
+  {
+    id: 'cb-hello',
+    title: 'Combat',
+    text: () => 'Guided missiles, armour, heat seekers and flares, and bombs: what armies and pilots fight with.',
+    info: 'Lock and load',
+  },
+  {
+    id: 'cb-missile',
+    title: 'A guided missile',
+    text: (t) =>
+      `${useOn(t, 'the <b>Guided Missile Launcher</b>')}: its missile flies wherever the ${t.touch ? 'finger' : 'cursor'} is. Steer it into the car. ` +
+      '(The <b>Spike LR-II</b> locks on by itself; a vertical launch is in either one’s menu.)',
+    setup: (t) => {
+      const x = t.game.renderer.camX;
+      t.keep('launcher', t.put('guided-launcher', x - 5));
+      t.keep('target', t.put('car', x + 6));
+      t.seen.blasts = 0;
+    },
+    done: (t) => t.seen.blasts > 0,
+    target: (t) => (t.seen.blasts ? null : useAt(t, t.ref('launcher'))),
+    allow: { actions: ['activate'] },
+  },
+  {
+    id: 'cb-armour',
+    title: 'Armour',
+    text: (t) => `A sniper rifle aimed at an <b>Armour Plate</b> with a crate behind it. ${useOn(t, 'the sniper rifle')}: the plate stops the round.`,
+    setup: (t) => {
+      freshFloor(t);
+      const x = t.game.renderer.camX;
+      t.keep('plate', putAt(t, 'armour-plate', x + 1, 1, { angle: Math.PI / 2, frozen: true }));
+      t.keep('behind', putAt(t, 'crate', x + 3, 1, { frozen: true }));
+      t.keep('sniper', putAt(t, 'sniper', x - 3, 1, { frozen: true }));
+      t.seen.shots = 0;
+    },
+    done: (t) => t.seen.shots > 0,
+    target: (t) => useAt(t, t.ref('sniper')),
+    allow: { actions: ['activate'] },
+  },
+  {
+    id: 'cb-seeker',
+    title: 'Heat seekers and flares',
+    text: (t) =>
+      `A thruster burns on a post: ${useOn(t, 'the <b>Heat-Seeker Pod</b>')} and its missile goes for the heat. ` +
+      `Built into a plane, the pod fires on the pilot’s fire key${keyNote(t, 'pilotFire')}, and a <b>Flare Dispenser</b> throws flares on the flares key${keyNote(t, 'flares')}: hotter than any engine, the missile goes for them.`,
+    setup: (t) => {
+      freshFloor(t);
+      const x = t.game.renderer.camX;
+      const post = t.keep('post', putAt(t, 'metal-box', x + 7, 0.4, { frozen: true }));
+      const hot = t.keep('hot', putAt(t, 'thruster', x + 7, 1.2, { angle: Math.PI / 2 }));
+      weldAt(t, post, hot, x + 7, 0.85);
+      hot?.activate();
+      t.keep('pod', putAt(t, 'heat-seeker-pod', x - 5, 1.2, { frozen: true }));
+      t.seen.blasts = 0;
+    },
+    done: (t) => t.seen.blasts > 0,
+    target: (t) => useAt(t, t.ref('pod')),
+    allow: { actions: ['activate'] },
+  },
+  {
+    id: 'cb-bomb',
+    title: 'Bombs away',
+    text: (t) => `A <b>Bomb Bay</b> held up high: ${useOn(t, 'it')} and it drops a bomb. Built into a plane, it drops one on the bombs key${keyNote(t, 'bombs')}.`,
+    setup: (t) => {
+      freshFloor(t);
+      const x = t.game.renderer.camX;
+      t.keep('bay', putAt(t, 'bomb-bay', x, 6, { frozen: true }));
+      t.seen.blasts = 0;
+    },
+    done: (t) => t.seen.blasts > 0,
+    target: (t) => useAt(t, t.ref('bay')),
+    allow: { actions: ['activate'] },
+  },
+  {
+    id: 'cb-end',
+    title: 'At ease',
+    text: () =>
+      'Guns welded into what you fly fire on the pilot’s fire key too. The <b>Armies</b> button (up top) lines up squads to fight each other; ' +
+      'the <b>M113</b> carries missiles, the <b>Tank</b> its cannon.',
+    info: 'Done',
+    alts: endAlts(),
+  },
+];
+
+// -- rails and cranes
+
+/** The rails tour's ride: a short launch track, a loop after it, a coaster car on the launch with a rider. */
+const coasterOut = (t: Tutorial) => {
+  const x0 = t.inSight().left + 2;
+  const launch = t.controls.layTrack([{ x: x0, y: WORLD.floor + 0.6 }, { x: x0 + 8, y: WORLD.floor + 0.6 }]);
+  if (launch) t.props.add(launch);
+  t.keep('launch', launch);
+  const R = 3;
+  const cx = x0 + 14;
+  const pts: V2[] = [{ x: x0 + 8.2, y: WORLD.floor + 0.6 }, { x: cx, y: WORLD.floor + 0.6 }];
+  for (let i = 1; i <= 48; i++) {
+    const a = -Math.PI / 2 + (i / 48) * Math.PI * 2;
+    pts.push({ x: cx + R * Math.cos(a) + (i / 48) * 1.2, y: WORLD.floor + 0.6 + R + R * Math.sin(a) });
+  }
+  pts.push({ x: cx + 9, y: WORLD.floor + 0.6 });
+  const loop = t.controls.layTrack(pts);
+  if (loop) t.props.add(loop);
+  t.keep('loop', loop);
+  const car = t.keep('coaster', putAt(t, 'coaster-car', x0 + 1.5, 0.6 + (7 + 1.5 + 9) * PX));
+  const rider = t.put('human', x0 + 4);
+  sitIn(asSeat(car), rider);
+};
+
+export const RAILS: TutorialStep[] = [
+  {
+    id: 'rl-hello',
+    title: 'Rails and cranes',
+    text: () => 'Lay track, ride a roller coaster round a loop, and lift things with a claw.',
+    info: 'All aboard',
+  },
+  {
+    id: 'rl-lay',
+    title: 'Lay track',
+    text: (t) =>
+      `Pick <b>Rails</b>: the Shape tool’s other kind (${t.touch ? 'tap <b>Shape</b>, then <b>Rails</b> under it' : `press ${t.key('tool8', 'the Shape tool’s key')} twice`}). ` +
+      `Then ${t.touch ? 'drag your finger' : 'hold the button and draw'} along the way the track goes${t.touch ? '' : ' (Shift: straight)'}. Let go and it’s laid.`,
+    setup: (t) => {
+      t.n = t.all('track').length;
+    },
+    done: (t) => t.all('track').length > t.n,
+    target: (t) => (t.controls.tool === 'rails' ? t.floorAhead() : toolButton('Rails')),
+    allow: { tools: ['shape', 'rails'] },
+    skipped: (t) => {
+      const x = t.game.renderer.camX;
+      const e = t.controls.layTrack([{ x: x - 3, y: WORLD.floor + 0.6 }, { x: x + 3, y: WORLD.floor + 1.6 }]);
+      if (e) t.props.add(e);
+    },
+  },
+  {
+    id: 'rl-ride',
+    title: 'Roller coaster',
+    text: (t) =>
+      `A coaster: a <b>Coaster Car</b> with a rider on a short track, a loop after it. ${Menu(t)} the short track under the car and choose <b>Launch</b>: ` +
+      'it fires the car off, round the loop and out. (A chain lift hauls it up a hill instead; <b>Rail Wheels</b> under a plank make a wagon.)',
+    setup: (t) => {
+      freshFloor(t);
+      t.controls.setTool('drag');
+      coasterOut(t);
+      t.memo.flip = 0;
+    },
+    done: (t) => {
+      const c = t.ref('coaster');
+      if (c && Math.cos(c.parts[0].bodyAngle) < -0.7) t.memo.flip = 1;
+      return !!t.memo.flip;
+    },
+    target: (t) => {
+      const l = t.ref('launch') as (Entity & { drive?: number }) | null;
+      return l && !l.drive ? l.center() : null;
+    },
+    follow: (t) => (t.ref('coaster') && t.speed(t.ref('coaster')!) > 1 ? t.ref('coaster')!.center() : null),
+    allow: { menu: ['Launch (18 m/s)', 'Chain lift (4 m/s)', 'Plain track'] },
+    skipped: (t) => (t.ref('launch') as (Entity & { setDrive?(v: number): void }) | null)?.setDrive?.(18),
+  },
+  {
+    id: 'rl-claw',
+    title: 'A claw',
+    text: (t) => `A <b>Claw</b> held above a crate: ${useOn(t, 'the claw')} to shut it on the crate, then ${menu(t)} the claw and <b>Unfreeze</b> it: it holds the crate as it falls. (A <b>Crane Hook</b> on a rope catches what swings into it.)`,
+    setup: (t) => {
+      freshFloor(t);
+      const x = t.game.renderer.camX;
+      t.keep('claw', putAt(t, 'claw', x, 3, { frozen: true }));
+      t.keep('load', putAt(t, 'crate', x, 2.39, { frozen: true }));
+    },
+    done: (t) => {
+      const c = t.ref('claw') as (Entity & { held?: unknown }) | null;
+      const load = t.ref('load');
+      if (c?.held && load?.frozen) load.setFrozen(false);
+      return !!c?.held && !!c && !c.frozen;
+    },
+    target: (t) => useAt(t, t.ref('claw')),
+    allow: { actions: ['activate', 'freeze'], menu: ['Shut', 'Open', 'Unfreeze'] },
+  },
+  {
+    id: 'rl-end',
+    title: 'End of the line',
+    text: () => 'Tracks can go anywhere: up walls, over each other, round in circles. Weld a cockpit and a thruster to a wagon and it drives itself along.',
+    info: 'Done',
+    alts: endAlts(),
+  },
+];
+
+// -- breaking things
+
+export const BREAKING: TutorialStep[] = [
+  {
+    id: 'br-hello',
+    title: 'Everything breaks',
+    text: () => 'Not just people: metal dents and tears, wood splinters and burns, glass shatters, machines fail. Heat makes metal glow and soften. Then the <b>Repair</b> menu puts it right.',
+    info: 'Let’s break things',
+  },
+  {
+    id: 'br-shoot',
+    title: 'Holes',
+    text: (t) => `A rifle on the floor aimed at a <b>Metal Box</b>. ${useOn(t, 'the rifle')}, a few times: the rounds punch holes in it and it dents.`,
+    setup: (t) => {
+      const x = t.game.renderer.camX;
+      t.keep('box', putAt(t, 'metal-box', x + 3, 0.4, { frozen: true }));
+      t.keep('gun', putAt(t, 'rifle', x - 2, 0.6, { frozen: true }));
+      t.memo.hp = t.ref('box')?.parts[0].hp ?? 0;
+    },
+    done: (t) => {
+      const b = t.ref('box');
+      return !b || b.parts[0].hp < t.memo.hp * 0.97;
+    },
+    target: (t) => useAt(t, t.ref('gun')),
+    allow: { actions: ['activate'] },
+  },
+  {
+    id: 'br-heat',
+    title: 'Heat',
+    text: (t) => `A <b>Jet Engine</b> with a steel beam in its exhaust. ${useOn(t, 'the jet engine')} to start it: the beam heats up. Keep it in there and it glows red, then orange, and goes soft (hot metal is weaker).`,
+    setup: (t) => {
+      freshFloor(t);
+      const x = t.game.renderer.camX;
+      t.keep('beam', putAt(t, 'short-beam', x - 0.3, 1, { angle: Math.PI / 2, frozen: true }));
+      t.keep('torch', putAt(t, 'jet-engine', x + 1, 1, { frozen: true }));
+    },
+    done: (t) => (t.ref('beam')?.parts.some((p) => p.temp > 120) ?? true),
+    target: (t) => useAt(t, t.ref('torch')),
+    allow: { actions: ['activate'] },
+  },
+  {
+    id: 'br-blast',
+    title: 'Blown apart',
+    text: (t) => `C4 on a car, wired to a button. ${useOn(t, 'the <b>Button</b>')}: the car is torn apart, its doors, wheels and glass flung off.`,
+    setup: (t) => {
+      freshFloor(t);
+      const x = t.game.renderer.camX;
+      const car = t.keep('wreck', t.put('car', x + 3));
+      const c4 = t.keep('c4', car ? t.put('c4', x + 3, { dy: 1.4 }) : null);
+      const b = t.keep('button', t.put('button', x - 4));
+      join(t, 'wire', b, c4);
+      t.seen.blasts = 0;
+    },
+    done: (t) => t.seen.blasts > 0,
+    target: (t) => useAt(t, t.ref('button')),
+    allow: { actions: ['activate'] },
+  },
+  {
+    id: 'br-repair',
+    title: 'Repair',
+    text: (t) => `${Menu(t)} any piece of the car and choose <b>Repair</b>: the pieces come back together, good as new.`,
+    done: (t) => {
+      const c = t.ref('wreck') as (Entity & { wrecked?: boolean }) | null;
+      return !c || (!c.wrecked && c.parts[0].hp >= c.parts[0].maxHp * 0.99);
+    },
+    target: (t) => t.ref('wreck')?.center() ?? null,
+    allow: { menu: ['Repair'] },
+    skipped: () => {},
+  },
+  {
+    id: 'br-end',
+    title: 'Good as new',
+    text: () =>
+      'Things break by what they’re made of: a blast tears sheet metal, cracks stone, splinters wood; welds snap under force; machines spark, falter and fail, and an EMP can fry them for good. ' +
+      'Settings › Graphics › Debris sets how many pieces are kept.',
+    info: 'Done',
+    alts: endAlts(),
+  },
+];
+
 /** Tours on their way: shown in the Tutorials panel, not yet to be started. */
 export const SOON: { title: string; blurb: string }[] = [
   { title: 'Fighting & armies', blurb: 'Make people fight, take sides, and line up armies for a battle.' },
@@ -3318,5 +4090,54 @@ export const TOURS: Tour[] = [
     blurb: 'Ropes, springs, hinges, pins, welds, wires, pulses and fuse cords; then a rocket, saved to the toybox and flown.',
     minutes: 8,
     steps: BUILDING,
+  },
+  {
+    id: 'flight',
+    title: 'Flying',
+    blurb: 'Seat a pilot, throttle up, tilt and land a home-made craft; fire a rocket’s stages and open a parachute.',
+    minutes: 6,
+    steps: FLIGHT,
+  },
+  {
+    id: 'drive',
+    title: 'Cars you build',
+    blurb: 'Drive a motor-wheel car with an engine, nitro and lights; jump a ramp, fill up at the pump and race through the gates.',
+    minutes: 6,
+    steps: DRIVE,
+  },
+  {
+    id: 'airsea',
+    title: 'Air & sea',
+    blurb: 'A helicopter rotor, a boat propeller out on the sea, and a ballast tank to dive and surface.',
+    minutes: 5,
+    steps: AIRSEA,
+  },
+  {
+    id: 'power',
+    title: 'Power & logic',
+    blurb: 'Solar power, sensors that switch things on, a button and a toggle that remembers.',
+    minutes: 5,
+    steps: POWER,
+  },
+  {
+    id: 'combat',
+    title: 'Combat',
+    blurb: 'Steer a guided missile, stop a round with armour, fire a heat seeker and drop a bomb.',
+    minutes: 5,
+    steps: COMBAT,
+  },
+  {
+    id: 'rails',
+    title: 'Rails & cranes',
+    blurb: 'Lay track, launch a roller coaster round a loop, and lift a crate with a claw.',
+    minutes: 5,
+    steps: RAILS,
+  },
+  {
+    id: 'breaking',
+    title: 'Everything breaks',
+    blurb: 'Holes, heat and blasts tear things apart by what they’re made of; then Repair puts them right.',
+    minutes: 5,
+    steps: BREAKING,
   },
 ];

@@ -1,3 +1,4 @@
+import { BATTERY_J } from '../systems/Power';
 import * as THREE from 'three';
 import { RAPIER } from '../engine/Physics';
 import { BROKEN, WORN } from '../world/Entity';
@@ -13,6 +14,7 @@ import type { Game } from '../world/Game';
 import type { ContextAction, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
 import type { V2 } from '../engine/math';
 import type { EditField, ValueEditor } from '../tools/Controls';
+import { BURN } from '../systems/Fuel';
 import { engineLevel, jobAction, pilotState, restorePilot, type Engine, type Job } from '../systems/Piloting';
 
 /** A machine that runs while switched on by hand or while powered (thrusters, lamps, motors, pistons, timers). */
@@ -37,9 +39,16 @@ export function toggleRun(m: HandSwitched, running: boolean, powered: boolean): 
 
 // ------------------------------------------------------------------ battery
 
-/** Powers everything wired to it while switched on. */
+/**
+ * Powers everything wired to it while switched on, from its charge: what runs on it draws
+ * it down, a solar panel or a generator on its wires charges it (see systems/Power), and
+ * flat it gives no power. Settings' infinite fuel keeps it full.
+ */
 export class Battery extends Prop {
   on = true;
+  /** Its charge and what it holds (J). */
+  charge = BATTERY_J;
+  readonly capacity = BATTERY_J;
   private blinkT = 0;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, x: number, y: number, opts: SpawnOptions) {
@@ -48,11 +57,11 @@ export class Battery extends Prop {
   }
 
   isPowerSource(): boolean {
-    return this.on && this.works;
+    return this.on && this.works && this.charge > 0;
   }
 
   get chargesWater(): boolean {
-    return this.on && this.works;
+    return this.isPowerSource();
   }
 
   /**
@@ -77,22 +86,39 @@ export class Battery extends Prop {
     if (!this.on) return;
     this.blinkT -= dt;
     if (this.blinkT <= 0) {
-      this.blinkT = 0.9;
+      const k = this.charge / this.capacity;
+      // (green, yellow under a third, red and quick under a tenth; flat, none)
+      this.blinkT = k < 0.1 ? 0.45 : 0.9;
+      if (k <= 0) return;
       const w = this.main.pixelToWorld(5, 1);
-      this.game.particles.flash(w.x, w.y, PX * 2.5, 0x8dff8a, 0.25);
+      this.game.particles.flash(w.x, w.y, PX * 2.5, k < 0.1 ? 0xff5a4a : k < 0.33 ? 0xffd04a : 0x8dff8a, 0.25);
     }
   }
 
+  /** Charged back up (its menu). */
+  recharge(): void {
+    const flat = this.charge <= 0;
+    this.charge = this.capacity;
+    if (flat) this.game.connections.recomputePower();
+  }
+
   contextActions(): ContextAction[] {
-    return [{ label: this.on ? 'Switch off' : 'Switch on', hint: 'F', action: () => this.activate() }];
+    return [
+      { label: this.on ? 'Switch off' : 'Switch on', hint: 'F', action: () => this.activate() },
+      { label: `Charge: ${Math.round((this.charge / this.capacity) * 100)}%`, disabled: true, action: () => {} },
+      { label: 'Recharge', action: () => this.recharge() },
+    ];
   }
 
   protected serializeExtra(): Record<string, unknown> {
-    return { on: this.on };
+    return { on: this.on, charge: Math.round(this.charge) };
   }
 
   protected restoreExtra(x: Record<string, unknown>): void {
     this.on = x.on !== false;
+    const was = this.charge;
+    this.charge = typeof x.charge === 'number' && Number.isFinite(x.charge) ? Math.max(0, Math.min(this.capacity, x.charge)) : this.capacity;
+    if ((was > 0) !== (this.charge > 0)) this.game.connections.recomputePower();
   }
 }
 
@@ -287,6 +313,11 @@ export class Thruster extends Prop implements HandSwitched, Engine {
   pilotOut: number | null = null;
   pilotT = 0;
 
+  /** How hot it looks to a heat seeker (see Missiles.heatOf()): its flame, as hard as it's burning. */
+  heatSignature(): number {
+    return this.lit * 1200;
+  }
+
   constructor(game: Game, def: ItemDef, cfg: PropConfig, force: number, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
     this.activatable = true;
@@ -335,16 +366,76 @@ export class Thruster extends Prop implements HandSwitched, Engine {
     return this.pilotOut === null && this.powered && this.reversed;
   }
 
+  /** Out of fuel: switched on, it pushes nothing (see systems/Fuel). */
+  dry = false;
+  /** Fuel it burns (kg a second for each newton at full: see BURN). */
+  protected burn = BURN.rocket;
+  /** How hard it ran last step (0 to 1: for its flame and light). */
+  protected lit = 0;
+  /** Its nozzle (art pixel): where the flame comes out. */
+  protected nozzlePx: [number, number] = [0, 5];
+
+  /** Engines can be given a stage (see Entity.stage): off till it's fired. */
+  get stageable(): boolean {
+    return true;
+  }
+
+  /** Its stage fired: it lights (and, flown, the throttle runs it). */
+  fireStage(): void {
+    this.staged = true;
+    if (!this.running && this.pilotOut === null) {
+      this.on = true;
+      this.heldOff = false;
+    }
+  }
+
+  /** How hard it runs now (0 to 1: see engineLevel()). */
+  protected level(): number {
+    return engineLevel(this, this.on);
+  }
+
+  /** Which way it pushes now (world): along its facing (`s` -1: reversed); a swivelling one, turned. */
+  protected thrustDir(s: number): V2 {
+    const p = this.main;
+    return p.localDir(p.flip * s, 0);
+  }
+
+  /** The fuel it burns at full from its build's tanks (kg/s: see Piloting.buildStats()). */
+  burnRate(): number {
+    return this.force * this.thrust * this.burn;
+  }
+
+  /** The fuel for a step taken (kg): the share of it there was (see systems/Fuel). */
+  protected fuelFor(kg: number): number {
+    return this.game.fuel.draw(this, kg);
+  }
+
   preStep(dt: number): void {
     if (this.heldOff && !this.powered) this.heldOff = false;
-    if (!this.running) return;
+    this.lit = 0;
+    if (!this.running) {
+      this.dry = false;
+      return;
+    }
     const p = this.main;
     if (p.frozen) return;
+    const lvl = this.level();
+    if (lvl <= 0) return;
+    const got = this.fuelFor(this.force * this.thrust * lvl * this.burn * dt);
+    this.dry = got <= 0;
+    if (got <= 0) return;
     const s = this.backwards ? -1 : 1;
-    const f = p.localDir(p.flip * s, 0);
-    const push = this.force * this.thrust * engineLevel(this, this.on);
+    const f = this.thrustDir(s);
+    const push = this.force * this.thrust * lvl * got;
     p.body.applyImpulse({ x: f.x * push * dt, y: f.y * push * dt }, true);
-    const n = p.pixelToWorld(0, 5);
+    this.lit = lvl * got;
+    this.exhaust(f, s);
+  }
+
+  /** The blast out of the nozzle, and its sound. */
+  protected exhaust(f: V2, s: number): void {
+    const p = this.main;
+    const n = p.pixelToWorld(this.nozzlePx[0], this.nozzlePx[1]);
     // the blast out of the nozzle; pushing backwards, it's turned out to the
     // sides and forward, as a jet's thrust reverser turns it
     let ex = -f.x;
@@ -356,18 +447,22 @@ export class Thruster extends Prop implements HandSwitched, Engine {
       ey = -f.y * 0.5 + u.y;
       sp = 3 + Math.random() * 2;
     }
-    const ps = this.game.particles;
+    // (in thin air the plume spreads wide, nothing round it to hold it in)
+    const g = this.game;
+    const thin = g.map.world ? g.air.thinness(p.y) : 1;
+    const wide = 1 + 3 * (1 - thin);
+    const ps = g.particles;
     ps.emit(PK.Fire, n.x, n.y, {
-      vx: ex * sp + (Math.random() - 0.5), vy: ey * sp + (Math.random() - 0.5),
-      life: 0.12 + Math.random() * 0.1, size: 0.12, size1: 0.03, color: 0xbfe7ff, color1: 0xff7a2a, alpha: 0.9, alpha1: 0.2, gravity: 0, drag: 2,
+      vx: ex * sp + (Math.random() - 0.5) * wide, vy: ey * sp + (Math.random() - 0.5) * wide,
+      life: (0.12 + Math.random() * 0.1) * (1 + (wide - 1) * 0.5), size: 0.12 * Math.sqrt(wide), size1: 0.03 * wide, color: 0xbfe7ff, color1: 0xff7a2a, alpha: 0.9, alpha1: 0.2, gravity: 0, drag: 2,
     });
-    if (Math.random() < 0.15) ps.smoke(n.x + ex * 0.3, n.y + ey * 0.3, 1, 0.15);
-    this.game.sound.hold(this, 'machine/thruster_loop', 0.45, p.x);
+    if (Math.random() < 0.15 * thin) ps.smoke(n.x + ex * 0.3, n.y + ey * 0.3, 1, 0.15);
+    g.sound.hold(this, 'machine/thruster_loop', 0.45, p.x);
   }
 
   frame(): void {
-    if (!this.running || this.main.frozen) return;
-    const n = this.main.pixelToWorld(0, 5);
+    if (!this.running || this.main.frozen || this.lit <= 0) return;
+    const n = this.main.pixelToWorld(this.nozzlePx[0], this.nozzlePx[1]);
     this.game.renderer.addLight(n.x, n.y, 1.8, 0.3 + Math.random() * 0.1, 0xffa860);
   }
 
@@ -443,6 +538,8 @@ export class Motor extends Machine implements HandSwitched, Engine {
   speed = 1;
   /** Its torque as a share of its own (see MOTOR_TORQUES). */
   torque = 1;
+  /** Driven by an engine in its build (0.4.0, see Vehicles2 CarEngine): its gear's share of its speed and torque. */
+  drive: { speed: number; torque: number } | null = null;
   private cfg: MotorConfig;
   private applied = '';
 
@@ -502,14 +599,16 @@ export class Motor extends Machine implements HandSwitched, Engine {
       dir = this.powered && this.reversed ? -this.dir : this.dir;
       k = this.on ? 1 : this.powered ? this.powerLevel : 1;
     }
-    const sig = `${run}:${dir}:${this.speed}:${this.torque}:${k}`;
+    const ds = this.drive?.speed ?? 1;
+    const dtq = this.drive?.torque ?? 1;
+    const sig = `${run}:${dir}:${this.speed}:${this.torque}:${k}:${ds}:${dtq}`;
     if (sig === this.applied || !this.joint.isValid()) return;
     this.applied = sig;
-    const torque = this.cfg.torque * this.torque;
+    const torque = this.cfg.torque * this.torque * dtq;
     this.joint.setMotorMaxForce(torque);
     // target velocity is the rotor relative to the housing; by default rotors turn
     // clockwise, so wheels drive the way the motor faces
-    if (run) this.joint.configureMotorVelocity(-this.cfg.speed * this.speed * k * dir * (this.flipped ? -1 : 1), torque * 0.6);
+    if (run) this.joint.configureMotorVelocity(-this.cfg.speed * this.speed * ds * k * dir * (this.flipped ? -1 : 1), torque * 0.6);
     else this.joint.configureMotorVelocity(0, 0.02);
     this.rotor.body.wakeUp();
     this.housing.body.wakeUp();

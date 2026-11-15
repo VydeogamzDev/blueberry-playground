@@ -4,6 +4,9 @@ import type { Part } from '../world/Part';
 import type { Entity } from '../world/Entity';
 import { initThreads } from './threads';
 
+/** The fastest (m/s) a body may move (Rapier's own cap is 400). */
+export const MAX_BODY_SPEED = 2000;
+
 /**
  * Rapier, as loaded by initPhysics(): its SIMD build wherever the browser runs
  * WebAssembly SIMD (every current one: steps of crowded scenes take ~40% less
@@ -133,6 +136,9 @@ export class Physics {
     // contact elsewhere (an animal's paw touching down at 2.5 m/s) is corrected
     // as if it were deep: the paw was kicked up at 20 m/s, flipping the animal
     ip.maxCcdSubsteps = 1;
+    // Rapier holds every body under 400 m/s by default: an orbit on the World map
+    // (about 470 m/s at 10 km) and a reentry go faster (our build lets it be set)
+    if ('normalizedMaxLinearVelocity' in ip) ip.normalizedMaxLinearVelocity = MAX_BODY_SPEED;
     this.events = new RAPIER.EventQueue(true);
     const COMPUTE = RAPIER.SolverFlags.COMPUTE_IMPULSE;
     this.hooks = {

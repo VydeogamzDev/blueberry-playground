@@ -13,6 +13,7 @@ export type ActionId =
   | 'menu' | 'toybox' | 'toggleUi' | 'help' | 'layout'
   | 'panLeft' | 'panRight' | 'panUp' | 'panDown' | 'zoomIn' | 'zoomOut' | 'recenter'
   | 'driveLeft' | 'driveRight' | 'aimUp' | 'aimDown' | 'turnLeft' | 'turnRight'
+  | 'stage' | 'assist' | 'gear' | 'chutes' | 'eject' | 'pilotFire' | 'boost' | 'chaseCam' | 'lights' | 'horn' | 'autopilot' | 'bombs' | 'flares'
   | 'com' | 'rewind' | 'layerFront' | 'layerBack' | 'gridSize' | 'angleStep';
 
 export interface ActionSpec {
@@ -89,6 +90,20 @@ export const ACTIONS: ActionSpec[] = [
   { id: 'aimDown', label: 'Aim the selected tanks down (lower their barrels); throttle down what you fly', group: 'Vehicles', keys: ['KeyS'], shares: 'detail' },
   { id: 'turnLeft', label: 'Turn what you fly anticlockwise; tilt a vehicle in the air back', group: 'Vehicles', keys: ['KeyQ'], shares: 'spawnLeft' },
   { id: 'turnRight', label: 'Turn what you fly clockwise; tilt a vehicle in the air forward', group: 'Vehicles', keys: ['KeyE'], shares: 'spawnRight' },
+  // (0.4.0: every letter's taken, so the flying orders are on the keys round Enter)
+  { id: 'stage', label: 'Fire the next stage of what you fly (decouplers, boosters, chutes: see each part’s Stage)', group: 'Vehicles', keys: ['Enter'] },
+  { id: 'assist', label: 'Stability assist on or off for what you fly (holds its angle, stops it spinning)', group: 'Vehicles', keys: ['Backquote'] },
+  { id: 'gear', label: 'Landing legs and gear up or down', group: 'Vehicles', keys: ['BracketLeft'] },
+  { id: 'chutes', label: 'Open the parachutes (again: cut them away)', group: 'Vehicles', keys: ['BracketRight'] },
+  { id: 'eject', label: 'Eject (the pilot of an ejection seat)', group: 'Vehicles', keys: ['Quote'] },
+  { id: 'pilotFire', label: 'Hold: fire the guns built into what you fly', group: 'Vehicles', keys: ['Backslash'] },
+  { id: 'boost', label: 'Hold: boost (nitro, afterburners)', group: 'Vehicles', keys: ['Semicolon'] },
+  { id: 'lights', label: 'Headlights on or off in what you fly', group: 'Vehicles', keys: ['Comma'] },
+  { id: 'horn', label: 'Sound the horn of what you fly', group: 'Vehicles', keys: ['Slash'] },
+  { id: 'autopilot', label: 'Autopilot on or off for what you fly (holds its height and heading)', group: 'Vehicles', keys: ['Insert'] },
+  { id: 'bombs', label: 'Drop a bomb from the bomb bays of what you fly', group: 'Vehicles', keys: ['Digit0'] },
+  { id: 'flares', label: 'Fire flares from what you fly (heat-seeking missiles chase them instead)', group: 'Vehicles', keys: ['CapsLock'] },
+  { id: 'chaseCam', label: 'Chase camera on or off (follows what you fly, zooming out with speed)', group: 'Camera', keys: ['End'] },
   // building (not People Playground's keys: it has no layers, grids or checkpoints to reach)
   { id: 'com', label: 'Hold: connection ends go at the centre of mass', group: 'Building', keys: ['KeyM'] },
   { id: 'rewind', label: 'Back to build (the scene as it was before Play; also Shift + Toggle time)', group: 'Building', keys: [] },

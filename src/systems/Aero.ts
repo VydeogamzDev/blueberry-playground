@@ -1,4 +1,5 @@
 import { PX } from '../engine/constants';
+import { PK } from './Particles';
 import type { Game } from '../world/Game';
 import type { Part } from '../world/Part';
 
@@ -29,6 +30,11 @@ interface AeroShape {
 }
 
 const shapes = new WeakMap<Part, AeroShape>();
+/** Whether something of its own build is ahead of a part, as last looked (see Aero.shaded()). */
+const shade = new WeakMap<Part, { at: number; on: boolean }>();
+/** Reentry heating (see Aero.reentry()): from this speed (m/s), and how much hotter the air ahead gets for the speed past it (the squeezed world's scale). */
+const HOT_FROM = 250;
+const HOT_K = 14;
 
 /**
  * Its faces against the air: a box its sprite's size, as deep as it is thick (a
@@ -80,6 +86,22 @@ function cn(s: number): number {
  * asleep or frozen ones have no speed. Things that fly by their own rules
  * (Entity.ownFlight: missiles, rockets, shells, bolts) are left to them.
  */
+/**
+ * How hard the air holds back these parts going as one (the trajectory line's guess, see
+ * Piloting.trajectory()): deceleration = this × ρ × v², their faces met at no particular angle.
+ */
+export function dragOf(parts: readonly Part[]): number {
+  let area = 0;
+  let mass = 0;
+  for (const p of parts) {
+    if (p.destroyed) continue;
+    const a = aeroOf(p);
+    area += (a.an + a.au) / 2;
+    mass += a.m;
+  }
+  return mass > 0 ? (0.5 * CN_FLAT * area) / mass : 0;
+}
+
 export class Aero {
   private game: Game;
 
@@ -92,20 +114,79 @@ export class Aero {
     const air = g.air;
     const layered = air.layered;
     const rho0 = air.densityAt(0);
+    // (the wind, and thermals: the air moving, what's in it is pushed by its speed through the air, not over the ground)
+    const ws = g.weather;
+    const windy = ws.state.wind !== 0 || (g.map.world && ws.state.light > 0.5);
     for (const e of g.entities) {
       if (e.destroyed || e.ownFlight) continue;
       for (const p of e.parts) {
-        const vx = p.vx;
-        const vy = p.vy;
+        let vx = p.vx;
+        let vy = p.vy;
+        if (windy && !p.destroyed && !p.frozen && !p.body.isSleeping()) {
+          const w = ws.windAt(p.x, p.y);
+          vx -= w.x;
+          vy -= w.y;
+        }
         const v2 = vx * vx + vy * vy;
         if (v2 < MIN_SPEED2 || p.destroyed || p.frozen) continue;
         const rho = layered ? air.densityAt(p.y) : rho0;
         if (rho <= 1e-6) continue;
+        // (coming in from space fast, the air ahead of it heats it: see reentry())
+        if (v2 > HOT_FROM * HOT_FROM && rho > 1e-5) this.reentry(p, rho, v2, dt);
         const a = aeroOf(p);
         if (rho * a.k * v2 < MIN_ACCEL) continue;
         this.push(p, a, rho, vx, vy, v2, dt);
       }
     }
+  }
+
+  /**
+   * Reentry heating (0.4.0): past HOT_FROM the air in front of a part is squeezed hot
+   * (the squeezed world's speeds are lower than the real ones, so it starts lower): it
+   * takes the part toward that heat, faster the thicker the air. Something ahead of it
+   * in its own build (a heat shield, a nose) shades it, and it heats far less. Hot enough,
+   * it glows a trail behind it.
+   */
+  private reentry(p: Part, rho: number, v2: number, dt: number): void {
+    const g = this.game;
+    const v = Math.sqrt(v2);
+    const to = g.air.tempAt(p.y) + (HOT_K * (v2 - HOT_FROM * HOT_FROM)) / 2010;
+    if (p.temp >= to) return;
+    const shaded = this.shaded(p, p.vx / v, p.vy / v);
+    const k = (3 * Math.sqrt(rho / 1.225) * (v / 500) * (shaded ? 0.06 : 1)) / Math.sqrt(Math.max(0.5, p.mass / 10));
+    g.heat.toward(p, to, k * dt);
+    if (!shaded && to > 700 && Math.random() < Math.min(1, rho * 40)) {
+      const back = (Math.hypot(p.w, p.h) * PX) / 2;
+      g.particles.emit(PK.Fire, p.x - (p.vx / v) * back, p.y - (p.vy / v) * back, {
+        vx: p.vx * 0.85, vy: p.vy * 0.85, life: 0.25, size: 0.25, size1: 0.05, color: 0xfff1c0, color1: 0xff5a1a, alpha: 0.9, alpha1: 0, gravity: 0, drag: 6,
+      });
+    }
+  }
+
+  /** Is something of its own build ahead of it, going this way (unit vector)? (Looked at every few steps.) */
+  private shaded(p: Part, ux: number, uy: number): boolean {
+    const c = shade.get(p);
+    const now = this.game.time;
+    if (c && now - c.at < 0.1 && now >= c.at) return c.on;
+    let on = false;
+    const r = (Math.hypot(p.w, p.h) * PX) / 2;
+    for (const e of this.game.connections.builtWith(p.entity)) {
+      for (const q of e.parts) {
+        if (q === p || q.destroyed) continue;
+        const dx = q.x - p.x;
+        const dy = q.y - p.y;
+        const ahead = dx * ux + dy * uy;
+        if (ahead <= 0 || ahead > r + 3) continue;
+        const side = Math.abs(dx * uy - dy * ux);
+        if (side < (Math.max(q.w, q.h) * PX) / 2) {
+          on = true;
+          break;
+        }
+      }
+      if (on) break;
+    }
+    shade.set(p, { at: now, on });
+    return on;
   }
 
   private push(p: Part, a: AeroShape, rho: number, vx: number, vy: number, v2: number, dt: number): void {

@@ -521,6 +521,18 @@ const SEA = builtin('sea', 'Sea', 300, 80, 'desert', [
   { pts: [[-62, 0], [-55, 0], [-56.5, 1.6], [-60, 1.9]], mat: 'rock' },
 ], { water: { x0: -150, x1: -2.5, level: 9 } });
 
+/**
+ * An ocean 200 m deep (0.4.0): a sea to the left over a bed of rocks and a wreck, a long
+ * beach rising out of it to the right. Deep enough for submarines, and to crush them.
+ */
+const OCEAN = builtin('ocean', 'Ocean', 600, 240, 'desert', [
+  rise(60, 230, 300, 300, 205),
+  { pts: [[-220, 0], [-200, 0], [-206, 7], [-214, 6]], mat: 'rock' },
+  { pts: [[-80, 0], [-64, 0], [-70, 4.5], [-77, 3.8]], mat: 'rock' },
+  box(-140, 0, -128, 2.5, 'metal'),
+  box(-136, 2.5, -133, 9, 'metal'),
+], { water: { x0: -300, x1: 225, level: 200 } });
+
 /** Two cliffs 100 m high either side of a chasm down to the floor, a ledge partway down it. */
 const ABYSS = builtin('abyss', 'Abyss', 240, 140, 'outdoors', [
   box(-120, -0.5, 6, 100, 'rock'),
@@ -529,7 +541,7 @@ const ABYSS = builtin('abyss', 'Abyss', 240, 140, 'outdoors', [
 ]);
 
 /** The maps that come with the game, the lab first. */
-export const BUILTIN_MAPS: MapSpec[] = [LAB, HANGAR, HILLS, ROOFTOPS, ARENA, ENDLESS, WORLD_MAP, TINY, HUMONGOUS, SLANTED, TOWER, BLOCKS, VOID, SNOW, SEA, ABYSS];
+export const BUILTIN_MAPS: MapSpec[] = [LAB, HANGAR, HILLS, ROOFTOPS, ARENA, ENDLESS, WORLD_MAP, TINY, HUMONGOUS, SLANTED, TOWER, BLOCKS, VOID, SNOW, SEA, OCEAN, ABYSS];
 
 /** A built-in map by its id. */
 export function builtinMap(id: string): MapSpec | undefined {

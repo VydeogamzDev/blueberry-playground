@@ -6,7 +6,7 @@ import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
 import { MAT, type PhysMaterial } from '../world/Materials';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
-import { limbArt, faceColors, EYE, MOUTH, HUMAN_SKIN, GRANT_SKIN, type BodyKind, type Build, type LimbKey, type Skin } from '../art/human';
+import { limbArt, faceColors, EYE, MOUTH, HUMAN_SKIN, GRANT_SKIN, DUMMY_SKIN, type BodyKind, type Build, type LimbKey, type Skin } from '../art/human';
 import { ramp } from '../art/palette';
 import type { Item, Holder } from './Item';
 import { adrenalineRush, type Drug } from './Syringe';
@@ -564,12 +564,15 @@ interface Variant {
   frame: Frame;
   /** How much less anything harms them (1: as it does anyone; Grant's, see GRIT). */
   grit: number;
+  /** A crash dummy (0.4.0): never awake, never bleeds; hurt as a person would be, and tells whether it would have lived. */
+  dummy?: boolean;
 }
 
 export const VARIANTS: Record<string, Variant> = {
   human: { kind: 'human', skin: HUMAN_SKIN, skinKey: 'default', material: MAT.flesh, toughness: 1, bleeds: true, build: 'standard', frame: STANDARD, grit: 1 },
   android: { kind: 'android', skin: HUMAN_SKIN, skinKey: 'default', material: MAT.robot, toughness: 0.45, bleeds: false, build: 'standard', frame: STANDARD, grit: 1 },
   grant: { kind: 'human', skin: GRANT_SKIN, skinKey: 'grant', material: MAT.flesh, toughness: 1, bleeds: true, build: 'grant', frame: GRANT, grit: GRIT.harm },
+  dummy: { kind: 'human', skin: DUMMY_SKIN, skinKey: 'dummy', material: MAT.flesh, toughness: 1, bleeds: false, build: 'standard', frame: STANDARD, grit: 1, dummy: true },
 };
 
 export class Human extends Entity implements Holder {
@@ -586,6 +589,8 @@ export class Human extends Entity implements Holder {
   alive = true;
   /** 0..1 */
   consciousness = 1;
+  /** How near blacking out the g of a hard turn has them (0 to 1.5; 1 and over: out). Set by the cockpit they sit in (see Cockpit.strain). */
+  gStrain = 0;
   /** 0..100 blood volume */
   blood = 100;
   pain = 0;
@@ -888,7 +893,24 @@ export class Human extends Entity implements Holder {
   }
 
   get label(): string {
+    if (this.variant.dummy) return this.def.name + (this.alive ? '' : ' (fatal)');
     return this.def.name + (this.alive ? '' : ' (dead)');
+  }
+
+  /** A crash dummy's verdict: how badly it's hurt, and whether a person would have lived. */
+  dummyReport(): string {
+    let worst = '';
+    let most = 0;
+    for (const l of this.order) {
+      const hurt = l.gone ? 1 : clamp(1 - l.part.hp / l.part.maxHp, 0, 1);
+      if (hurt > most) {
+        most = hurt;
+        worst = l.spec.key.replace(/([A-Z])/g, ' $1').toLowerCase();
+      }
+    }
+    if (!this.alive) return `Fatal: a person would not have lived (worst: ${worst})`;
+    if (most < 0.05) return 'Unhurt';
+    return `Would have lived: ${most > 0.6 ? 'badly' : most > 0.25 ? 'quite' : 'lightly'} hurt (worst: ${worst}, ${Math.round(most * 100)}%)`;
   }
 
   limbOf(p: Part): Limb | undefined {
@@ -4213,10 +4235,14 @@ export class Human extends Entity implements Holder {
       if (this.blood < 65 && !this.zombie) target = Math.min(target, (this.blood - 40) / 25);
       if (this.pain > 0.9) target = Math.min(target, 0.4);
       if (d.knockout > 0 || this.stunned > 0) target = Math.min(target, 0.05);
+      // (blacked out by the g of a hard turn: see Cockpit.strain)
+      if (this.gStrain >= 1) target = Math.min(target, 0.05);
       target = clamp(target, 0, 1);
       // consciousness drops fast, recovers slowly (quickly on adrenaline, for a zombie, and for Grant)
       // (rates per step at 120 steps a second, the same at any step length)
       const up = d.adrenaline > 0 || this.zombie || this.hardy ? 0.03 : 0.004;
+      // (a crash dummy is never awake)
+      if (this.variant.dummy) target = 0;
       const rate = target < this.consciousness ? 0.2 : up;
       this.consciousness += (target - this.consciousness) * (1 - Math.pow(1 - rate, dt * 120));
       this.shock = Math.max(0, this.shock - dt * 0.01);
@@ -4265,7 +4291,7 @@ export class Human extends Entity implements Holder {
     const mouth = head.part.localToWorld(0, -MOUTH_DOWN);
     const treading = this.treading;
     const awake = this.consciousness > 0.15;
-    if (this.breath.step(this.game, dt, mouth, this.L('lowerTorso').part, awake, treading) && awake) {
+    if (this.breath.step(this.game, dt, mouth, this.L('lowerTorso').part, awake, treading, this.game.oxygen.supplied(this)) && awake) {
       this.game.sound.play('creature/gasp', { gain: 0.5, x: mouth.x, vary: 0.1 });
     }
     chest.buoyancy = this.breath.buoyancy;
@@ -4414,8 +4440,10 @@ export class Human extends Entity implements Holder {
       return;
     }
     const trunk = (this.trunkParts ??= [...TRUNK].map((k) => this.limbs.get(k as LimbKey)!.part));
-    const h = this.jolt.step(trunk, this.game.time, this.game.gravity, JOLT_BEARS * Math.sqrt(this.variant.grit));
-    if (h <= 0) return;
+    const h0 = this.jolt.step(trunk, this.game.time, this.game.gravity, JOLT_BEARS * Math.sqrt(this.variant.grit));
+    if (h0 <= 0) return;
+    // (belted in, an airbag gone off: the seat takes some of it; see entities/Safety)
+    const h = h0 * ((this.seat?.vehicle as { cushion?(): number } | undefined)?.cushion?.() ?? 1);
     this.injure(chest, h * 0.85 * chest.spec.hp, 'blunt', undefined, undefined, false);
     const head = this.limbs.get('head')!;
     if (head.gone || !this.alive) return;
@@ -4914,6 +4942,7 @@ export class Human extends Entity implements Holder {
   /** `part`: the limb right-clicked (its bone can be broken or mended). */
   contextActions(part?: Part): ContextAction[] {
     const acts: ContextAction[] = [];
+    if (this.variant.dummy) acts.push({ label: this.dummyReport(), disabled: true, action: () => {} });
     const seat = this.seat;
     if (seat) acts.push({ label: 'Get out', action: () => seat.leave() });
     if (this.alive) acts.push({ label: 'Jump', hint: 'J', disabled: this.state !== 'stand', action: () => this.jump() });

@@ -8,6 +8,7 @@ import type { Human } from '../../entities/Human';
 import { WORLD_MAP } from '../../world/Maps';
 import { rebase } from '../../world/Origin';
 import { saveToString, loadFromString } from '../../world/SaveLoad';
+import { PK } from '../../systems/Particles';
 
 /** A second game's `window.bp` in an iframe, joining this one (see multiplayer.ts). */
 interface Bp {
@@ -213,6 +214,46 @@ export default function tests({ game, kit }: TestCtx): Test[] {
       if (game.connections.list.filter((c) => c.kind === 'rope').length !== 1) return 'the rope went';
       const fast = all.flatMap((e) => e.parts).filter((p) => !p.destroyed && Math.hypot(p.vx, p.vy) > 1);
       if (fast.length) return `${fast.length} parts are still moving (${fast[0].entity.def.id} at ${Math.hypot(fast[0].vx, fast[0].vy).toFixed(1)} m/s)`;
+      return true;
+    })],
+    ['extra: world: up in space a jet flames out (no flame, its readout says out of air) and lights again lower down; smoke there neither rises nor hangs back', () => kit.still(async () => {
+      // (a jet full on in space showed its flame and smoke, and its readout said it was running, as its rocket fell)
+      type Layer = { count: number; vx: Float32Array; vy: Float32Array };
+      const ps = game.particles as unknown as { smokeL: Layer; fireL: Layer };
+      world();
+      travel(0, 30000);
+      const jet = kit.spawn('jet-engine', -game.origin.x, 30000 - game.origin.y);
+      const spool = () => (jet as unknown as { spool: number }).spool;
+      const fire0 = ps.fireL.count;
+      game.advance(1.5, () => {
+        game.piloting.drive([jet], { x: 0, t: 1, r: 0 });
+        watch(jet.parts[0]);
+      });
+      let hud = game.piloting.hudOf([jet]);
+      if (spool() > 0) return `in space it spooled up to ${spool().toFixed(2)}`;
+      if (ps.fireL.count > fire0) return `in space it threw out ${ps.fireL.count - fire0} flames`;
+      if (hud?.running !== 0 || hud?.noAir !== 1) return `in space its readout says ${hud?.running} running, ${hud?.noAir ?? 0} out of air`;
+      // smoke let go there drifts on as it was sent: no drag slows it, nothing lifts it
+      const s = ps.smokeL;
+      game.particles.emit(PK.Smoke, r.camX, r.camY, { vx: 5, vy: 0, life: 3, gravity: -0.05, drag: 1.2 });
+      const i = s.count - 1;
+      kit.advance(1);
+      if (s.vx[i] < 4.9 || Math.abs(s.vy[i]) > 0.05) return `smoke in space went (${s.vx[i].toFixed(2)}, ${s.vy[i].toFixed(2)}) m/s a second after it left at (5, 0)`;
+      // brought down into the air (carried along with the view, or it's parked out of the way), it lights again
+      const p = jet.parts[0];
+      for (let h = tru(p).y; h > 300; ) {
+        h = Math.max(300, h - 100);
+        travel(0, h);
+        jet.translate(r.camX - p.x, r.camY - p.y);
+      }
+      p.body.setLinvel({ x: 0, y: 0 }, true);
+      game.advance(1.5, () => {
+        game.piloting.drive([jet], { x: 0, t: 1, r: 0 });
+        watch(jet.parts[0]);
+      });
+      hud = game.piloting.hudOf([jet]);
+      if (spool() < 0.5) return `at 300 m it only spooled up to ${spool().toFixed(2)}`;
+      if (hud?.running !== 1 || hud?.noAir) return `at 300 m its readout says ${hud?.running} running, ${hud?.noAir ?? 0} out of air`;
       return true;
     })],
     ['extra: world: a balloon let go rises till the air thins at the clouds, and bursts', () => kit.still(async () => {

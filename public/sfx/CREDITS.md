@@ -2143,3 +2143,24 @@ The background music in `public/music/` (played by `src/engine/Music.ts`), all f
 | File | Original file | Notes |
 |---|---|---|
 | `music/apple_cider.ogg` | apple_cider.ogg | the first 2:32 of 3:20, fading out from 2:24 |
+
+### Car Horn Honk
+
+- Source: https://freesound.org/people/DeVern/sounds/349922/
+- Author: DeVern
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `machine/horn_1.ogg` | Car Horn Honk.wav | the second honk (1.45–2.05 s); high-passed, levelled |
+| `machine/horn_2.ogg` | Car Horn Honk.wav | the third honk (2.52–3.06 s); high-passed, levelled |
+
+### Chrysler LHS tire squeal 03 (04-25-2009)
+
+- Source: https://freesound.org/people/audible-edge/sounds/71738/
+- Author: audible-edge
+- License: CC0 1.0
+
+| File | Original file | Notes |
+|---|---|---|
+| `machine/tyre_screech_loop_1.ogg` | Chrysler LHS tire squeal 03 (04-25-2009).wav | 2.5 s of the steady squeal (4–6.5 s), looped; high-passed, levelled |

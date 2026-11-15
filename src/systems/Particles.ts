@@ -449,7 +449,19 @@ export class Particles {
     this.emit(PK.Flash, x, y, { life, size, size1: size * 0.6, color, color1: 0xff9a40, alpha: 1, alpha1: 0.6, gravity: 0 });
   }
 
+  /**
+   * How much air the particles move through (1: the ground's; see Atmosphere.thinness()):
+   * read once a step where the view is (all of it is about as high), so up in space smoke
+   * neither rises nor hangs back, and exhaust flies on as it left the nozzle.
+   */
+  private air = 1;
+  /** Gravity where the view is (m/s²): weaker up high (see Atmosphere.gravityAt()). */
+  private fall = 0;
+
   step(dt: number): void {
+    const g = this.game;
+    this.air = g.map.world ? g.air.thinness(g.renderer.camY) : 1;
+    this.fall = g.gravity * (g.map.world ? g.air.gravityAt(g.renderer.camY) : 1);
     this.stepLayer(this.smokeL, dt);
     this.stepLayer(this.normal, dt);
     let drops = 0;
@@ -464,9 +476,12 @@ export class Particles {
    * (returning its number: -1 if none).
    */
   private move(L: Layer, i: number, dt: number, n: number): number {
-    const drag = Math.exp(-L.drag[i] * dt);
+    // (drag, and the lift that makes smoke and flames rise, are the air's: thin air, less of both)
+    const air = this.air;
+    const drag = Math.exp(-L.drag[i] * air * dt);
+    const grav = L.grav[i] < 0 ? L.grav[i] * air : L.grav[i];
     L.vx[i] *= drag;
-    L.vy[i] = L.vy[i] * drag + this.game.gravity * L.grav[i] * dt;
+    L.vy[i] = L.vy[i] * drag + this.fall * grav * dt;
     if (L.kind[i] !== PK.Blood) return -1;
     const ox = L.x[i];
     const oy = L.y[i];

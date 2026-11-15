@@ -5,12 +5,17 @@ import type { Game } from '../world/Game';
 import type { Entity } from '../world/Entity';
 import type { Part } from '../world/Part';
 import { SIZE_LIMITS, type ContextAction, type EntityConfig, type ItemDef } from '../world/types';
+import { TRACK_MOST } from '../entities/Rails';
+import { worldPlaces } from '../entities/Places';
+
+/** How far apart (m) the points of a track laid with the Rails tool are. */
+const RAIL_STEP = 0.25;
 import { capture, instantiate, type Snapshot } from '../world/Snapshot';
 import { loadFromString } from '../world/SaveLoad';
 import { History } from '../world/History';
 import { HINGE_LIMITS, RAMPS, SPRING_STIFFNESS, stiffnessStep, type ConnKind, type Connection } from '../systems/Connections';
 import { PK } from '../systems/Particles';
-import type { PilotHud } from '../systems/Piloting';
+import { stageAction, type BuildStats, type PilotCommand, type PilotHud } from '../systems/Piloting';
 import { getItem } from '../catalog/items';
 import type { ShapeMaterialId } from '../art/props';
 import type { ShapeForm } from '../entities/Shape';
@@ -193,7 +198,7 @@ export interface Grab {
  * Playground's does, and hinges two things dragged from one to the other: the
  * old Hinge tool, still there for saves and scripts (`setTool('hinge')`).
  */
-export type ToolId = 'drag' | ConnKind | 'remove' | 'shape';
+export type ToolId = 'drag' | ConnKind | 'remove' | 'shape' | 'rails';
 export interface ToolSlot {
   id: ToolId;
   variants: ToolId[];
@@ -206,7 +211,7 @@ export const TOOL_SLOTS: ToolSlot[] = [
   { id: 'pin', variants: ['pin', 'hinge'] },
   { id: 'wire', variants: ['wire'] },
   { id: 'remove', variants: ['remove'] },
-  { id: 'shape', variants: ['shape'] },
+  { id: 'shape', variants: ['shape', 'rails'] },
 ];
 /** The slots' own tools, in key order (the tool bar's buttons). */
 export const TOOLS: ToolId[] = TOOL_SLOTS.map((s) => s.id);
@@ -671,6 +676,20 @@ export class Powers {
 }
 
 /** Mouse + keyboard interaction with the sandbox, with People Playground's controls. */
+/** What a pilot's order heard by nothing in the craft says (see Controls.pilotOrder()). */
+const PILOT_DEAF: Record<PilotCommand, string> = {
+  stage: 'No stages left (give parts a stage in their menus)',
+  assist: '',
+  gear: 'No landing legs or gear in what you fly',
+  chutes: 'No parachutes left in what you fly',
+  eject: 'No ejection seat with a pilot in it',
+  lights: 'No headlights in what you fly',
+  horn: 'No horn in what you fly',
+  autopilot: '',
+  bombs: 'No bomb bay in what you fly',
+  flares: 'No flares left in what you fly',
+};
+
 export class Controls {
   readonly game: Game;
   ui!: UIBridge;
@@ -706,6 +725,8 @@ export class Controls {
   shapeMat: ShapeMaterialId = 'wood';
   /** The Shape tool's outline in progress. */
   draft: Draft | null = null;
+  /** The Rails tool's track being drawn (world points, from where the button went down). */
+  railDraft: V2[] | null = null;
   /** Editing the map: the Shape tool draws ground, and a right click takes it away (see tools/TerrainTool). */
   terrain: TerrainEditor | null = null;
   /** A size handle being dragged. */
@@ -957,7 +978,12 @@ export class Controls {
 
   /** The connection tool in use, if one is. */
   get toolKind(): ConnKind | 'remove' | null {
-    return this.tab === 'tools' && this.tool !== 'drag' && this.tool !== 'shape' ? this.tool : null;
+    return this.tab === 'tools' && this.tool !== 'drag' && this.tool !== 'shape' && this.tool !== 'rails' ? this.tool : null;
+  }
+
+  /** The Rails tool is in use (0.4.0: see railDown()). */
+  get railing(): boolean {
+    return this.tab === 'tools' && this.tool === 'rails';
   }
 
   /** The Shape tool is in use. */
@@ -1034,6 +1060,11 @@ export class Controls {
     if (this.shaping) {
       this.cancelPress();
       this.shapeDown(e.shiftKey || this.isHeld('fast'));
+      return;
+    }
+    if (this.railing) {
+      this.cancelPress();
+      this.railDraft = [this.snapped()];
       return;
     }
     const tool = this.toolKind;
@@ -1227,6 +1258,7 @@ export class Controls {
     this.arrange.group = null;
     this.endSpin();
     if (this.draft) this.draft.press = null;
+    this.railDraft = null;
   }
 
   private onMove(e: PointerEvent): void {
@@ -1264,6 +1296,7 @@ export class Controls {
       });
     }
     if (this.resize) this.updateResize(e.shiftKey || this.isHeld('fast'));
+    if (this.railDraft) this.railMove(e.shiftKey || this.isHeld('fast'));
     if (this.arrange.group) this.arrange.updateGroupResize();
     if (this.spin) this.updateSpin();
   }
@@ -1319,6 +1352,7 @@ export class Controls {
     if (this.arrange.group) this.arrange.applyGroupResize();
     if (this.spin) this.endSpin();
     if (this.draft?.press) this.shapeUp();
+    if (this.railDraft) this.railUp(shift);
     if (this.box) {
       const ents = this.game.entitiesInRect(this.box.x0, this.box.y0, this.wx, this.wy);
       for (const en of ents) this.selection.add(en);
@@ -1618,7 +1652,25 @@ export class Controls {
     }
     // a build with engines, selected, is flown (told every step, keys or none: let go of, it's left as it is)
     const fly = this.grab ? [] : this.flown();
-    if (fly.length) this.game.piloting.drive(fly, { x, t: aim, r: turn });
+    if (fly.length) this.game.piloting.drive(fly, { x, t: aim, r: turn, fire: this.isHeld('pilotFire'), boost: this.isHeld('boost') });
+    // (what's raced and scored for stunts: see systems/Races)
+    const car = fly.length ? null : this.vehicles()[0];
+    this.game.races.subject = fly.length ? this.game.piloting.mine?.ref ?? null : car && !car.destroyed ? car.parts[0] : null;
+  }
+
+  /** A pilot's order (see PilotCommand) to what's flown here: false if nothing's flown (or heard it). */
+  private pilotOrder(cmd: PilotCommand): boolean {
+    const fly = this.grab ? [] : this.flown();
+    if (!fly.length) return false;
+    if (this.net) {
+      this.net.send({ op: 'pilotCmd', ids: this.net.ids(fly), cmd });
+      return true;
+    }
+    const heard = this.game.piloting.command(fly, cmd);
+    if (cmd === 'assist') this.ui.toast(`Stability assist ${this.game.piloting.assistOf(fly) ? 'on' : 'off'}`);
+    else if (cmd === 'autopilot') this.ui.toast(`Autopilot ${this.game.piloting.autopilotOf(fly) ? 'on: holding its height and heading' : 'off'}`);
+    else if (!heard) this.ui.toast(PILOT_DEAF[cmd]);
+    return heard;
   }
 
   /**
@@ -1646,6 +1698,30 @@ export class Controls {
   }
 
   /** Driving what's selected along, the camera keeps it in view: still while it's near the middle, easing after it nearer the edges. */
+  /** The chase camera is on (see chaseView()). */
+  chase = false;
+  /** The zoom the chase camera last eased to (null: it hasn't yet: it starts from the player's own). */
+  private chaseZoom: number | null = null;
+
+  /**
+   * The chase camera (0.4.0): what's flown kept in the middle, a little ahead of where
+   * it's going, and the view widening the faster it goes (zoomed back in slow), so a
+   * rocket at 300 m/s is still seen with room round it.
+   */
+  private chaseView(p: Part, dt: number): void {
+    const r = this.game.renderer;
+    const v = Math.hypot(p.vx, p.vy);
+    const k = Math.min(1, dt * 4);
+    r.camX += (p.x + p.vx * 0.35 - r.camX) * k;
+    r.camY += (p.y + p.vy * 0.35 - r.camY) * k;
+    const base = (this.chaseZoom ??= r.zoom);
+    const want = base / (1 + v / 25);
+    const z = r.zoom + (want - r.zoom) * Math.min(1, dt * 1.5);
+    const c = r.worldToScreen(r.camX, r.camY);
+    r.zoomAt(c.x, c.y, z / r.zoom);
+    r.clampCamera();
+  }
+
   private keepInView(list: Entity[], dt: number): void {
     const r = this.game.renderer;
     let cx = 0;
@@ -1693,6 +1769,82 @@ export class Controls {
     const acts = connectionActions(this, c);
     if (under) acts.push({ label: `The ${under.entity.def.name}…`, action: () => this.openMenuFor(under) });
     this.ui.openContextMenu(this.sx, this.sy, connectionTitle(c), acts);
+  }
+
+  // ---- the Rails tool (0.4.0) ---------------------------------------------------------
+
+  /** Drawing a track: a point every so often along the way (Shift: a straight line from its start). */
+  private railMove(straight: boolean): void {
+    const d = this.railDraft!;
+    const p = this.snapped();
+    if (straight) {
+      d.length = 1;
+      d.push(p);
+      return;
+    }
+    const last = d[d.length - 1];
+    if (Math.hypot(p.x - last.x, p.y - last.y) < RAIL_STEP) return;
+    // (as far as a track may span)
+    const xs = d.map((q) => q.x);
+    const ys = d.map((q) => q.y);
+    const span = (TRACK_MOST - 16) * PX;
+    if (Math.max(...xs, p.x) - Math.min(...xs, p.x) > span || Math.max(...ys, p.y) - Math.min(...ys, p.y) > span) return;
+    d.push(p);
+  }
+
+  /** The button let go with the Rails tool: the track drawn is laid. */
+  private railUp(straight: boolean): void {
+    this.railMove(straight);
+    const d = this.railDraft!;
+    this.railDraft = null;
+    this.layTrack(d);
+  }
+
+  /** Lays a track along these world points (smoothed, a point every RAIL_STEP m): the track made, or null (too short). */
+  layTrack(raw: V2[]): Entity | null {
+    let len = 0;
+    for (let i = 1; i < raw.length; i++) len += Math.hypot(raw[i].x - raw[i - 1].x, raw[i].y - raw[i - 1].y);
+    if (raw.length < 2 || len < 0.6) {
+      if (raw.length > 1) this.ui.toast('Draw a longer track');
+      return null;
+    }
+    // a point every RAIL_STEP along it, then smoothed (a hand's wobble taken out; the ends stay put)
+    let even: V2[] = [raw[0]];
+    let carry = 0;
+    for (let i = 1; i < raw.length; i++) {
+      const a = raw[i - 1];
+      const b = raw[i];
+      const seg = Math.hypot(b.x - a.x, b.y - a.y);
+      if (seg <= 0) continue;
+      let s = RAIL_STEP - carry;
+      while (s <= seg) {
+        even.push({ x: a.x + ((b.x - a.x) * s) / seg, y: a.y + ((b.y - a.y) * s) / seg });
+        s += RAIL_STEP;
+      }
+      carry = seg - (s - RAIL_STEP);
+    }
+    const end = raw[raw.length - 1];
+    const tail = even[even.length - 1];
+    if (Math.hypot(end.x - tail.x, end.y - tail.y) > RAIL_STEP * 0.3) even.push(end);
+    else even[even.length - 1] = end;
+    for (let k = 0; k < 2 && even.length > 3; k++) {
+      const e = even;
+      even = e.map((p, i) => (i === 0 || i === e.length - 1 ? p : { x: (e[i - 1].x + p.x * 2 + e[i + 1].x) / 4, y: (e[i - 1].y + p.y * 2 + e[i + 1].y) / 4 }));
+    }
+    const xs = even.map((p) => p.x);
+    const ys = even.map((p) => p.y);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const config: EntityConfig = { pts: even.flatMap((p) => [Math.round(((p.x - cx) / PX) * 10) / 10, Math.round(((p.y - cy) / PX) * 10) / 10]) };
+    if (this.net) {
+      this.net.send({ op: 'spawn', def: 'track', x: cx, y: cy, left: false, config });
+      return null;
+    }
+    const e = this.game.spawn(getItem('track')!, cx, cy, { config });
+    if (!e) return null;
+    this.created([e]);
+    this.game.sound.place(cx, 'metal');
+    return e;
   }
 
   // ---- the Shape tool -------------------------------------------------------------
@@ -2431,6 +2583,13 @@ export class Controls {
     acts.push({ label: 'Layer…', action: () => this.openLayerMenu(list) });
     acts.push({ label: 'Duplicate', hint: 'Ctrl+D', action: () => this.duplicate(list) });
     acts.push({ label: 'Duplicate mirrored', action: () => this.arrange.duplicateMirrored(list) });
+    // (symmetry: what's spawned is spawned again mirrored across the line down its middle)
+    if (this.symmetryX !== null) acts.push({ label: 'Symmetry off', action: () => (this.symmetryX = null) });
+    else acts.push({ label: 'Symmetry about its middle', action: () => {
+      const b = boxOf(list);
+      if (b) this.symmetryX = (b.x0 + b.x1) / 2;
+      this.ui.toast('Symmetry on: what you spawn now comes in mirrored pairs');
+    } });
     if (multi) {
       acts.push({ label: 'Weld together', action: () => this.weldTogether(list) });
       acts.push({ label: 'Arrange…', action: () => this.ui.openContextMenu(this.sx, this.sy, 'Arrange', this.arrange.arrangeActions(list)) });
@@ -2492,6 +2651,8 @@ export class Controls {
     else if (!multi && isFighter(e) && e.alive) acts.push({ label: 'Fight…', action: () => this.pickFoe(e) });
     // and put on a side, all of them picked (see Teams)
     if (!this.net) acts.push(...teamActions(list, () => this.history.record('Set team')));
+    // (engines, decouplers, chutes: the stage they fire in when flown, Enter firing the next)
+    if (!multi && e.stageable) acts.push(...(this.net ? this.forHost(e, [stageAction(e)]) : [stageAction(e)]));
     if (!multi) acts.push(...(this.net ? this.forHost(e, e.contextActions(part), part) : e.contextActions(part)));
     this.ui.openContextMenu(this.sx, this.sy, multi ? `${list.length} objects` : e.label, acts);
     this.menuFor = list;
@@ -2614,6 +2775,8 @@ export class Controls {
     // (undo switches back, with the scene as it was)
     this.history.record('Switch map');
     this.game.setMap(spec);
+    // (the World: its runway, launch pad, fuel pump, ramps and race course by the start)
+    if (spec.world) worldPlaces(this.game, getItem);
     this.clearSelection();
   }
 
@@ -2926,8 +3089,9 @@ export class Controls {
         break;
       case 'menu':
         if (this.ui.closeOverlays()) break;
-        if (this.draft || this.resize || this.arrange.group || this.spin) {
+        if (this.draft || this.railDraft || this.resize || this.arrange.group || this.spin) {
           this.draft = null;
+          this.railDraft = null;
           this.resize = null;
           this.arrange.group = null;
           this.spin = null;
@@ -2967,6 +3131,23 @@ export class Controls {
         r.zoomAt(c.x, c.y, id === 'zoomIn' ? 1.25 : 0.8);
         break;
       }
+      case 'stage':
+      case 'assist':
+      case 'gear':
+      case 'chutes':
+      case 'eject':
+      case 'lights':
+      case 'horn':
+      case 'autopilot':
+      case 'bombs':
+      case 'flares':
+        this.pilotOrder(id);
+        break;
+      case 'chaseCam':
+        this.chase = !this.chase;
+        this.chaseZoom = null;
+        this.ui.toast(`Chase camera ${this.chase ? 'on' : 'off'}`);
+        break;
       case 'recenter': {
         this.follow = null;
         const home = this.game.home();
@@ -3006,7 +3187,8 @@ export class Controls {
     else if (!this.follow && this.selection.size) {
       // (what's flown, moving, kept in view as a driven car is)
       const craft = this.game.piloting.mine;
-      if (craft && Math.hypot(craft.ref.vx, craft.ref.vy) > 1) this.keepInView(craft.ents, dt);
+      if (craft && this.chase) this.chaseView(craft.ref, dt);
+      else if (craft && Math.hypot(craft.ref.vx, craft.ref.vy) > 1) this.keepInView(craft.ents, dt);
     }
     // the camera keeps what it follows centered
     if (this.follow) {
@@ -3043,6 +3225,8 @@ export class Controls {
     if (this.net) this.sendInput();
     else if (this.grab && this.game.paused) this.dragPaused(this.grab, dt);
     this.drawPowerReach();
+    this.drawTrajectory();
+    this.buildMarks();
 
     // hover (a finger only hovers what it's on)
     const busy = this.pan || this.box;
@@ -3098,7 +3282,72 @@ export class Controls {
     this.driveSent = cars;
     // (renewed while it's selected: deselected, the host lets it go soon after)
     const fly = this.grab ? [] : this.flown();
-    if (fly.length) net.send({ op: 'pilot', ids: net.ids(fly), x, t: aim, r: turn });
+    if (fly.length) net.send({ op: 'pilot', ids: net.ids(fly), x, t: aim, r: turn, fire: this.isHeld('pilotFire'), boost: this.isHeld('boost') });
+  }
+
+  /** Show where what's flown here is going (its trajectory line: see Piloting.trajectory()). */
+  showTrajectory = true;
+  /** Symmetry (0.4.0): the line (x) what's spawned is mirrored across, or null. */
+  symmetryX: number | null = null;
+  /** The build readouts' numbers, as last worked out (see buildMarks()). */
+  private stats: { key: string; at: number; s: BuildStats | null } = { key: '', at: -Infinity, s: null };
+
+  /** What's selected, if it's a build with engines or wings: its numbers (see Piloting.buildStats()), worked out a few times a second. */
+  private buildStats(): BuildStats | null {
+    if (!this.selection.size) return null;
+    let key = '';
+    for (const e of this.selection) key += `${e.id},`;
+    const now = performance.now();
+    if (key !== this.stats.key || now - this.stats.at > 300) this.stats = { key, at: now, s: this.game.piloting.buildStats([...this.selection]) };
+    return this.stats.s;
+  }
+
+  /**
+   * Building (0.4.0): the selected build's centre of mass (yellow), where its push acts and
+   * which way (orange), and the middle of its wings' and fins' lift (blue); and the
+   * symmetry line, while it's on.
+   */
+  private buildMarks(): void {
+    const r = this.game.renderer;
+    const w = 2 / r.zoom;
+    const pb = this.game.projectiles;
+    if (this.symmetryX !== null) {
+      const top = r.camY + r.height / r.zoom;
+      const bot = r.camY - r.height / r.zoom;
+      pb.drawBeam(this.symmetryX, bot, this.symmetryX, top, w, 0x9fd0ff, 0, w * 6);
+    }
+    const s = this.buildStats();
+    if (!s || s.speed > 1.5) return;
+    const ring = (at: V2, rad: number, col: number) => {
+      for (let i = 0; i < 16; i++) {
+        const a0 = (i / 16) * Math.PI * 2;
+        const a1 = ((i + 1) / 16) * Math.PI * 2;
+        pb.drawBeam(at.x + Math.cos(a0) * rad, at.y + Math.sin(a0) * rad, at.x + Math.cos(a1) * rad, at.y + Math.sin(a1) * rad, w * 1.5, col, 0, 0);
+      }
+    };
+    const R = 8 / r.zoom;
+    ring(s.com, R, 0xffd84a);
+    pb.drawBeam(s.com.x - R, s.com.y, s.com.x + R, s.com.y, w, 0xffd84a, 0, 0);
+    pb.drawBeam(s.com.x, s.com.y - R, s.com.x, s.com.y + R, w, 0xffd84a, 0, 0);
+    if (s.cot && s.dir) {
+      const L = 40 / r.zoom;
+      ring(s.cot, R * 0.8, 0xff8a3a);
+      pb.drawBeam(s.cot.x, s.cot.y, s.cot.x + s.dir.x * L, s.cot.y + s.dir.y * L, w * 2, 0xff8a3a, 0, 0);
+    }
+    if (s.col) ring(s.col, R * 0.8, 0x6ab8ff);
+  }
+
+  /** What's flown here: the dashed line of where it goes coasting. */
+  private drawTrajectory(): void {
+    if (!this.showTrajectory || this.grab || !this.selection.size) return;
+    const pts = this.game.piloting.trajectory();
+    if (pts.length < 2) return;
+    const w = 2 / this.game.renderer.zoom;
+    for (let i = 1; i < pts.length; i++) {
+      if (i % 2) this.game.projectiles.drawBeam(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y, w, 0x8fd3ff, 0, 0);
+    }
+    const end = pts[pts.length - 1];
+    this.game.projectiles.drawBeam(end.x - w * 3, end.y, end.x + w * 3, end.y, w * 3, 0xffb35c, 0, 0);
   }
 
   /** Push, pull and lift show how far they reach around the cursor. */
@@ -3123,6 +3372,12 @@ export class Controls {
     const b = boxOf(list);
     const kg = list.reduce((s, e) => s + e.parts.reduce((m, p) => m + (p.destroyed ? 0 : p.mass), 0), 0);
     const size = b ? ` · ${(b.x1 - b.x0).toFixed(2)} × ${(b.y1 - b.y0).toFixed(2)} m` : '';
+    // (a build with engines: its push against its weight, and how long its fuel lasts)
+    const s = this.buildStats();
+    if (s && s.thrust > 0) {
+      const burn = s.burn === Infinity ? 'fuel: free' : `burns ${s.burn < 120 ? `${Math.round(s.burn)} s` : `${(s.burn / 60).toFixed(1)} min`}`;
+      return `${list.length > 1 ? `${list.length} objects` : list[0].label} · build ${Math.round(s.mass)} kg · push ${(s.thrust / 1000).toFixed(1)} kN · ${s.twr.toFixed(2)}× its weight · ${burn}${size}`;
+    }
     return `${list.length > 1 ? `${list.length} objects` : list[0].label} · ${kg < 10 ? kg.toFixed(1) : Math.round(kg)} kg${size}`;
   }
 
@@ -3158,6 +3413,8 @@ export class Controls {
     if (this.draft?.pts.length) {
       return `${click} corners · the first one${this.touchMode ? '' : ' or Enter'} finishes · ${this.bindings.label('delete') || 'Backspace'}: undo · Esc: cancel`;
     }
+    if (this.railDraft) return 'Drawing track · let go to lay it · Shift: straight · Esc: cancel';
+    if (this.railing) return `${this.touchMode ? 'Drag' : 'Hold and draw'} along the way the track goes (Shift: straight) · rail wheels and coaster cars ride it · its menu: chain lift, launch`;
     if (this.shaping && this.terrain) {
       return this.touchMode
         ? 'Ground: drag out a box, or tap corners and the first one again · Remove tool: tap ground to take it away'

@@ -133,10 +133,18 @@ export class Firearm extends Item {
     else this.fire();
   }
 
+  /** The pilot's fire key, built into what they fly (see Piloting: PilotWeapon): held, an automatic keeps firing; pressed, anything else fires once. */
+  private pilotHeld = false;
+
+  pilotFire(on: boolean): void {
+    if (on && !this.pilotHeld && !this.automatic && !this.holder) this.activate();
+    this.pilotHeld = on && !this.holder;
+  }
+
   preStep(dt: number): void {
     this.cooldown -= dt;
     if (!this.automatic) return;
-    const want = this.activeHeld || this.powered || this.burst > 0;
+    const want = this.activeHeld || this.powered || this.burst > 0 || this.pilotHeld;
     if (this.gun.spinUp) {
       this.spin = Math.max(0, Math.min(1, this.spin + (want ? dt : -dt * 0.6) / this.gun.spinUp));
       if (this.spin > 0.02) this.game.sound.hold(this, 'machine/motor_loop', 0.15 + this.spin * 0.25, this.main.x, 0.6 + this.spin * 0.9);
