@@ -450,6 +450,9 @@ export function worldOf(seed: number): MapSpec {
  */
 export const WORLD_MAP: MapSpec = { id: 'world', name: 'World', width: WORLD_WINDOW * 2, height: 1e7, theme: 'outdoors', terrain: [], endless: true, world: { seed: 1 } };
 
+/** The map the game starts on, and the tutorials are played on (but for the boat, out on the Sea). */
+export const DEFAULT_MAP = WORLD_MAP;
+
 /** A cramped room, 40 m across and 14 m high. */
 const TINY = builtin('tiny', 'Tiny', 40, 14, 'concrete', []);
 

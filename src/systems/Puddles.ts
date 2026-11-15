@@ -6,6 +6,8 @@ import { HEAT } from './Fire';
 import type { Game } from '../world/Game';
 import type { Part } from '../world/Part';
 import type { Environment } from '../world/Environment';
+import { WORLD_FLOOR } from '../world/Maps';
+import { FLAT } from '../world/Terrain';
 
 /** Tallest a puddle is drawn (pixels). */
 const ROWS = 4;
@@ -106,6 +108,29 @@ export class Puddles {
     this.resize();
   }
 
+  /**
+   * The floor the liquid lies on (m): the map's; on the World, its flat ground round
+   * the start (open only there: see block()). Its WORLD.floor is far down under its
+   * deepest valley, a last stop for what falls through the ground.
+   */
+  get level(): number {
+    return this.game.map.world ? WORLD.floor - WORLD_FLOOR : WORLD.floor;
+  }
+
+  /**
+   * The World's origin moved (see world/Origin): the flat start is over a kilometre
+   * off now, and what lay there has soaked away.
+   */
+  originMoved(): void {
+    for (const a of [this.h, this.kind, this.oil, this.burn]) a.fill(0);
+    this.lo = this.n;
+    this.hi = -1;
+    this.place();
+    this.block(this.game.env);
+    this.drawnLo = 0;
+    this.drawnHi = this.n - 1;
+  }
+
   /** Sizes the floor's cells to the world's width (a new map): any liquid on the floor is gone. */
   resize(): void {
     for (const s of this.strips) {
@@ -149,7 +174,7 @@ export class Puddles {
 
   /** Puts the strips drawn over their cells. */
   private place(): void {
-    this.strips.forEach((s, k) => s.mesh.position.set(WORLD.left + (this.base + k * this.stripW + s.w / 2) * PX, WORLD.floor + (ROWS * PX) / 2, 29.5));
+    this.strips.forEach((s, k) => s.mesh.position.set(WORLD.left + (this.base + k * this.stripW + s.w / 2) * PX, this.level + (ROWS * PX) / 2, 29.5));
   }
 
   /** Where the cells start on an endless map with the camera at x: it in their middle, all of them on the floor. */
@@ -199,12 +224,17 @@ export class Puddles {
   /** Marks the floor cells the map's ground stands on, where liquid can't go. */
   block(env: Environment): void {
     this.blocked.fill(0);
-    if (!env.hasGround && !env.floorless) return;
-    const y = WORLD.floor + PX * 0.5;
+    const world = !!this.game.map.world;
+    if (!env.hasGround && !env.floorless && !world) return;
+    const level = this.level;
+    const y = level + PX * 0.5;
     // (with no floor (the void), liquid lies only on ground whose top is where the floor would be)
-    const under = WORLD.floor - PX * 0.5;
+    const under = level - PX * 0.5;
+    // (on the World, only on its flat start: past it the land rises into hills or falls into valleys)
+    const ox = this.game.origin.x;
     for (let i = 0; i < this.n; i++) {
-      if (!env.solidAt(this.cx(i), y) && !(env.floorless && !env.solidAt(this.cx(i), under))) continue;
+      const off = world && Math.abs(this.cx(i) + ox) > FLAT - 1;
+      if (!off && !env.solidAt(this.cx(i), y) && !(env.floorless && !env.solidAt(this.cx(i), under))) continue;
       this.blocked[i] = 1;
       // ground laid over a puddle (the Terrain tool): what lay there is under it
       // now, not seeping out of it or burning inside it
@@ -475,7 +505,7 @@ export class Puddles {
       const x0 = this.cx(i) - PX / 2;
       const x1 = this.cx(j) + PX / 2;
       const hh = (Math.min(ROWS, top) + 1) * PX * 0.5;
-      world.intersectionsWithShape({ x: (x0 + x1) / 2, y: WORLD.floor + hh }, 0, new RAPIER.Cuboid((x1 - x0) / 2, hh), collect);
+      world.intersectionsWithShape({ x: (x0 + x1) / 2, y: this.level + hh }, 0, new RAPIER.Cuboid((x1 - x0) / 2, hh), collect);
       for (const p of seen) this.soak(p, Math.max(i, Math.min(j, this.cell(p.x))));
       seen.clear();
       i = j + 1;
@@ -493,7 +523,7 @@ export class Puddles {
       for (let k = i; k <= j; k++) heat = Math.max(heat, this.burn[k]);
       const x0 = this.cx(i) - PX / 2;
       const x1 = this.cx(j) + PX / 2;
-      world.intersectionsWithShape({ x: (x0 + x1) / 2, y: WORLD.floor + FLAMES / 2 }, 0, new RAPIER.Cuboid((x1 - x0) / 2, FLAMES / 2), collect);
+      world.intersectionsWithShape({ x: (x0 + x1) / 2, y: this.level + FLAMES / 2 }, 0, new RAPIER.Cuboid((x1 - x0) / 2, FLAMES / 2), collect);
       for (const p of seen) g.fire.warm(p, TOUCH * HEAT * heat);
       seen.clear();
       i = j + 1;
@@ -507,16 +537,16 @@ export class Puddles {
     const under = this.h[i] - this.oil[i];
     if (under > 0.05 && this.kind[i] === Liquid.Water) {
       if (p.burning > 0) {
-        g.particles.smoke(p.x, WORLD.floor + PX * 3, 1, 0.12);
+        g.particles.smoke(p.x, this.level + PX * 3, 1, 0.12);
         liquidSound(g, 'liquid/steam', x, 0.4, 0.3);
       }
       g.fire.douse(p, 0.3);
       p.oil = Math.max(0, p.oil - 0.05);
     } else if (under > 0.05 && this.kind[i] === Liquid.Acid) {
-      p.entity.damage(p, 0.5, 'acid', { x, y: WORLD.floor }, { x: 0, y: -1 });
-      if (!p.destroyed) p.paintAt(Math.max(p.x - 0.1, Math.min(p.x + 0.1, x)), WORLD.floor + PX, ACID_SCAR, 0, 0.5);
+      p.entity.damage(p, 0.5, 'acid', { x, y: this.level }, { x: 0, y: -1 });
+      if (!p.destroyed) p.paintAt(Math.max(p.x - 0.1, Math.min(p.x + 0.1, x)), this.level + PX, ACID_SCAR, 0, 0.5);
       this.h[i] -= Math.min(0.03, under);
-      if (Math.random() < 0.3) g.particles.smoke(x, WORLD.floor + PX * 2, 1, 0.07);
+      if (Math.random() < 0.3) g.particles.smoke(x, this.level + PX * 2, 1, 0.07);
       liquidSound(g, 'liquid/sizzle', x, 0.3, 0.35);
     }
     if (this.oil[i] > 0.05) {
@@ -550,7 +580,7 @@ export class Puddles {
       if (this.burn[i] <= 0) continue;
       n++;
       sx += i;
-      if (Math.random() < dt * 9 * this.burn[i]) g.particles.fire(this.cx(i), WORLD.floor + PX, 0.35 + this.burn[i] * 0.4);
+      if (Math.random() < dt * 9 * this.burn[i]) g.particles.fire(this.cx(i), this.level + PX, 0.35 + this.burn[i] * 0.4);
     }
     if (!n) return;
     const x = this.cx(sx / n);
@@ -568,7 +598,7 @@ export class Puddles {
       }
       if (run > 2) {
         const mid = this.cx(i - run / 2);
-        this.game.renderer.addLight(mid, WORLD.floor + 0.3, 1.2 + run * PX * 0.8, 0.5 * (0.85 + Math.random() * 0.3), 0xffa040);
+        this.game.renderer.addLight(mid, this.level + 0.3, 1.2 + run * PX * 0.8, 0.5 * (0.85 + Math.random() * 0.3), 0xffa040);
       }
       run = 0;
     }

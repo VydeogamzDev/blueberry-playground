@@ -159,7 +159,8 @@ export class Explosions {
     const world = g.physics.world;
     const R = o.radius;
     // oil on the floor nearby catches, and fuse cords in the blast
-    if (y - WORLD.floor < R) g.puddles.igniteNear(x, Math.sqrt(Math.max(0, R * R - (y - WORLD.floor) ** 2)));
+    const pl = g.puddles.level;
+    if (y - pl < R) g.puddles.igniteNear(x, Math.sqrt(Math.max(0, R * R - (y - pl) ** 2)));
     g.connections.igniteNear(x, y, R * 0.8);
     g.connections.cutNear(x, y, R * 0.3);
 
@@ -364,7 +365,8 @@ export class Explosions {
     if (source) g.connections.lightFrom(source);
     g.connections.igniteNear(x, y, fb);
     g.connections.cutNear(x, y, R * 0.5);
-    if (y - WORLD.floor < fb) g.puddles.igniteNear(x, Math.sqrt(Math.max(0, fb * fb - (y - WORLD.floor) ** 2)));
+    const pl = g.puddles.level;
+    if (y - pl < fb) g.puddles.igniteNear(x, Math.sqrt(Math.max(0, fb * fb - (y - pl) ** 2)));
     g.alarm(x, y, R * 3);
     // the flash whites out the whole screen, the longer the bigger it is
     this.white = Math.max(this.white, 0.8 + 0.2 * size);

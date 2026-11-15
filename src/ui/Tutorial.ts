@@ -6,7 +6,7 @@ import type { V2 } from '../engine/math';
 import type { ConnKind, Connection } from '../systems/Connections';
 import type { Category } from '../world/types';
 import { getItem } from '../catalog/items';
-import { ENDLESS, LAB, WORLD_MAP, builtinMap } from '../world/Maps';
+import { DEFAULT_MAP, ENDLESS, WORLD_MAP, builtinMap } from '../world/Maps';
 import { PX, WORLD } from '../engine/constants';
 import { wrapAngle } from '../engine/math';
 import { isLiving } from '../systems/Fighting';
@@ -161,6 +161,12 @@ const noneSeen = () => ({
 });
 /** Seconds the tick of a finished step shows before the next one. */
 const CHEER = 0.9;
+/**
+ * The floor the tours are played on (m, up from the origin): the World’s flat ground
+ * round the start, or a room’s floor. (Not WORLD.floor: on the World that’s far down
+ * under its deepest valley, a last stop for what falls through the ground.)
+ */
+export const FLOOR = 0;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -174,7 +180,7 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 /**
  * The guided tour: a card over the sandbox asks for one thing at a time (spawn
  * someone, fling them, arm them, blow things up...), points at what to use, and
- * moves on by itself the moment it's done. A clean Lab to start; the props each
+ * moves on by itself the moment it's done. A clean World to start; the props each
  * step needs are put out for it. Any step can be skipped, and the whole thing
  * left with ×. Only offered (from the main menu and the Tutorials panel), never forced.
  */
@@ -292,7 +298,7 @@ export class Tutorial {
   }
 
   /**
-   * Starts the tour in a clean Lab (the scene there now is a Ctrl+Z away). Not in
+   * Starts the tour on a clean World (the scene there now is a Ctrl+Z away). Not in
    * someone else's game, nor while hosting one: the scene is everyone's.
    */
   start(tour: string = 'basics'): boolean {
@@ -305,7 +311,8 @@ export class Tutorial {
     if (this.active) this.stop(false);
     this.tour = want.id;
     this.controls.terrain?.stop();
-    if (this.game.map.id !== LAB.id) this.controls.switchMap(LAB);
+    // (from wherever they've got to: back to the start, where the ground is flat)
+    if (this.game.map !== DEFAULT_MAP || this.game.origin.x || this.game.origin.y) this.controls.switchMap(DEFAULT_MAP);
     this.controls.clearScene('Tutorial');
     this.controls.arm(null);
     this.controls.setTool('drag');
@@ -415,7 +422,7 @@ export class Tutorial {
     if (!def) return null;
     // (turned a quarter, its half width is what it stands on)
     const hh = o.angle && Math.abs(Math.sin(o.angle)) > 0.7 ? (def.preview().width * PX) / 2 : def.halfHeight ?? 0.3;
-    const y = this.game.env.standAt(x, WORLD.floor + hh + (o.dy ?? 0)) + hh + 0.01 + (o.dy ?? 0);
+    const y = this.game.env.standAt(x, FLOOR + hh + (o.dy ?? 0)) + hh + 0.01 + (o.dy ?? 0);
     const e = this.game.spawn(def, x, y, { flip: o.flip, angle: o.angle });
     if (!e) return null;
     if (o.frozen) e.setFrozen(true);
@@ -491,13 +498,13 @@ export class Tutorial {
 
   /** Where the sandbox's view is centered, on the floor. */
   floorAhead(dx = 0): V2 {
-    return { x: this.game.renderer.camX + dx, y: WORLD.floor + 0.2 };
+    return { x: this.game.renderer.camX + dx, y: FLOOR + 0.2 };
   }
 
   /** The floor in sight, left to right (m): clear of the toybox and the tool strip where they come down over it. */
   inSight(): { left: number; right: number } {
     const r = this.game.renderer;
-    const floor = r.worldToScreen(r.camX, WORLD.floor).y;
+    const floor = r.worldToScreen(r.camX, FLOOR).y;
     const side = (sel: string, edge: 'left' | 'right', or: number) => {
       const b = q(sel)?.getBoundingClientRect();
       return b && b.width > 0 && b.top < floor && b.bottom > floor - 120 ? b[edge] : or;
@@ -508,14 +515,14 @@ export class Tutorial {
   }
 
   /**
-   * A clear Lab again, part way through a tour (before a crash or a nuke, so
+   * A clear World again, part way through a tour (before a crash or a nuke, so
    * the rest isn't in the way), with the view back home. Ctrl+Z brings it back.
    */
   clean(): void {
     const c = this.controls;
     if (this.game.entities.some((e) => !e.destroyed)) c.ui.toast('Cleared the floor for this step (Ctrl+Z brings it all back)');
     c.terrain?.stop();
-    if (this.game.map.id !== LAB.id) c.switchMap(LAB);
+    if (this.game.map !== DEFAULT_MAP || this.game.origin.x || this.game.origin.y) c.switchMap(DEFAULT_MAP);
     c.clearScene('Tutorial');
     c.arm(null);
     c.setTool('drag');
@@ -528,7 +535,7 @@ export class Tutorial {
 
   /** The camera's height for the usual view of the floor (lower on a short screen, a phone's on its side: see Renderer.floorLift). */
   private get floorView(): number {
-    return WORLD.floor + Math.min(3.2, this.game.renderer.floorLift);
+    return FLOOR + Math.min(3.2, this.game.renderer.floorLift);
   }
 
   // ---- running ----------------------------------------------------------------------
@@ -1491,7 +1498,7 @@ export const BUILDING: TutorialStep[] = [
       `Right-click a motor to set its speed, a gun to change its numbers. ${t.touch ? 'The <b>?</b> button' : t.key('help', '<b>?</b>')} lists every control. ` +
       `(The switch on the rocket cuts its engines: ${useOn(t, 'it')}.)`,
     info: 'Play!',
-    // (the view along with it, up to the ceiling and back down)
+    // (the view along with it as it flies)
     follow: (t) => rocketView(t),
     alts: [
       {
@@ -1567,7 +1574,7 @@ const openGround = (t: Tutorial, dxs: number[], r: number, far = 0): number => {
     for (const e of t.game.entities) {
       if (e.destroyed) continue;
       if (e instanceof Explosive) g = Math.min(g, Math.abs(e.center().x - x) - Math.max(0, far - r));
-      else for (const p of e.parts) if (!p.destroyed && p.y < WORLD.floor + 2) g = Math.min(g, Math.abs(p.x - x));
+      else for (const p of e.parts) if (!p.destroyed && p.y < FLOOR + 2) g = Math.min(g, Math.abs(p.x - x));
     }
     // (and burning oil on the floor: put down in it, a thing burns away)
     for (let d = 0; d <= r + 0.5 && g > d; d += 0.1) if (t.game.puddles.burningAt(x - d) || t.game.puddles.burningAt(x + d)) g = d;
@@ -1689,7 +1696,7 @@ const chestOf = (e: Entity) => (e instanceof Creature ? e.limbs.get('chest')?.pa
 const oilNear = (t: Tutorial, x: number): number | null => {
   const pd = t.game.puddles;
   let best: number | null = null;
-  for (let at = WORLD.left; at <= WORLD.right; at += 0.1) {
+  for (let at = Math.max(WORLD.left, x - 80); at <= Math.min(WORLD.right, x + 80); at += 0.1) {
     if (pd.kindAt(at) !== LIQUID_IDS.oil || pd.amountAt(at) <= 0) continue;
     if (best === null || Math.abs(at - x) < Math.abs(best - x)) best = at;
   }
@@ -2751,20 +2758,20 @@ export const WORLD_TOUR: TutorialStep[] = [
     id: 'o-maps',
     title: 'Other maps',
     text: () =>
-      'The <b>map</b> button up top switches maps: a hangar, hills, rooftops, an arena, a plate that goes on for ever, and maps of your own. ' +
+      'The <b>map</b> button up top switches maps: the Lab, a hangar, hills, rooftops, an arena, the sea, a plate that goes on for ever, and maps of your own. ' +
       'Pick one. (Switching clears the scene.)',
     setup: (t) => {
       t.controls.setTool('drag');
     },
-    done: (t) => t.game.map.id !== LAB.id,
+    done: (t) => t.game.map.id !== DEFAULT_MAP.id,
     target: () => (panelOpen('Maps') ? q('.overlay:not(.hidden) .map-card:not(.active)') : toolbarBtn('Maps')),
   },
   {
     id: 'o-terrain',
     title: 'Make your own ground',
-    // (the endless plate has no ground to draw on: from there, another map first)
+    // (the World and the endless plate have no ground to draw on: from there, another map first)
     text: (t) =>
-      (t.game.map.endless ? `The ${ENDLESS.name.toLowerCase()} can’t be edited: in Maps, pick another map first. Then ` : 'In Maps, ') +
+      (t.game.map.endless ? `The ${t.game.map.id === ENDLESS.id ? ENDLESS.name.toLowerCase() : t.game.map.name} can’t be edited: in Maps, pick another map first. Then ` : 'In Maps, ') +
       `<b>Edit terrain</b>: ${drag(t)} out some ground (${t.touch ? 'the Remove tool' : 'a right-click'} takes it away), then <b>Done</b>. ` +
       'A map you change is kept in your maps.',
     done: (t) => {
@@ -2785,7 +2792,7 @@ export const WORLD_TOUR: TutorialStep[] = [
         : !panelOpen('Maps')
           ? toolbarBtn('Maps')
           : t.game.map.endless
-            ? [...document.querySelectorAll('.overlay:not(.hidden) .map-card:not(.active)')].find((c) => c.querySelector('.map-name')?.textContent !== ENDLESS.name) ?? null
+            ? [...document.querySelectorAll('.overlay:not(.hidden) .map-card:not(.active)')].find((c) => ![ENDLESS.name, WORLD_MAP.name].includes(c.querySelector('.map-name')?.textContent ?? '')) ?? null
             : mapsBtn('Edit terrain'),
   },
   {
@@ -2794,10 +2801,10 @@ export const WORLD_TOUR: TutorialStep[] = [
     text: () => 'In Maps, <b>New map…</b> makes one any size you like, and <b>Export…</b> puts a map in a file to send to a friend.',
     info: 'Done!',
     alts: endAlts({
-      label: 'Back to the Lab',
+      label: 'Back to the World',
       action: (t) => {
         t.controls.terrain?.stop();
-        t.controls.switchMap(LAB);
+        t.controls.switchMap(DEFAULT_MAP);
         t.stop();
       },
     }),
@@ -2918,13 +2925,13 @@ export const EDITING: TutorialStep[] = [
     },
     done: (t) => {
       const s = t.ref('shelf');
-      return !!s && s.frozen && s.center().y > WORLD.floor + 0.8;
+      return !!s && s.frozen && s.center().y > FLOOR + 0.8;
     },
     target: (t) => t.ref('shelf'),
     skipped: (t) => {
       const s = t.ref('shelf') ?? t.keep('shelf', t.put('plank', shelfAt(t)));
       if (!s) return;
-      if (s.center().y < WORLD.floor + 0.8) s.translate(0, WORLD.floor + 1.6 - s.center().y);
+      if (s.center().y < FLOOR + 0.8) s.translate(0, FLOOR + 1.6 - s.center().y);
       s.setFrozen(true);
     },
   },
@@ -2943,11 +2950,11 @@ export const EDITING: TutorialStep[] = [
       if (!s || !s.frozen) {
         s = s ?? t.keep('shelf', t.put('plank', shelfAt(t)));
         if (s) {
-          if (s.center().y < WORLD.floor + 0.8) s.translate(0, WORLD.floor + 1.6 - s.center().y);
+          if (s.center().y < FLOOR + 0.8) s.translate(0, FLOOR + 1.6 - s.center().y);
           s.setFrozen(true);
         }
       }
-      if (s) t.keep('ghost', t.put('crate', s.center().x, { dy: s.center().y + 0.1 - WORLD.floor }));
+      if (s) t.keep('ghost', t.put('crate', s.center().x, { dy: s.center().y + 0.1 - FLOOR }));
     },
     done: (t) => t.game.entities.some((e) => !e.destroyed && e.noCollide && !t.memo[`n${e.id}`]),
     target: (t) => (q('.ctx') ? null : t.ref('ghost')),
@@ -3125,7 +3132,7 @@ export const ANIMALS: TutorialStep[] = [
       if (t.speed(c) > 5) t.memo.flung = 1;
       // (down again and on its feet: still, or off on its way at a walk)
       return (
-        !!t.memo.flung && !t.controls.grab && t.speed(c) < 1.5 && chestOf(c).y < WORLD.floor + 1 && !(c instanceof Creature && c.state !== 'stand')
+        !!t.memo.flung && !t.controls.grab && t.speed(c) < 1.5 && chestOf(c).y < FLOOR + 1 && !(c instanceof Creature && c.state !== 'stand')
       );
     },
     target: (t) => (t.memo.flung ? null : t.ref('cat')),
@@ -3157,7 +3164,7 @@ export const ANIMALS: TutorialStep[] = [
     // (there, or the person in hand: the view is the player's again)
     follow: (t) => {
       if (t.controls.grab || Math.abs(t.game.renderer.camX - t.memo.cx) < 0.2) t.memo.there = 1;
-      return t.memo.there ? null : { x: t.memo.cx, y: WORLD.floor + 3.2 };
+      return t.memo.there ? null : { x: t.memo.cx, y: FLOOR + 3.2 };
     },
     // (off, or bolting a moment: the cat in its way, it may not get far)
     done: (t) => {
@@ -3265,7 +3272,7 @@ export const ANIMALS: TutorialStep[] = [
 const putAt = (t: Tutorial, id: string, x: number, y: number, o: { angle?: number; flip?: boolean; frozen?: boolean; config?: Record<string, unknown> } = {}): Entity | null => {
   const def = getItem(id);
   if (!def) return null;
-  const e = t.game.spawn(def, x, WORLD.floor + y, { angle: o.angle, flip: o.flip, ...(o.config ? { config: o.config } : {}) });
+  const e = t.game.spawn(def, x, FLOOR + y, { angle: o.angle, flip: o.flip, ...(o.config ? { config: o.config } : {}) });
   if (!e) return null;
   if (o.frozen) e.setFrozen(true);
   t.props.add(e);
@@ -3274,7 +3281,7 @@ const putAt = (t: Tutorial, id: string, x: number, y: number, o: { angle?: numbe
 /** Welds b to a at a point (a build put together for a step). */
 const weldAt = (t: Tutorial, a: Entity | null, b: Entity | null, x: number, y: number) => {
   if (!a || !b || a.destroyed || b.destroyed || t.joined('weld', a, b)) return;
-  const at = { x, y: WORLD.floor + y };
+  const at = { x, y: FLOOR + y };
   t.game.connections.create('weld', a.parts[0], at, b.parts[0], at);
 };
 /** A clean floor for a step (Ctrl+Z brings back what was there). */
@@ -3296,16 +3303,19 @@ const selectFirst = (t: Tutorial, e: Entity | null) => (e && !t.controls.selecti
 
 // -- flying
 
-/** The flight tour's craft: a plank with a thruster pointing up at each end and a cockpit seat in the middle. */
+/**
+ * The flight tour's craft: a plank on a thruster at each end (under it, pushing up,
+ * their flames at the floor: not into the plank) and a cockpit seat in the middle.
+ */
 const craftOut = (t: Tutorial, x: number) => {
-  const plank = t.keep('craft', putAt(t, 'plank', x, 0.3));
-  const l = t.keep('craftL', putAt(t, 'thruster', x - 0.75, 0.6, { angle: Math.PI / 2 }));
-  const r = t.keep('craftR', putAt(t, 'thruster', x + 0.75, 0.6, { angle: Math.PI / 2 }));
-  const seat = t.keep('seat', putAt(t, 'cockpit', x, 0.75));
-  const py = 0.35;
-  weldAt(t, plank, l, x - 0.75, py);
-  weldAt(t, plank, r, x + 0.75, py);
-  weldAt(t, plank, seat, x, py);
+  // (a thruster stood on end is 0.44 m tall, the plank 0.16 m thick)
+  const plank = t.keep('craft', putAt(t, 'plank', x, 0.54));
+  const l = t.keep('craftL', putAt(t, 'thruster', x - 0.75, 0.23, { angle: Math.PI / 2 }));
+  const r = t.keep('craftR', putAt(t, 'thruster', x + 0.75, 0.23, { angle: Math.PI / 2 }));
+  const seat = t.keep('seat', putAt(t, 'cockpit', x, 0.99));
+  weldAt(t, plank, l, x - 0.75, 0.47);
+  weldAt(t, plank, r, x + 0.75, 0.47);
+  weldAt(t, plank, seat, x, 0.6);
   return seat;
 };
 /** A cockpit seat (see entities/Flight: read by what it does, so the tutorial needn't load it). */
@@ -3446,11 +3456,8 @@ export const FLIGHT: TutorialStep[] = [
       `The <b>World</b> map goes up and up into space: fly fast enough sideways and you’re in orbit. ${t.touch ? '' : `${t.key('help', '<b>?</b>')} lists the keys.`}`,
     info: 'Done',
     alts: endAlts({
-      label: 'Fly on the World',
-      action: (t: Tutorial) => {
-        t.stop();
-        t.controls.switchMap(WORLD_MAP);
-      },
+      label: 'Fly on',
+      action: (t: Tutorial) => t.stop(),
     }),
   },
 ];
@@ -3462,7 +3469,7 @@ const homeCar = (t: Tutorial, x: number) => {
   const plank = t.keep('chassis', putAt(t, 'plank', x, 0.75));
   const wheels = [-0.9, 0.9].map((dx) => putAt(t, 'motor-wheel', x + dx, 0.35));
   const parts = ['car-engine', 'fuel-tank', 'nitro-bottle', 'headlight'].map((id, i) => t.keep(id, putAt(t, id, x - 0.75 + i * 0.5, 1.25)));
-  for (const w of wheels) if (w) weldAt(t, plank, w, w.parts[0].x, w.parts[0].y - WORLD.floor);
+  for (const w of wheels) if (w) weldAt(t, plank, w, w.parts[0].x, w.parts[0].y - FLOOR);
   for (const p of parts) if (p) weldAt(t, plank, p, p.parts[0].x, 0.8);
   return plank;
 };
@@ -3852,17 +3859,17 @@ export const COMBAT: TutorialStep[] = [
 /** The rails tour's ride: a short launch track, a loop after it, a coaster car on the launch with a rider. */
 const coasterOut = (t: Tutorial) => {
   const x0 = t.inSight().left + 2;
-  const launch = t.controls.layTrack([{ x: x0, y: WORLD.floor + 0.6 }, { x: x0 + 8, y: WORLD.floor + 0.6 }]);
+  const launch = t.controls.layTrack([{ x: x0, y: FLOOR + 0.6 }, { x: x0 + 8, y: FLOOR + 0.6 }]);
   if (launch) t.props.add(launch);
   t.keep('launch', launch);
   const R = 3;
   const cx = x0 + 14;
-  const pts: V2[] = [{ x: x0 + 8.2, y: WORLD.floor + 0.6 }, { x: cx, y: WORLD.floor + 0.6 }];
+  const pts: V2[] = [{ x: x0 + 8.2, y: FLOOR + 0.6 }, { x: cx, y: FLOOR + 0.6 }];
   for (let i = 1; i <= 48; i++) {
     const a = -Math.PI / 2 + (i / 48) * Math.PI * 2;
-    pts.push({ x: cx + R * Math.cos(a) + (i / 48) * 1.2, y: WORLD.floor + 0.6 + R + R * Math.sin(a) });
+    pts.push({ x: cx + R * Math.cos(a) + (i / 48) * 1.2, y: FLOOR + 0.6 + R + R * Math.sin(a) });
   }
-  pts.push({ x: cx + 9, y: WORLD.floor + 0.6 });
+  pts.push({ x: cx + 9, y: FLOOR + 0.6 });
   const loop = t.controls.layTrack(pts);
   if (loop) t.props.add(loop);
   t.keep('loop', loop);
@@ -3892,7 +3899,7 @@ export const RAILS: TutorialStep[] = [
     allow: { tools: ['shape', 'rails'] },
     skipped: (t) => {
       const x = t.game.renderer.camX;
-      const e = t.controls.layTrack([{ x: x - 3, y: WORLD.floor + 0.6 }, { x: x + 3, y: WORLD.floor + 1.6 }]);
+      const e = t.controls.layTrack([{ x: x - 3, y: FLOOR + 0.6 }, { x: x + 3, y: FLOOR + 1.6 }]);
       if (e) t.props.add(e);
     },
   },

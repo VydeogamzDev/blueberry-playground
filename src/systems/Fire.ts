@@ -1,5 +1,5 @@
 import { RAPIER } from '../engine/Physics';
-import { PX, WORLD } from '../engine/constants';
+import { PX } from '../engine/constants';
 import { PK } from './Particles';
 import type { Game } from '../world/Game';
 import type { Part } from '../world/Part';
@@ -158,7 +158,7 @@ export class Fire {
     for (let i = 0; i < 30; i++) g.particles.fire(x + (Math.random() - 0.5) * r, y + (Math.random() - 0.3) * r * 0.6, 1);
     g.particles.smoke(x, y + r * 0.3, 4, r * 0.6, true);
     g.renderer.addLight(x, y, 2 + r * 2, 0.8, 0xffa040, 0.3);
-    if (y - WORLD.floor < r) g.puddles.igniteNear(x, r);
+    if (y - g.puddles.level < r) g.puddles.igniteNear(x, r);
     // (its own list: a flare can go off while a fire is heating its neighbours)
     const caught: Part[] = [];
     g.physics.world.intersectionsWithShape({ x, y }, 0, new RAPIER.Ball(r / 2), (c) => {
@@ -296,7 +296,7 @@ export class Fire {
     // and oil on the floor under it
     const ca = Math.abs(Math.cos(a));
     const sa = Math.abs(Math.sin(a));
-    if (c.y - ca * hy - sa * hx < WORLD.floor + PX * 2) g.puddles.igniteNear(c.x, ca * hx + sa * hy);
+    if (c.y - ca * hy - sa * hx < g.puddles.level + PX * 2) g.puddles.igniteNear(c.x, ca * hx + sa * hy);
   }
 
   /** Things away from fires cool off, and wet ones dry (`t` seconds' worth). */
@@ -322,7 +322,7 @@ export class Fire {
       const y = q[i + 1];
       const r = 0.08 + q[i + 3] * 0.05;
       const chance = Math.min(1, q[i + 2] * 0.03);
-      if (y - WORLD.floor < r && Math.random() < chance) g.puddles.igniteNear(x, r);
+      if (y - g.puddles.level < r && Math.random() < chance) g.puddles.igniteNear(x, r);
       g.physics.world.intersectionsWithShape({ x, y }, 0, new RAPIER.Ball(r), (c) => {
         const p = g.physics.partOf(c);
         if (p && !p.destroyed && p.oil > 0.05 && p.burning < 0.05) this.seen.add(p);

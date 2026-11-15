@@ -16,8 +16,11 @@ interface Pt {
 
 /** One bone, in its limb's own frame: sprite pixels, y up, the way the body faces baked in. */
 export type Bone =
-  /** A long bone from a to b, `r` thick, with a knob `ka` / `kb` across at each end (0: none); `pair`: two knuckles side by side. */
-  | { k: 'shaft'; ax: number; ay: number; bx: number; by: number; r: number; ka: number; kb: number; pair: boolean }
+  /**
+   * A long bone from a to b, `r` thick, with a knob `ka` / `kb` across at each end (0: none); `pair`: two knuckles side by side.
+   * `ja` / `jb`: that end snapped off, jagged (the number picks the pattern; the two pieces of a break share one, so they'd fit).
+   */
+  | { k: 'shaft'; ax: number; ay: number; bx: number; by: number; r: number; ka: number; kb: number; pair: boolean; ja?: number; jb?: number }
   /** A rounded bone: the skull, a shoulder blade, a hip. */
   | { k: 'oval'; x: number; y: number; rx: number; ry: number; rot: number }
   /** A block: a vertebra, the face; `hx` along `rot`, `hy` across. */
@@ -31,7 +34,6 @@ interface Paths {
   fill: Path2D;
   thin: Path2D;
   holes: Path2D | null;
-  crack: Path2D;
 }
 
 /** A limb's skeleton, built from its picture's size and its joints. */
@@ -388,12 +390,15 @@ function hash(key: string): number {
   return h;
 }
 
+/** How far each piece of a snapped bone stands back from the break (sprite px). */
+const GAP = 0.3;
+
 /**
  * Snaps the skeleton at `sb` px along its axis: what lies beyond is knocked
  * askew (turned by `kink` about the break and pushed apart a little), and a
  * bone the break runs through comes apart in two.
  */
-function snap(list: Bone[], b: Build, sb: number, kink: number): Bone[] {
+function snap(list: Bone[], b: Build, sb: number, kink: number, seed: number): Bone[] {
   const M = b.at(sb);
   const cs = Math.cos(kink);
   const sn = Math.sin(kink);
@@ -425,19 +430,19 @@ function snap(list: Bone[], b: Build, sb: number, kink: number): Bone[] {
         const z = T(bx, by);
         out.push({ ...o, ax: a.x, ay: a.y, bx: z.x, by: z.y, ka, kb });
       } else {
-        const m1 = cut(ax, ay, bx, by, 0.2);
-        const m2 = cut(ax, ay, bx, by, -0.2);
+        const m1 = cut(ax, ay, bx, by, GAP);
+        const m2 = cut(ax, ay, bx, by, -GAP);
         const a = T(m2.x, m2.y);
         const z = T(bx, by);
-        out.push({ ...o, ax, ay, bx: m1.x, by: m1.y, ka, kb: 0 });
-        out.push({ ...o, ax: a.x, ay: a.y, bx: z.x, by: z.y, ka: 0, kb });
+        out.push({ ...o, ax, ay, bx: m1.x, by: m1.y, ka, kb: 0, jb: seed });
+        out.push({ ...o, ax: a.x, ay: a.y, bx: z.x, by: z.y, ka: 0, kb, ja: seed });
       }
     } else if (o.k === 'thin') {
       const p = o.pts;
       if (p.length === 4 && (s(p[0], p[1]) - sb) * (s(p[2], p[3]) - sb) < 0) {
         const [ax, ay, bx, by] = s(p[0], p[1]) < s(p[2], p[3]) ? p : [p[2], p[3], p[0], p[1]];
-        const m1 = cut(ax, ay, bx, by, 0.2);
-        const m2 = cut(ax, ay, bx, by, -0.2);
+        const m1 = cut(ax, ay, bx, by, GAP);
+        const m2 = cut(ax, ay, bx, by, -GAP);
         const a = T(m2.x, m2.y);
         const z = T(bx, by);
         out.push({ k: 'thin', pts: [ax, ay, m1.x, m1.y] }, { k: 'thin', pts: [a.x, a.y, z.x, z.y] });
@@ -491,7 +496,7 @@ function build(l: LimbLike, f: number): Bones {
   const h = hash(l.spec.key);
   const sb = b.L * clamp(b.brkAt + ((h % 17) - 8) * 0.01, 0.15, 0.9);
   const M = b.at(sb);
-  if (l.broken) list = snap(list, b, sb, (h & 32 ? 1 : -1) * 0.24);
+  if (l.broken) list = snap(list, b, sb, (h & 32 ? 1 : -1) * 0.24, (h >>> 6) | 1);
   return { list, pieces: l.broken ? 2 : 1, brk: { x: M.x, y: M.y, ux: b.u.x, uy: b.u.y, w: Math.max(b.r, 0.6) }, paths: null };
 }
 
@@ -528,10 +533,36 @@ function compile(b: Bones): Paths {
       case 'shaft': {
         const t = Math.atan2(o.by - o.ay, o.bx - o.ax);
         const h = Math.PI / 2;
-        fill.moveTo(o.bx + Math.cos(t - h) * o.r, o.by + Math.sin(t - h) * o.r);
-        fill.arc(o.bx, o.by, o.r, t - h, t + h);
-        fill.arc(o.ax, o.ay, o.r, t + h, t + 3 * h);
-        fill.closePath();
+        if (o.ja || o.jb) {
+          // (down one side, across the far end, back up the other side and across the near end:
+          // each end rounded, or snapped off jagged)
+          const dx = Math.cos(t);
+          const dy = Math.sin(t);
+          const end = (x: number, y: number, far: boolean, seed: number | undefined) => {
+            if (!seed) {
+              if (far) fill.arc(x, y, o.r, t - h, t + h);
+              else fill.arc(x, y, o.r, t + h, t + 3 * h);
+              return;
+            }
+            for (let i = 0; i <= JAGS; i++) {
+              // across from one side to the other; the break's surface `off` along the bone
+              // (the same at each point across for both pieces, so they'd fit back together)
+              const q = far ? i : JAGS - i;
+              const across = o.r * (1 - (2 * q) / JAGS);
+              const off = jag(seed, q) * o.r;
+              fill.lineTo(x + dy * across + dx * off, y - dx * across + dy * off);
+            }
+          };
+          fill.moveTo(o.ax + dy * o.r, o.ay - dx * o.r);
+          end(o.bx, o.by, true, o.jb);
+          end(o.ax, o.ay, false, o.ja);
+          fill.closePath();
+        } else {
+          fill.moveTo(o.bx + Math.cos(t - h) * o.r, o.by + Math.sin(t - h) * o.r);
+          fill.arc(o.bx, o.by, o.r, t - h, t + h);
+          fill.arc(o.ax, o.ay, o.r, t + h, t + 3 * h);
+          fill.closePath();
+        }
         // knuckles: two side by side, or one
         const nx = -Math.sin(t) * o.r * 0.45;
         const ny = Math.cos(t) * o.r * 0.45;
@@ -569,15 +600,19 @@ function compile(b: Bones): Paths {
         break;
     }
   }
-  // the crack: a jagged line across the bone where it broke
-  const { x, y, ux, uy, w } = b.brk;
-  const crack = new Path2D();
-  const pt = (s: number, t: number) => [x + ux * s - uy * t, y + uy * s + ux * t] as const;
-  crack.moveTo(...pt(0.25, -1.5 * w));
-  crack.lineTo(...pt(-0.3, -0.5 * w));
-  crack.lineTo(...pt(0.3, 0.5 * w));
-  crack.lineTo(...pt(-0.25, 1.5 * w));
-  return { fill, thin, holes, crack };
+  return { fill, thin, holes };
+}
+
+/** Points across the snapped end of a bone (see jag()). */
+const JAGS = 5;
+
+/**
+ * Where the `q`th point across a break's surface lies along the bone, in bone
+ * thicknesses: teeth in and out by turns, each a little different.
+ */
+function jag(seed: number, q: number): number {
+  const n = Math.imul(seed, 2654435761) + q * 40503;
+  return (q % 2 ? 0.55 : -0.55) * (0.5 + ((n >>> 0) % 1000) / 2000);
 }
 
 /** The kind of bone a point (px in the limb's frame, y up) is on, if it's on one. */
@@ -664,7 +699,6 @@ function drawSilhouette(w: number, h: number, filled: (x: number, y: number) => 
 
 const BONE = { fill: '#e8eef1', edge: '#6d8698', hole: '#2c4256' };
 const METAL = { fill: '#a9b4bd', edge: '#39424a', hole: '#20262c' };
-const CRACK = '#ff4636';
 const CUT = '#d83a2e';
 const GHOST = 'rgba(255, 120, 108, 0.6)';
 /** How long a fresh fracture flashes (s). */
@@ -683,8 +717,8 @@ interface Mat {
 /**
  * X-ray (X): the people and animals turn to translucent blue-grey and show
  * their skeletons, each limb's bones built from its own picture and joints so
- * they follow every ragdoll pose. Broken bones show snapped with a red crack
- * (a fresh one flashes), cut-off limbs a red wound at the joint, and destroyed
+ * they follow every ragdoll pose. Broken bones show snapped in two, the ends
+ * jagged and knocked askew (a fresh break glows a moment), cut-off limbs a red wound at the joint, and destroyed
  * ones the outline of the bones that are missing. The android shows a metal
  * endoskeleton. Drawn on a canvas over the sandbox.
  */
@@ -803,14 +837,14 @@ export class XRay {
           g.fillStyle = android && l.spec.key === 'head' && e.alive ? '#7fe6ff' : st.hole;
           g.fill(P.holes);
         }
-        this.marks(l, bones, P, now);
+        this.marks(l, bones, now);
       }
     }
     g.setTransform(1, 0, 0, 1, 0, 0);
   }
 
-  /** Breaks (a fresh one flashing) and the wounds where limbs came off, in the limb's frame. */
-  private marks(l: LimbLike, bones: Bones, P: Paths, now: number): void {
+  /** A fresh break's glow, and the wounds where limbs came off, in the limb's frame. */
+  private marks(l: LimbLike, bones: Bones, now: number): void {
     const g = this.g;
     const was = this.wasBroken.get(l);
     if (was === false && l.broken) this.broke.set(l, now);
@@ -819,20 +853,13 @@ export class XRay {
       const t = (now - (this.broke.get(l) ?? -Infinity)) / FLASH;
       const fresh = t < 1;
       if (fresh) {
+        // a fresh one glows white a moment where it snapped
         const { x, y } = bones.brk;
-        g.fillStyle = `rgba(255, 210, 190, ${(1 - t) * 0.55})`;
+        g.fillStyle = `rgba(255, 255, 255, ${(1 - t) * 0.5})`;
         g.beginPath();
         g.arc(x, y, 1.2 + 1.5 * (1 - t), 0, TAU);
         g.fill();
-        g.strokeStyle = `rgba(255, 70, 54, ${1 - t})`;
-        g.lineWidth = 0.4;
-        g.beginPath();
-        g.arc(x, y, 1 + 5 * t, 0, TAU);
-        g.stroke();
       }
-      g.lineWidth = 0.5;
-      g.strokeStyle = fresh && Math.sin(now * 40) > 0 ? '#ffffff' : CRACK;
-      g.stroke(P.crack);
     }
     // a raw end where a limb was cut or torn off: on the piece, and on what it hung from
     let cut = l.severed && !!l.parent;

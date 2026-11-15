@@ -1,7 +1,7 @@
 import { Item, type HoldSpec } from './Item';
 import type { PropConfig } from './Prop';
 import { RAPIER } from '../engine/Physics';
-import { PX, WORLD } from '../engine/constants';
+import { PX } from '../engine/constants';
 import { Liquid } from '../systems/Liquids';
 import { HEAT } from '../systems/Fire';
 import { PK } from '../systems/Particles';
@@ -255,13 +255,13 @@ class Spills {
     const fall = (h: number) => Math.sqrt((2 * Math.max(0, h)) / Math.max(0.5, -g.gravity));
     const top = g.env.groundAt(x, y + 0.3);
     let ground: Spill['ground'] = null;
-    if (top > WORLD.floor + PX || !g.puddles.open(x)) {
+    if (top > g.puddles.level + PX || !g.puddles.open(x)) {
       const ys: number[] = [];
       for (let i = 0; i < PATCH; i++) ys.push(g.env.groundAt(x + (i - (PATCH - 1) / 2) * PATCH_STEP, y + 0.3));
       ground = { y: ys, from: fall(y - top) + 0.1, warm: 0 };
     }
-    // (the World's floor is far down under its ground: the drops land on that)
-    this.list.push({ x, y, t: 0, next: 0, window: fall(y - (g.map.world ? top : WORLD.floor)) + SPLASH_TIME, ground, scene: g.sceneVersion });
+    // (the World's floor is far down under its ground: the drops land on that, or on its flat start's puddles)
+    this.list.push({ x, y, t: 0, next: 0, window: fall(y - (g.map.world && ground ? top : g.puddles.level)) + SPLASH_TIME, ground, scene: g.sceneVersion });
   }
 
   private step(dt: number): void {

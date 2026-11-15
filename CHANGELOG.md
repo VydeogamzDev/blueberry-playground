@@ -4,6 +4,23 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.4.1 — 2026-11-15
+
+The World as the starting map and the tutorials' home, puddles on it, and a clearer x-ray.
+
+### Changes
+
+- The x-ray shows a broken bone as the bone itself snapped in two, the ends jagged and knocked askew with a
+  gap between them, instead of a red line drawn over it; a fresh break glows white a moment.
+- The game starts on the World map, and the tutorials are played there too (all but the boat, out on the Sea).
+
+### Fixes
+
+- The flight tutorial's craft has its thrusters under the plank, firing at the floor: on top of it they fired
+  into the plank, set it smouldering and sent the craft spinning.
+- Liquid pools on the World's flat ground round the start, as on any other map's floor: spilt oil there can be
+  lit, acid eats what lies in it, water puts things out. Before, it only ever stained the ground.
+
 ## 0.4.0 — 2026-11-14
 
 Powered things: fuel and power that run out, sensors and logic, rockets, planes, boats, home-made cars,

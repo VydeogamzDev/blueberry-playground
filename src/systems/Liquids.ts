@@ -1,4 +1,4 @@
-import { PX, WORLD } from '../engine/constants';
+import { PX } from '../engine/constants';
 import { rotate } from '../engine/math';
 import { fromRgb, type Color } from '../art/PixelArt';
 import type { Game } from '../world/Game';
@@ -70,7 +70,7 @@ export function landDroplet(game: Game, liquid: Liquid, part: Part | null, x: nu
   const iy = y - ny * PX * 0.5;
   // drops landing on the floor pool up (on a map's ground they stain it, as on a wall);
   // water poured on something, or into water, is water that flows (see Fluid)
-  const floor = !part && ny > 0.7 && y < WORLD.floor + PX * 6 && game.puddles.open(x);
+  const floor = !part && ny > 0.7 && y < game.puddles.level + PX * 6 && game.puddles.open(x);
   const flows = liquid === Liquid.Water && (!!part || game.fluid.near(x, y, FLOWS_NEAR));
   if (floor && liquid !== Liquid.Blood && !gorse && !flows) {
     game.puddles.add(liquid, x);

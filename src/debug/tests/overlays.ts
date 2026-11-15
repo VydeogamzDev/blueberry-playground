@@ -75,7 +75,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
         return true;
       });
     }],
-    ['extra: overlays: the x-ray shows a broken leg snapped with a red crack; every limb has bones', () => {
+    ['extra: overlays: the x-ray shows a broken leg snapped in two with jagged ends, no red drawn over it; every limb has bones', () => {
       kit.reset();
       const h = human(0);
       const dog = kit.spawn('dog', 2.5, 0.5) as Creature;
@@ -90,6 +90,8 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       if (!bl || !bl.broken || bl.bones.pieces !== 2) return `the x-ray's broken leg: ${bl ? `broken ${bl.broken}, in ${bl.bones.pieces} piece(s)` : 'missing'}`;
       if (!ok || ok.broken || ok.bones.pieces !== 1) return 'the other leg shows broken too';
       for (const s of [...sk, ...skeleton(dog)]) if (!s.bones.list.length) return `no bones in the ${s.key}`;
+      const ends = bl.bones.list.filter((o) => o.k === 'shaft' && (o.ja || o.jb)).length;
+      if (ends < 2) return `the broken leg's bone has ${ends} jagged end(s), not the two of a snap`;
       return withXray(() => {
         const b = bl.bones.brk;
         const at = leg.part.localToWorld(b.x * PX, b.y * PX);
@@ -97,8 +99,13 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
         const d = pixels(at.x, at.y, 6);
         if (!d) return 'no x-ray canvas';
         let red = 0;
-        for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] > 180 && d[i + 1] < 120 && d[i + 2] < 110) red++;
-        if (!red) return 'no red crack drawn at the break';
+        let bone = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          if (d[i + 3] > 200 && d[i] > 180 && d[i + 1] < 120 && d[i + 2] < 110) red++;
+          if (d[i + 3] > 200 && d[i] > 200 && d[i + 1] > 200 && d[i + 2] > 200) bone++;
+        }
+        if (red) return `${red} red px drawn over the break`;
+        if (!bone) return 'no bone drawn either side of the break';
         return true;
       });
     }],

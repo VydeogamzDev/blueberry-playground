@@ -91,6 +91,7 @@ export function rebase(game: Game, sx: number, sy: number): void {
   game.explosions.shift(dx, dy);
   game.fire.shift(dx, dy);
   game.fluid.shift(dx, dy);
+  game.puddles.originMoved();
   game.weather.shift(dx, dy);
   game.connections.shift(dx, dy);
   game.races.shifted(dx, dy);

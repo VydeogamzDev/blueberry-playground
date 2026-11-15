@@ -1144,7 +1144,7 @@ export class Fluid {
       const still = this.rho[i] < LONE && Math.abs(this.vx[i]) < STILL_SPEED && Math.abs(this.vy[i]) < STILL_SPEED;
       this.lone[i] = still ? this.lone[i] + dt : 0;
       if (this.lone[i] < LONE_TIME) continue;
-      if (!g.env.floorless && y < WORLD.floor + PX * 3 && g.puddles.open(x)) g.puddles.add(Liquid.Water, x, DROP * DROPS_PER);
+      if (!g.env.floorless && y < g.puddles.level + PX * 3 && g.puddles.open(x)) g.puddles.add(Liquid.Water, x, DROP * DROPS_PER);
       this.kill(i);
     }
   }

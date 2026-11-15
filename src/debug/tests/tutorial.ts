@@ -14,12 +14,11 @@ import type { PowerId } from '../../tools/Controls';
 import { Human } from '../../entities/Human';
 import { Creature } from '../../entities/Creature';
 import { Item } from '../../entities/Item';
-import { TOURS, SOON, handTo, storeKey, type TourId } from '../../ui/Tutorial';
+import { FLOOR, TOURS, SOON, handTo, storeKey, type TourId } from '../../ui/Tutorial';
 import { LOCKED_NOTE } from '../../ui/TutorialLock';
 import { getItem } from '../../catalog/items';
-import { ENDLESS, LAB } from '../../world/Maps';
+import { DEFAULT_MAP, ENDLESS, LAB } from '../../world/Maps';
 import { NUKE_MIN_KT } from '../../systems/Explosions';
-import { WORLD } from '../../engine/constants';
 
 export default function tests({ game, controls, kit }: TestCtx): Test[] {
   const ui = () => controls.ui as unknown as UI;
@@ -976,7 +975,7 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
               const burning = crates().filter((e) => e.parts.some((p) => !p.destroyed && p.burning > 0));
               burning.forEach((c, i) => pourAt(ref(`water${i}`), c.center().x, c.center().y + 1.6));
             }, 8],
-            'o-oil': [() => pourAt(ref('oil'), tut().n, WORLD.floor + 1.8), 5],
+            'o-oil': [() => pourAt(ref('oil'), tut().n, FLOOR + 1.8), 5],
             // the burning crate pushed into the oil
             'o-light': [() => {
               const c = ref('torch');
@@ -1044,20 +1043,20 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
               edit.click();
               if (!controls.terrain) throw new Error('Edit terrain did not start the Terrain tool');
               const x = game.renderer.camX;
-              controls.terrain.make('box', [{ x: x - 1.5, y: WORLD.floor }, { x: x + 1.5, y: WORLD.floor + 0.6 }]);
+              controls.terrain.make('box', [{ x: x - 1.5, y: FLOOR }, { x: x + 1.5, y: FLOOR + 0.6 }]);
               live(0.1);
               click('.map-banner .panel-btn');
               made = game.map.id;
             },
           }, () => {
-            // the end: Back to the Lab
-            const back = [...document.querySelectorAll<HTMLElement>('.tut-alt')].find((b) => b.textContent === 'Back to the Lab');
-            if (!back) throw new Error('no Back to the Lab at the end');
+            // the end: Back to the World
+            const back = [...document.querySelectorAll<HTMLElement>('.tut-alt')].find((b) => b.textContent === 'Back to the World');
+            if (!back) throw new Error('no Back to the World at the end');
             back.click();
           }),
         );
         if (r !== true) return r;
-        if (game.map.id !== LAB.id) return `Back to the Lab left the map at ${game.map.name}`;
+        if (game.map.id !== DEFAULT_MAP.id) return `Back to the World left the map at ${game.map.name}`;
         return true;
       } finally {
         tidy();
@@ -1387,7 +1386,7 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
         return keepingProgress(() => play('rails', {
           'rl-lay': () => {
             const x = game.renderer.camX;
-            controls.layTrack([{ x: x - 3, y: WORLD.floor + 0.6 }, { x: x + 3, y: WORLD.floor + 1.5 }]);
+            controls.layTrack([{ x: x - 3, y: FLOOR + 0.6 }, { x: x + 3, y: FLOOR + 1.5 }]);
           },
           'rl-ride': [() => choose(ref('launch'), 'Launch (18 m/s)'), 8],
           'rl-claw': [() => {
@@ -1475,7 +1474,7 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
         'o-step': () => (game.paused ? null : 'time is running'),
         'e-nocollide': () => {
           const s = tut().ref('shelf');
-          return s?.frozen && s.center().y > WORLD.floor + 0.8 && has('ghost') ? null : 'no shelf frozen up in the air, or no crate on it';
+          return s?.frozen && s.center().y > FLOOR + 0.8 && has('ghost') ? null : 'no shelf frozen up in the air, or no crate on it';
         },
         'a-walk': () => (has('dog') && has('owner') ? null : 'no dog, or no one for it to follow'),
         'a-cow': () => (has('cow') && has('pistol') ? null : 'no cow, or no pistol'),

@@ -6,6 +6,7 @@ import '@fontsource/tiny5/latin-ext-400.css';
 import './style.css';
 import { initPhysics, RAPIER, rapierBuild } from './engine/Physics';
 import { Game } from './world/Game';
+import { DEFAULT_MAP } from './world/Maps';
 import { rehearseCrush } from './world/Warmup';
 import { Controls, DRAG } from './tools/Controls';
 import { UI } from './ui/UI';
@@ -69,6 +70,8 @@ async function boot(): Promise<void> {
     await rehearseCrush(game, () => loading('Warming up…', 0.86));
     warmMs = performance.now() - t;
   }
+  // (out on the World: rehearsed in the Lab, the game's first map, which is quicker to build)
+  game.setMap(DEFAULT_MAP);
   const controls = new Controls(game, canvas);
   const ui = new UI(game, controls, document.getElementById('ui')!);
   sync.loaded();
