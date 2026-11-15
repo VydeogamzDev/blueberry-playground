@@ -5,7 +5,7 @@
  * boot. Set CHROME=/path/to/browser if it isn't found.
  */
 import { createServer } from 'vite';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -78,16 +78,24 @@ export async function openGame(opts = {}) {
     '--autoplay-policy=no-user-gesture-required', `--window-size=${opts.width ?? 1280},${opts.height ?? 800}`, ...(opts.args ?? []), 'about:blank',
   ], { stdio: 'ignore' });
   let ws;
+  const exited = new Promise((res) => proc.once('exit', res));
   const close = async () => {
     try {
       ws?.close();
     } catch {}
-    proc.kill();
+    // (on Windows, the whole tree: a renderer stuck in a test outlived its browser and kept the profile)
+    if (process.platform === 'win32' && proc.pid) spawnSync('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' });
+    else proc.kill();
     await server?.close();
+    // (its profile goes once the browser is gone: deleted while its helpers still hold files, it
+    // failed quietly on Windows, and a day's runs left 1.5 GB of profiles behind in the temp folder)
+    await Promise.race([exited, sleep(5000)]);
     await sleep(300);
     try {
-      rmSync(profile, { recursive: true, force: true });
-    } catch {}
+      rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+    } catch (e) {
+      console.warn(`Couldn't delete the test browser's profile ${profile}: ${e.message}`);
+    }
   };
   try {
     // the browser writes its debugging port into the profile once it is up

@@ -324,12 +324,24 @@ export default function tests({ game, controls, kit, human, arm }: TestCtx): Tes
       if (Math.abs(f.get() - 5) > 1e-6) return `a 5 s reload time reads back as ${f.get().toFixed(2)} s`;
       return true;
     }],
-    ['extra: fixes: Settings’ graphics presets set resolution, lights, effects, cases, iterations and steps; changing one shows Custom', () => {
+    ['extra: fixes: Settings’ graphics presets set resolution, lights, effects, cases, iterations and steps (not the frame rate cap); changing one shows Custom', () => {
       const btn = (id: string) => document.querySelector<HTMLButtonElement>(`.set-preset[data-preset="${id}"]`);
       if (!btn('potato') || !btn('max')) return 'no preset buttons in Settings';
       const r = game.renderer;
       const iters = () => game.physics.world.integrationParameters.numSolverIterations;
+      const fps = document.querySelector<HTMLSelectElement>('select.set-fps')!;
+      const fpsWas = fps.value;
       try {
+        // (the frame rate cap is left as it is: Medium used to hold an unlimited one to 60)
+        fps.value = 'unlimited';
+        fps.dispatchEvent(new Event('change'));
+        for (const id of ['potato', 'medium']) {
+          btn(id)!.click();
+          if (game.fpsCap !== Infinity || fps.value !== 'unlimited') return `${id} changed an Unlimited frame rate cap to ${fps.value} (${game.fpsCap})`;
+          if (!btn(id)!.classList.contains('on')) return `${id} chosen with an Unlimited frame rate cap doesn't show as ${id}`;
+        }
+        fps.value = fpsWas;
+        fps.dispatchEvent(new Event('change'));
         btn('potato')!.click();
         if (r.maxLights !== 0 || game.particles.detail !== 0.25 || game.casings.cap !== 20 || iters() !== 4 || !game.longSteps) {
           return `Potato: lights ${r.maxLights}, effects ${game.particles.detail}, cases ${game.casings.cap}, iterations ${iters()}, long steps ${game.longSteps}`;
@@ -437,6 +449,9 @@ export default function tests({ game, controls, kit, human, arm }: TestCtx): Tes
     ['extra: fixes: one flask of water poured over a person on fire puts almost all of them out, and they don’t flare up again', () => {
       kit.reset();
       const h = human(0);
+      // (knocked out, so they lie under the flask: awake, they thrash and roll out from under
+      // it, and whether the water reaches them was a coin toss on where they started)
+      h.inject('knockout', 1);
       kit.advance(1);
       for (const p of h.parts) game.fire.ignite(p, 1);
       kit.advance(1.5);

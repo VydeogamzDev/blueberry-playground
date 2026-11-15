@@ -768,10 +768,10 @@ export function makeSelfTest(game: Game, controls: Controls) {
       return true;
     }],
     ['extra: hinge and weld by clicking: to the background or what is behind', () => {
-      const click = (id: string, x: number, y: number) => {
+      const click = (id: string, x: number, y: number, extra: PointerEventInit = {}) => {
         controls.setTool(getItem(id)!.tool as ToolId);
-        kit.down(x, y);
-        kit.up(x, y);
+        kit.down(x, y, 0, extra);
+        kit.up(x, y, 0, extra);
         controls.setTool('drag');
       };
       // a plank hinged to the background at one end swings down and hangs from it
@@ -812,7 +812,8 @@ export function makeSelfTest(game: Game, controls: Controls) {
       // tools find things spawned this very step (before physics has seen them)
       kit.reset();
       const fresh = kit.spawn('crate', 2, 2)!;
-      click('tool-weld', 2, 2);
+      // (Ctrl: the Weld fixes to the background only on purpose)
+      click('tool-weld', 2, 2, { ctrlKey: true });
       const wc = game.connections.list[0];
       if (!wc || wc.a.entity !== fresh) return 'weld missed a just-spawned crate';
       kit.advance(1);
@@ -2222,6 +2223,8 @@ export function makeSelfTest(game: Game, controls: Controls) {
         if (!wanted(name)) continue;
         // (each on the short step: one that ran the frame loop on a busy machine may have left the longer one)
         game.resetStep();
+        // (where the run is, for tools/selftest.mjs to say which test a run that never answers got stuck in)
+        (globalThis as { selftestNow?: unknown }).selftestNow = { name, results };
         const t0 = performance.now();
         let r: string | true;
         try {

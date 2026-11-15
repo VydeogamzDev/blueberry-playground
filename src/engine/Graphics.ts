@@ -33,6 +33,9 @@ export type PresetName = 'potato' | 'medium' | 'high' | 'max';
 /**
  * The presets, lightest first. High is the game as it has always been; Max is
  * stiffer physics and more cases about, within reason (a battle still runs).
+ * Their frame rate cap is only where a first game starts (a touch screen's Medium:
+ * 60): choosing a preset keeps the cap the player has (see presetOf()). Medium
+ * chosen to lighten a heavy scene used to hold the frames to 60 as well, unasked.
  */
 export const PRESETS: Record<PresetName, Graphics> = {
   potato: { resolution: 0.5, lights: 0, particles: 0.25, cases: 20, debris: 40, iterations: 4, step: 'long', fps: 30 },
@@ -68,11 +71,11 @@ const STORE = 'blueberry-graphics';
 /** Where the iterations were kept before there were presets (still read once). */
 const OLD_ITERATIONS = 'blueberry-iterations';
 
-/** The preset these settings are, if they're one (else they're custom). */
+/** The preset these settings are, if they're one (else they're custom): whatever the frame rate cap (a preset leaves it be). */
 export function presetOf(g: Graphics): PresetName | null {
   for (const { id } of PRESET_NAMES) {
     const p = PRESETS[id];
-    if ((Object.keys(p) as (keyof Graphics)[]).every((k) => p[k] === g[k])) return id;
+    if ((Object.keys(p) as (keyof Graphics)[]).every((k) => k === 'fps' || p[k] === g[k])) return id;
   }
   return null;
 }

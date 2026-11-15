@@ -5,6 +5,9 @@ import type { Connection } from '../../systems/Connections';
 import { getItem } from '../../catalog/items';
 import { saveToString, loadFromString } from '../../world/SaveLoad';
 import { boxOf } from '../../tools/Guides';
+import { connectionActions } from '../../ui/ConnectionMenu';
+import { PX } from '../../engine/constants';
+import type { UI } from '../../ui/UI';
 
 /** The building revamp: connecting, editing connections, arranging things, undo and Play checkpoints. */
 export default function tests({ game, controls, kit }: TestCtx): Test[] {
@@ -81,7 +84,7 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       if (Math.hypot(now.x - rel.x, now.y - rel.y) > 0.1) return `the crate moved ${Math.hypot(now.x - rel.x, now.y - rel.y).toFixed(2)} m from where it was put on the other`;
       return true;
     }],
-    ['extra: building2: a weld let go over nothing makes nothing (Ctrl: fixed to the background); a click with the Weld fixes it there', () => {
+    ['extra: building2: a weld let go over nothing makes nothing (Ctrl: fixed to the background); so does a click with the Weld (Ctrl+click fixes it there)', () => {
       kit.reset();
       const a = kit.spawn('crate', 0, 0.45);
       kit.advance(0.3);
@@ -96,11 +99,49 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       c.setTool('drag');
       c.undo();
       if (C.list.length) return 'undo left the weld';
+      // (a click, or a drag too short to be more, fixed a rocket's engine to the background unasked)
       c.setTool('weld');
       click(p);
+      if (C.list.length) {
+        c.setTool('drag');
+        return 'a plain click with the Weld fixed the crate to the background';
+      }
+      if (!toast().includes('Ctrl+click')) {
+        c.setTool('drag');
+        return `clicked, the status says "${toast()}"`;
+      }
+      click(p, { ctrlKey: true });
       c.setTool('drag');
       const k = ofKind('weld')[0];
-      if (!k || k.b) return 'a click with the Weld did not fix the crate to the background';
+      if (!k || k.b) return 'a Ctrl+click with the Weld did not fix the crate to the background';
+      return true;
+    }],
+    ['extra: building2: a click with the Weld on a jet engine’s end, where the beam it hangs under touches it, welds it to the beam, not the background', () => {
+      kit.reset();
+      const beam = kit.spawn('beam', 0, 3);
+      beam.parts[0].setFrozen(true);
+      kit.advance(0.2);
+      const bp = beam.parts[0];
+      const jet = kit.spawn('jet-engine', 0, 0);
+      const jp = jet.parts[0];
+      // the jet right under the beam, its top on the beam's bottom
+      const top = bp.y - (bp.h * PX) / 2 - (jp.h * PX) / 2;
+      jp.teleport(0, top, 0);
+      jp.setFrozen(true);
+      game.physics.world.propagateModifiedBodyPositionsToColliders();
+      kit.advance(0.05);
+      const snapping = c.snapping;
+      c.snapping = false;
+      c.setTool('weld');
+      // on the jet's top edge (exactly where the beam begins: not inside it)
+      click({ x: jp.x, y: jp.y + (jp.h * PX) / 2 - PX * 0.5 });
+      c.setTool('drag');
+      c.snapping = snapping;
+      const k = ofKind('weld')[0];
+      if (!k) return `nothing made (the status says "${toast()}")`;
+      if (!k.b) return 'welded to the background';
+      const ends = [k.a.entity, k.b.entity];
+      if (!ends.includes(beam) || !ends.includes(jet)) return `welded ${k.a.entity.def.id} to ${k.b.entity.def.id}`;
       return true;
     }],
     ['extra: building2: the Remove tool takes what’s clicked: a click on a body nothing, Shift+click all of its, a box what it crosses', () => {
@@ -235,6 +276,75 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       game.paused = false;
       if (C.list.length) return 'Delete over the rope did not take it';
       if (a.destroyed || b.destroyed) return 'Delete over the rope took a crate';
+      return true;
+    }],
+    ['extra: building2: a weld’s menu makes every connection of its build unbreakable at once (not another build’s), and one undo puts them back', () => {
+      kit.reset();
+      const [a, b, d] = [-1.2, 0, 1.2].map((x) => kit.spawn('crate', x, 0.45));
+      const [e, f] = [5, 6.2].map((x) => kit.spawn('crate', x, 0.45));
+      kit.advance(0.3);
+      const join = (p: Entity, q: Entity) => {
+        const m = { x: (p.parts[0].x + q.parts[0].x) / 2, y: p.parts[0].y };
+        return C.create('weld', p.parts[0], m, q.parts[0], m)!;
+      };
+      const mine = [join(a, b), join(b, d)];
+      const other = join(e, f);
+      const acts = connectionActions(c, mine[0]);
+      const pick = acts.find((x) => x.label === 'Whole build (2): unbreakable');
+      if (!pick) return `no whole-build entry: ${acts.map((x) => x.label).join(' | ')}`;
+      pick.action();
+      if (mine.some((k) => k.opts?.strength !== 'unbreakable' || k.breakAt !== Infinity)) return 'not all of its build’s welds are unbreakable';
+      if (other.opts?.strength) return 'a weld of another build was changed too';
+      if (!connectionActions(c, mine[1]).find((x) => x.label === 'Whole build (2): unbreakable')?.checked) return 'the whole-build entry isn’t ticked after';
+      c.undo();
+      // (undone, the connections are made again: read afresh)
+      const welds = C.list.filter((k) => k.kind === 'weld');
+      if (welds.length !== 3 || welds.some((k) => k.opts?.strength)) return `one undo left ${welds.map((k) => k.opts?.strength ?? 'normal').join(', ')}`;
+      return true;
+    }],
+    ['extra: building2: something fixed to the background says so saved, pasted and flown, and its menu frees it (a pasted rocket hung in the air and didn’t move at full thrust, its player none the wiser)', () => {
+      kit.reset();
+      const plank = kit.spawn('plank', 0, 0.3);
+      const t = kit.spawn('thruster', 0.6, 0.6, { angle: Math.PI / 2 });
+      kit.advance(0.3);
+      const m = { x: t.parts[0].x, y: plank.parts[0].y + 0.05 };
+      C.create('weld', plank.parts[0], m, t.parts[0], m);
+      // the thruster also fixed to the background (as a click with the Weld did, before it took Ctrl)
+      C.create('weld', t.parts[0], { x: t.parts[0].x, y: t.parts[0].y }, null, { x: t.parts[0].x, y: t.parts[0].y });
+      // saving it says so in the dialog (and Cancel saves nothing)
+      const u = c.ui as unknown as UI;
+      const saved = u.contraptions.list.length;
+      u.saveContraption([plank, t]);
+      const note = document.querySelector('.dialog-panel .panel-note')?.textContent ?? '';
+      const cancel = [...document.querySelectorAll<HTMLElement>('.dialog-panel .panel-btn')].find((b) => b.textContent === 'Cancel');
+      cancel?.click();
+      if (!note.includes('fixed to the background in one place')) return `saving it, the dialog said "${note}"`;
+      if (u.contraptions.list.length !== saved) return 'Cancel saved it';
+      c.copy([plank, t]);
+      c.clearSelection();
+      kit.move(-4, 3);
+      frames();
+      c.paste();
+      const toastText = document.querySelector('.toast')?.textContent ?? '';
+      if (!toastText.startsWith('Fixed to the background')) return `pasted, the toast said "${toastText}"`;
+      const pasted = [...c.selection];
+      const pp = pasted.find((e) => e.def.id === 'plank');
+      if (!pp || pasted.length !== 2) return `${pasted.length} things pasted`;
+      const y0 = pp.parts[0].y;
+      kit.advance(1);
+      if (pp.parts[0].y < y0 - 0.2) return 'pasted, it fell: it wasn’t fixed to the background';
+      const hud = c.pilotHud();
+      if (!hud?.fixed) return 'flown, the readout doesn’t say it’s fixed to the background';
+      // the plank's menu (not the thruster's) frees it
+      game.paused = true;
+      frames();
+      kit.down(pp.parts[0].x - 0.5, pp.parts[0].y, 2);
+      kit.up(pp.parts[0].x - 0.5, pp.parts[0].y, 2);
+      if (!menuPick('Free from the background (1)')) return `no Free from the background: ${[...document.querySelectorAll('.ctx-item')].map((d) => d.textContent).join(' | ')}`;
+      game.paused = false;
+      if (C.fixedOf(pasted).length) return 'still fixed to the background';
+      kit.advance(1.5);
+      if (pp.parts[0].y > y0 - 1) return `freed, it didn’t fall (${(y0 - pp.parts[0].y).toFixed(2)} m)`;
       return true;
     }],
     ['extra: building2: a right-click on a knot opens its menu, which offers the thing’s; on a selected thing, the thing’s', () => {
@@ -446,6 +556,31 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       if (game.entities.length !== n + 1) return `Duplicate mirrored made ${game.entities.length - n}`;
       const m = game.entities[game.entities.length - 1];
       if (!(m.parts[0].x > b.parts[0].x)) return 'the mirrored copy is not beside it on the right';
+      return true;
+    }],
+    ['extra: building2: a tall welded frame (two 12 m beams, three crossbeams) dragged 2 m sideways by one beam holds together (its welds bent past the twist they took, which didn’t grow with what they held)', () => {
+      kit.reset();
+      const mk = (x: number, y: number, w: number, angle = 0) => {
+        const e = kit.spawn('beam', x, y, { angle, config: { w, h: 6 } });
+        e.setFrozen(true);
+        return e;
+      };
+      const across = [mk(0, 0.2, 96), mk(0, 6.2, 84), mk(0, 12.4, 96)];
+      const sides = [mk(-1.4, 6.3, 396, Math.PI / 2), mk(1.4, 6.3, 396, Math.PI / 2)];
+      kit.advance(0.1);
+      for (const cb of across) {
+        for (const sb of sides) {
+          const m = { x: sb.parts[0].x, y: cb.parts[0].y };
+          C.create('weld', cb.parts[0], m, sb.parts[0], m);
+        }
+      }
+      for (const e of [...across, ...sides]) e.setFrozen(false);
+      kit.advance(0.5);
+      if (C.list.length !== 6) return `${C.list.length} welds made, not 6`;
+      const p = sides[0].parts[0];
+      kit.drag(p.x, p.y, p.x + 2, p.y, 0.5, 0.3);
+      kit.advance(2);
+      if (C.list.length !== 6) return `dragged 2 m, ${6 - C.list.length} of its 6 welds snapped`;
       return true;
     }],
     ['extra: building2: things welded together into one keep apart as one (a rigid unit: no fighting inside it)', () => {

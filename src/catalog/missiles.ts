@@ -156,7 +156,7 @@ function m113(rounds: Record<A.MissileVersion, ItemDef>): void {
     seats: [{ at: D.hatch, pose: HATCH_POSE, recline: 0, band: 0 }], cabin: D.cabin, noBelts: true,
     front: lazyArt(() => seeThrough(body(), rows)), frontOf: (a) => seeThrough(a, rows), wreck, wreckFront: lazyArt(() => seeThrough(wreck(), rows)),
     // light aluminium armour: a missile of its own kind wrecks it, a tank's shell does it great harm
-    engine: D.engine, fuel: D.fuel, armour: 0.25, blast: { power: 170, radius: 6, damage: 280 }, band: D.band,
+    engine: D.engine, fuel: D.fuel, armour: 0.25, blast: { power: 170, radius: 6, damage: 280 }, band: D.band, trueKg: 12300,
   };
   const L = A.M113_LAUNCHER;
   const shapes = [artRect(L.w, L.h, 0, 4, 36, 11, 0.5), artRect(L.w, L.h, 4, 0, 14, 5, 0.5)];

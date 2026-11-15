@@ -76,7 +76,7 @@ const CAR: CarConfig = {
   wheelDensity: 60, axles: H.axles, wheelR: 10, speed: 15, torque: 320, headlight: [118, 27], pitch: 1, blunt: 0.25,
   // the driver at the wheel, and one behind (nearer the back, so further back in the drawing)
   seats: seats(H.seats, [1, 0]), cabin: [6, 0, 90, 38], ...burnt(hatchArt),
-  engine: [108, 28], fuel: [12, 30], armour: 1, blast: { power: 110, radius: 5, damage: 220 },
+  engine: [108, 28], fuel: [12, 30], armour: 1, blast: { power: 110, radius: 5, damage: 220 }, trueKg: 1150,
 };
 
 // the bed floor is the top of the chassis; its walls are the tailgate and the back of the cab
@@ -93,7 +93,7 @@ const TRUCK: CarConfig = {
   wheelDensity: 60, axles: P.axles, wheelR: 12, speed: 13, torque: 500, headlight: [162, 28], pitch: 0.8, blunt: 0.3,
   // a bench in the cab: the driver, and a passenger on the far side
   seats: seats(P.seats, [1, 0]), cabin: [68, 0, 52, 36], ...burnt(truckArt),
-  engine: [145, 30], fuel: [50, 36], armour: 1, blast: { power: 130, radius: 5.5, damage: 240 },
+  engine: [145, 30], fuel: [50, 36], armour: 1, blast: { power: 130, radius: 5.5, damage: 240 }, trueKg: 1900,
 };
 
 const S = V.SUV;
@@ -108,7 +108,7 @@ const SUV: CarConfig = {
   wheelDensity: 60, axles: S.axles, wheelR: 12, speed: 14, torque: 480, headlight: [148, 28], pitch: 0.9, blunt: 0.25,
   // two rows of two: the far side's seats are drawn behind the near side's, the back row behind the front
   seats: seats(S.seats, [3, 2, 1, 0]), cabin: [4, 0, 120, 40], ...burnt(suvArt),
-  engine: [136, 30], fuel: [20, 36], armour: 1, blast: { power: 130, radius: 5.5, damage: 240 },
+  engine: [136, 30], fuel: [20, 36], armour: 1, blast: { power: 130, radius: 5.5, damage: 240 }, trueKg: 2100,
 };
 
 // all seven wheels drive; the sprocket and idler sit higher, so the track's ends ramp up over what's in its way
@@ -129,7 +129,7 @@ const TANK: CarConfig = {
   // the commander, down in the cupola's hatch with head and shoulders out (the front layer is the hull and turret only)
   seats: [{ at: [51, 13], pose: HATCH_POSE, recline: 0, band: 0 }], cabin: [36, 0, 48, 14], noBelts: true, ...burnt(tankArt, 23),
   // armour: crashes and blasts that wreck a car barely mark it
-  engine: [16, 14], fuel: [28, 16], armour: 0.08, blast: { power: 180, radius: 6.5, damage: 300 }, wholeShapes: [1],
+  engine: [16, 14], fuel: [28, 16], armour: 0.08, blast: { power: 180, radius: 6.5, damage: 300 }, wholeShapes: [1], trueKg: 30000,
   // (its team's stripe along the hull: the star's on the turret)
   band: [26, 15, 92, 18],
 };
@@ -181,6 +181,8 @@ function tankModel(d: V.TankDesign, s: TankStats): { cfg: CarConfig; cannon: Omi
     bodyName: 'Hull', wheelName: 'Road wheel',
     seats: [{ at: d.hatch, pose: HATCH_POSE, recline: 0, band: 0 }], cabin: d.cabin, noBelts: true, ...burnt(body, foot + 1),
     engine: d.engine, fuel: d.fuel, armour: 0.06, blast: { power: 200, radius: 7, damage: 320 }, band: d.band, wholeShapes: [1],
+    // (about fifty tonnes, a real one's: 22 times its hull's here)
+    trueKg: s.kg * 22,
   };
   const g = d.barrel;
   const shapes = [artRect(g.len, V.GUN_H, 0, 1, g.len, 5, 0.5)];

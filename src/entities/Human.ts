@@ -81,6 +81,29 @@ export const meeting = (m: number, behind: number): number => (m === Infinity ? 
 const TRUNK = new Set<string>(['upperTorso', 'midTorso', 'lowerTorso']);
 /** (m/s) What a person's body bears stopped all at once (a 10 m fall's landing): see systems/Jolt. */
 const JOLT_BEARS = 14;
+/** Of the head's health, what a jolt leaves it however hard (the brain's harm isn't the skull's: see jolted()). */
+const JOLT_SKULL = 0.5;
+/**
+ * A head is burst by one blow this many times its health, already past spent (see
+ * injure()): a weight dropped on it, or slammed head first at more than about 16 m/s.
+ * At a third of its health, a corpse's head, or one a jolt or a bullet had spent,
+ * burst at its next knock: thrown by a blast onto the floor at 7 m/s, say.
+ */
+const HEAD_BURST = 4;
+/**
+ * A blast tears a head off past `tear` times its health (C4 or a fuel drum within about
+ * a metre), and bursts it past `burst` (see damage()). The neck holds it on far better
+ * than a shoulder does an arm: at an arm's 1.1, a grenade 0.75 m off, or C4 2 m off,
+ * took heads.
+ */
+const HEAD_BLAST = { tear: 2.5, burst: 5 };
+/**
+ * Of a round's energy, what bites a chunk out of a head (see onBullet(), Chunks): a skull
+ * isn't carved as flesh is, and a heavy round leaves a hole in a head, not a head shot
+ * away. At a body's bite a sniper's round (the biggest bite, 4 px, on a head 9 px across)
+ * took the head off with one shot, and a battle rifle's with one or two.
+ */
+const HEAD_BITE = 0.35;
 
 /** Failed attempts to stand before lying still until something changes. */
 const GIVE_UP = 4;
@@ -4395,7 +4418,17 @@ export class Human extends Entity implements Holder {
     if (h <= 0) return;
     this.injure(chest, h * 0.85 * chest.spec.hp, 'blunt', undefined, undefined, false);
     const head = this.limbs.get('head')!;
-    if (!head.gone && this.alive) this.injure(head, Math.min(h * 0.3 * head.spec.hp, Math.max(0, head.part.hp)), 'blunt', undefined, undefined, false);
+    if (head.gone || !this.alive) return;
+    // the brain knocked about inside the skull: out cold, and as much as would have
+    // spent the head kills them. But it's no blow to the skull itself, which keeps at
+    // least half of itself: drained to nothing, the landing that came with the jolt, or
+    // any knock to the body after, burst the head (see injure())
+    const dmg = h * 0.3 * head.spec.hp;
+    const before = head.part.hp;
+    const loss = Math.min(dmg, Math.max(0, before - head.spec.hp * JOLT_SKULL));
+    if (loss > 0) this.injure(head, loss, 'blunt', undefined, undefined, false);
+    this.consciousness = Math.max(0, this.consciousness - (dmg - loss) / head.spec.hp);
+    if (dmg >= before && this.alive) this.die();
   }
 
   setVelocity(vx: number, vy: number, av = 0): void {
@@ -4495,7 +4528,7 @@ export class Human extends Entity implements Holder {
     // a heavy round takes a chunk out where it comes out, and a nick where it goes in
     // (shot to pieces, or clean through, the limb may go: see Chunks)
     const look = this.variant.bleeds ? FLESH : PLATING;
-    const energy = hit.energy / this.variant.grit;
+    const energy = (hit.energy / this.variant.grit) * (l.spec.key === 'head' ? HEAD_BITE : 1);
     takeChunk(this, l, hit.point, hit.dir, energy, hit.exit ? 'in' : 'stop', look, hit.round);
     if (hit.exit) takeChunk(this, l, hit.exit, hit.dir, energy, 'out', look, hit.round);
     if (l.gone) return;
@@ -4552,16 +4585,17 @@ export class Human extends Entity implements Holder {
       // big blasts blow limbs apart (see gib()); lesser ones take a chunk out of the
       // side facing them, and may tear them off
       const frac = amt / l.spec.hp;
-      if (frac > 3.2 && l.spec.key !== 'upperTorso') {
+      const head = l.spec.key === 'head';
+      if (frac > (head ? HEAD_BLAST.burst : 3.2) && l.spec.key !== 'upperTorso') {
         this.gib(l, dir);
         return;
       }
       this.injure(l, amt, 'explosion', point, dir);
       if (point && dir && !l.gone) takeChunk(this, l, point, dir, blastEnergy(frac), 'stop', this.variant.bleeds ? FLESH : PLATING);
       if (l.gone) return;
-      // (torn loose, a limb may still hang on by a strip of flesh)
-      if (frac > 1.1 && l.joint && !l.severed && Math.random() < 0.6) {
-        if (frac < 2 && Math.random() < 0.5) this.rupture(l);
+      // (torn loose, a limb may still hang on by a strip of flesh; a head comes off only close up, see HEAD_BLAST)
+      if (frac > (head ? HEAD_BLAST.tear : 1.1) && l.joint && !l.severed && Math.random() < 0.6) {
+        if (frac < 2 && !head && Math.random() < 0.5) this.rupture(l);
         else this.sever(l, 'blast');
       }
       // shrapnel wounds
@@ -4629,11 +4663,13 @@ export class Human extends Entity implements Holder {
         this.game.sound.bone(p.x);
         this.updateMotors(true);
       }
-      // crushed: a limb already spent, knocked hard again (or one enormous blow)
-      if (p.hp < -l.spec.hp * 0.4 && dmg > l.spec.hp * 0.3) {
+      // crushed: a limb already spent, knocked hard again (or one enormous blow); a
+      // head only by one blow that crushes it (see HEAD_BURST)
+      if (l.spec.key === 'head') {
+        if (p.hp < -l.spec.hp && dmg > l.spec.hp * HEAD_BURST) this.gib(l);
+      } else if (p.hp < -l.spec.hp * 0.4 && dmg > l.spec.hp * 0.3) {
         // (the upper torso holds the rest together: it stays, as with blasts)
-        if (l.spec.key === 'head') this.gib(l);
-        else if (l.joint && Math.random() < 0.5) this.rupture(l);
+        if (l.joint && Math.random() < 0.5) this.rupture(l);
         else if (l.joint) this.sever(l, 'blast');
       }
     }

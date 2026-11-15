@@ -5,7 +5,8 @@ import { clamp } from '../engine/math';
 import { PX } from '../engine/constants';
 import { artOf, hullOf, pixelsConfig, readPixels, type PixelsConfig } from './Gore';
 import type { Game } from '../world/Game';
-import type { EntityConfig, EntityState, ItemDef, SpawnOptions } from '../world/types';
+import type { EntityConfig, EntityState, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
+import type { Part } from '../world/Part';
 import type { V2 } from '../engine/math';
 import { instantiate } from '../world/Snapshot';
 
@@ -49,6 +50,9 @@ export interface DebrisConfig extends EntityConfig, PixelsConfig {
   /** The break it came from (pieces of one thing share it), if known. */
   from?: number;
 }
+
+/** How brittle a piece's material must be to be crushed smaller under a weight (stone, glass: see Debris.onLoad()). */
+const CRUSHED = 0.5;
 
 /** The biggest piece kept whole (px a side): a tank's hull comes apart well within it. */
 const MAX_SIDE = 192;
@@ -114,9 +118,34 @@ export class Debris extends Prop {
     return (this.config as DebrisConfig).from;
   }
 
+  /**
+   * Knocked, a piece fares as what it's made of does (see Prop.knock()): a strip of steel
+   * or a scrap of tyre dropped or flung doesn't break smaller; glass does. Before, the
+   * hit points a piece is given counted every knock against them, and a car's scraps went
+   * on breaking up as they landed till it was crumbs.
+   */
+  onImpact(info: ImpactInfo): void {
+    if (this.main.mat === GLASS) super.onImpact(info);
+    else this.knock(info);
+  }
+
+  /**
+   * Under a weight only brittle stuff is crushed smaller (glass, stone, concrete: see
+   * Prop.onLoad()); steel bends and rubber squashes, and a piece of either lying under the
+   * wreck it came off stays one piece.
+   */
+  onLoad(part: Part, other: Part, force: number, point: V2, normal: V2): void {
+    if (part.mat.brittle >= CRUSHED) super.onLoad(part, other, force, point, normal);
+  }
+
+  /** A piece burnt through goes to ash, however big (see Prop.damage()). */
+  protected get burnsAway(): boolean {
+    return true;
+  }
+
   /** Broken again, its pieces are of the same break (see repair()). */
   protected breakApart(point?: V2): Debris[] {
-    if (this.melted) return super.breakApart(point);
+    if (this.melted || this.burnt) return super.breakApart(point);
     return this.game.structure.fracture(this.main, { at: point, dir: this.breakDir, force: this.breakForce, from: this.from });
   }
 

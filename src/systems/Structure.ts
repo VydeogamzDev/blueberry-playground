@@ -17,6 +17,18 @@ const MOST = 24;
 const KEEP_MAX = 50;
 /** The biggest piece's side (px): bigger ones are split again. */
 const SIDE_MAX = 180;
+/**
+ * Something that bends before it breaks tears into pieces bigger the bigger it is: by
+ * (1 - brittle)² of its pixels over this, times more (see fracture()). A car's body
+ * torn apart is half a dozen great torn sheets, a dozen under five C4s: at a steel
+ * box's size for all of it, it was fifty scraps, strewn like confetti. Glass and stone
+ * break as finely however big.
+ */
+const TEAR = 600;
+/** Of a part's picture, the most blasts bite away (see bite()): past that they only scorch it (till it's torn apart whole). */
+const BITE_MOST = 0.3;
+/** Pixels a bite's piece is, about: a bigger bite is torn into more of them (at most 4). */
+const BITE_PIECE = 70;
 
 /** How a part breaks (see fracture()). */
 export interface Break {
@@ -151,10 +163,123 @@ export class Structure {
     if (p.temp > 400) g.particles.smoke(p.x, p.y, 2, 0.4, false);
   }
 
+  /**
+   * A part burnt away (see Prop.damage()): it crumbles where it lies into ash and
+   * glowing embers, with a last puff of smoke (the part is the caller's to take away).
+   * Before, fire broke a burning scrap into smaller burning scraps, and those into
+   * smaller ones, till a car's tyres were a swarm of crumbs.
+   */
+  ash(p: Part): void {
+    const g = this.game;
+    const n = Math.min(40, Math.max(3, Math.round(p.solidPx() / 10)));
+    for (let i = 0; i < n * 3 && i < 120; i++) {
+      const ix = Math.floor(Math.random() * p.w);
+      const iy = Math.floor(Math.random() * p.h);
+      if (!p.solidAt(ix, iy)) continue;
+      const at = p.pixelToWorld(ix, iy);
+      const r = Math.random();
+      // (grey ash and black char, slow: it falls in, not apart; a few still glowing)
+      g.particles.debris(at.x, at.y, (Math.random() - 0.5) * 0.4, 0.2, 1, r < 0.15 ? 0xff8030 : r < 0.6 ? 0x5a5550 : 0x1c1a19, 0.4 + Math.random() * 0.4);
+    }
+    g.particles.smoke(p.x, p.y, Math.min(4, 1 + Math.round(p.solidPx() / 150)), 0.3, true);
+  }
+
   /** A round's hole or dent (see bulletMark()). */
   mark(p: Part, at: V2, normal: V2, dir: V2, exit: V2 | null, heavy: boolean): void {
     bulletMark(p, at, normal, dir, exit, heavy);
   }
+
+  /** A blast's bite out of the side of `p` facing it, `r` px round where it struck (see bite()): the pieces torn off. */
+  bite(p: Part, at: V2, dir: V2, r: number, b: Break = {}): Debris[] {
+    return bite(this.game, p, at, dir, r, b);
+  }
+
+  /** The glass of `p` within `r` px of where a blast struck bursts into glittering bits (see shatter()): how many pixels. */
+  shatter(p: Part, at: V2, r: number, glass: (c: Color) => boolean, dir?: V2): number {
+    return shatter(this.game, p, at, r, glass, dir);
+  }
+}
+
+/**
+ * A blast's bite out of a part (a vehicle's body), on the side facing it: what's
+ * within `r` px of where it struck torn off in a few pieces (see entities/Debris),
+ * flung on along the blast, the torn edge left bright, and round it the paint
+ * scorched. Past BITE_MOST of it bitten away, a blast only scorches it. The pieces
+ * don't knock against what they were torn from (they'd start inside its shapes).
+ */
+export function bite(game: Game, p: Part, at: V2, dir: V2, r: number, b: Break = {}): Debris[] {
+  if (p.destroyed || !(r > 0)) return [];
+  const c = p.worldToPixelF(at.x, at.y);
+  const w = p.w;
+  const h = p.h;
+  const edge = r + 2.5;
+  const x0 = Math.max(0, Math.floor(c.x - edge));
+  const x1 = Math.min(w - 1, Math.ceil(c.x + edge));
+  const y0 = Math.max(0, Math.floor(c.y - edge));
+  const y1 = Math.min(h - 1, Math.ceil(c.y + edge));
+  const room = p.lost() < BITE_MOST;
+  const px: number[] = [];
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      if (!p.solidAt(x, y)) continue;
+      const d = Math.hypot(x + 0.5 - c.x, y + 0.5 - c.y);
+      if (room && d <= r) px.push(x, y);
+      // (scorched round it, darkest nearest)
+      else if (d <= edge) p.paintPixel(x, y, shade(p.colorAt(x, y), 0.5 + 0.35 * Math.max(0, d - r) / 2.5));
+    }
+  }
+  if (px.length < 4) return [];
+  // torn into a few pieces, by the way each pixel lies from where it struck
+  const n = px.length / 2;
+  const k = Math.max(1, Math.min(4, Math.round(n / BITE_PIECE)));
+  const turn = Math.random() * Math.PI * 2;
+  const owner = new Int32Array(w * h).fill(-1);
+  for (let i = 0; i < px.length; i += 2) {
+    const a = Math.atan2(px[i + 1] + 0.5 - c.y, px[i] + 0.5 - c.x) + turn;
+    owner[px[i + 1] * w + px[i]] = Math.floor(((((a / (Math.PI * 2)) % 1) + 1) % 1) * k);
+  }
+  const mat = debrisMat(p.mat);
+  const lists: Bit[] = connected(owner, w, h).map((l) => ({ px: l, mat }));
+  const made = piecesOf(game, p, lists, { ...b, at, dir }, b.force ?? 0.6, b.from ?? 0);
+  for (const d of made) {
+    d.main.noCollideWith(p);
+    p.noCollideWith(d.main);
+  }
+  // the torn edge round the bite: bare metal bright, as a break's pieces have it
+  const taken = new Uint8Array(w * h);
+  for (let i = 0; i < px.length; i += 2) taken[px[i + 1] * w + px[i]] = 1;
+  const rim: number[] = [];
+  for (let i = 0; i < px.length; i += 2) {
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const x = px[i] + dx;
+      const y = px[i + 1] + dy;
+      if (x < 0 || y < 0 || x >= w || y >= h || taken[y * w + x] || !p.solidAt(x, y)) continue;
+      taken[y * w + x] = 1;
+      rim.push(x, y, edgeOf(p.colorAt(x, y), mat));
+    }
+  }
+  p.carve(px, rim);
+  return made;
+}
+
+/**
+ * The glass of a part (a vehicle's windows, by `glass` of each pixel's colour) within
+ * `r` px of where a blast struck bursts into glittering bits, flung on along it, and is
+ * gone from the window frames. How many pixels of it.
+ */
+export function shatter(game: Game, p: Part, at: V2, r: number, glass: (c: Color) => boolean, dir?: V2): number {
+  if (p.destroyed || !(r > 0)) return 0;
+  const c = p.worldToPixelF(at.x, at.y);
+  const x0 = Math.max(0, Math.floor(c.x - r));
+  const x1 = Math.min(p.w - 1, Math.ceil(c.x + r));
+  const y0 = Math.max(0, Math.floor(c.y - r));
+  const y1 = Math.min(p.h - 1, Math.ceil(c.y + r));
+  const px: number[] = [];
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (p.solidAt(x, y) && glass(p.colorAt(x, y)) && Math.hypot(x + 0.5 - c.x, y + 0.5 - c.y) <= r) px.push(x, y);
+  if (!px.length) return 0;
+  bits(game, p, px, { dir: dir ?? { x: 0, y: 0.5 } });
+  p.carve(px);
+  return px.length / 2;
 }
 
 /**
@@ -192,8 +317,9 @@ export function fracture(game: Game, p: Part, b: Break = {}): Debris[] {
     bits(game, p, solid, b);
     return [];
   }
-  // how big a piece is: glass's a few pixels, steel's a big torn sheet, smaller the harder it's hit
-  const sizeOf = (brittle: number) => (12 + (1 - brittle) * 140) / (0.6 + force * 0.8);
+  // how big a piece is: glass's a few pixels, steel's a big torn sheet, smaller the harder it's hit;
+  // and what bends before it breaks tears into pieces as big as the thing is big (see TEAR)
+  const sizeOf = (brittle: number) => ((12 + (1 - brittle) * 140) / (0.6 + force * 0.8)) * (1 + ((1 - brittle) ** 2 * n) / TEAR);
   let k = Math.max(2, Math.min(MOST, Math.round(n / sizeOf(m.brittle))));
   // the impact point in pixels (if any): a brittle thing's pieces gather there
   let ax = -1;

@@ -13,6 +13,7 @@ import type { LimbKey } from '../art/human';
 import type { Part, ShapeSpec } from '../world/Part';
 import type { Game } from '../world/Game';
 import type { BulletHit, ContextAction, DamageKind, ImpactInfo, ItemDef, SpawnOptions } from '../world/types';
+import type { Debris } from './Debris';
 
 export interface CarConfig {
   body: () => PixelArt;
@@ -72,6 +73,13 @@ export interface CarConfig {
   wholeShapes?: number[];
   /** Its fuel going up (see Explosions). */
   blast: { power: number; radius: number; damage: number };
+  /**
+   * What it would truly weigh (kg): a car a tonne or so, a tank fifty. The game's are a
+   * few times lighter for their size (they drive, crash and float as they're tuned
+   * to), and a blast threw them as such: C4 beside a car flung it 10 m like a toy. A
+   * blast shoves it as hard as this lets it (see BLAST_PUSH, Entity.blastPush).
+   */
+  trueKg?: number;
 }
 
 /** Its body's sections (see Car.dismantle()), by config: each art pixel's shape, 1 on (0: in none). */
@@ -149,6 +157,26 @@ function gearOf(id: Gear) {
 const SPIN_MAX = (Math.PI / 4 / FIXED_DT) * 0.98;
 /** How fast (m/s²) a vehicle no one drives slows down on the flat, rolling freely: nudged, it stops in a second or two. */
 const ROLL_DRAG = 0.8;
+/**
+ * A blast's mark on a vehicle (see Car.bite()), by how hard it struck its body: its
+ * damage there, times the square root of the armour (a tank's lets a quarter of it
+ * through, at most). Past `glass` the windows it faced burst, `glassR` px round where
+ * it struck and `glassK` px more a point; past `from`, a bite `base` px round and a
+ * pixel more for each `per` more (up to `max`) is torn out of the side facing it. A
+ * grenade beside a car breaks a window or two, an RPG tears a hole in its side, C4
+ * rips it open; against a tank's armour C4 leaves a gouge. Before, a car went on
+ * looking new, however hurt, till it blew up or was torn apart all at once.
+ */
+const BITE = { glass: 12, glassR: 6, glassK: 0.06, from: 50, base: 2, per: 45, max: 12 };
+/** A blast this hard at a wheel (as BITE's) tears it off its axle (a tank's stay in their track). */
+const WHEEL_OFF = 160;
+/** The same for a burnt-out wreck: its tyres burnt flat, its rims bent, it grinds to a stop (it rolled on, blown along, for 15 m). */
+const WRECK_DRAG = 6;
+/**
+ * A blast shoves a vehicle as hard as it would anything its weight, times (its weight / what it
+ * truly weighs) to this (see CarConfig.trueKg): a car about 0.4 times, a tank about 0.12.
+ */
+const BLAST_PUSH = 0.75;
 
 /** Harm (hp) per N*s a vehicle bears down on a limb with, beyond what the limb takes in its stride (see crush()). */
 const CRUSH = 0.7;
@@ -289,6 +317,8 @@ export class Car extends Entity implements HandSwitched {
   private cruiseY = 0;
   /** Wheels the blast tore off their axles. */
   private loose = new Set<number>();
+  /** Pieces blasts bit out of the body (see bite()): Repair puts them back. */
+  private bitten: Debris[] = [];
   /** The blasts it has taken toward being torn apart (see dismantle()). */
   strain = 0;
   private smokeT = 0;
@@ -334,6 +364,7 @@ export class Car extends Entity implements HandSwitched {
     for (let z = 0.02; z < top + 0.0005; z += 0.02) game.allocZ();
     // the wheels in front of it all
     for (const w of this.wheels) w.sprite.z = this.frontZ + 0.0005;
+    if (cfg.trueKg) this.blastPush = Math.min(1, (this.totalMass() / cfg.trueKg) ** BLAST_PUSH);
     this.apply();
   }
 
@@ -363,7 +394,7 @@ export class Car extends Entity implements HandSwitched {
 
   private apply(): void {
     const gas = this.handX ? Math.round(this.gas * 10) / 10 : 1;
-    const sig = `${this.driving}:${this.dir}:${this.gear}:${this.braking || this.parkBrake}:${this.handX}:${gas}:${this.turningRound}`;
+    const sig = `${this.driving}:${this.dir}:${this.gear}:${this.braking || this.parkBrake}:${this.handX}:${gas}:${this.turningRound}:${this.wrecked}`;
     if (sig === this.applied) return;
     this.applied = sig;
     // a little more pull in the higher settings keeps them lively
@@ -373,7 +404,7 @@ export class Car extends Entity implements HandSwitched {
     const right = this.handX || this.dir * (this.flipped ? -1 : 1);
     // each wheel's share of the drag that slows the whole of it ROLL_DRAG m/s² on the flat
     const held = this.axles.filter((j) => j.isValid()).length;
-    const roll = held && (this.totalMass() * ROLL_DRAG * this.cfg.wheelR * PX) / held;
+    const roll = held && (this.totalMass() * (this.wrecked ? WRECK_DRAG : ROLL_DRAG) * this.cfg.wheelR * PX) / held;
     for (const j of this.axles) {
       if (!j.isValid()) continue;
       if (this.driving && this.turningRound) {
@@ -535,7 +566,13 @@ export class Car extends Entity implements HandSwitched {
    * A big blast on a body already badly hurt sets the fuel off.
    */
   damage(part: Part, amount: number, kind: DamageKind, point?: V2, dir?: V2): void {
-    if (part !== this.body || this.destroyed) return;
+    if (this.destroyed) return;
+    if (part !== this.body) {
+      // a blast close by tears a wheel off its axle (a tank's stay in their track)
+      const i = this.wheels.indexOf(part);
+      if (kind === 'explosion' && i >= 0 && !this.cfg.idler && !this.loose.has(i) && amount * Math.sqrt(this.cfg.armour) > WHEEL_OFF) this.shed(i);
+      return;
+    }
     // blasts strain its frame, wreck or not (more, the hotter it is), until it tears apart
     if (kind === 'explosion') {
       this.strain += amount * softness(part.mat, part.temp);
@@ -543,6 +580,7 @@ export class Car extends Entity implements HandSwitched {
         this.dismantle(point, dir);
         return;
       }
+      if (point && dir) this.bite(amount, point, dir);
     }
     if (this.wrecked) return;
     const a = this.cfg.armour;
@@ -567,6 +605,23 @@ export class Car extends Entity implements HandSwitched {
     if (this.wrecked || b.hp >= 35 || Math.random() > 0.15) return;
     if (b.hp < 15) this.explode();
     else this.leak();
+  }
+
+  /**
+   * A blast's mark on the body (see BITE): the windows it faced burst, and nearer, a
+   * bite torn out of its side, the pieces flung off along the blast (Repair takes them
+   * back: see repair()).
+   */
+  private bite(amount: number, at: V2, dir: V2): void {
+    const b = this.body;
+    const g = this.game;
+    const hit = amount * Math.sqrt(this.cfg.armour);
+    if (!this.wrecked && hit > BITE.glass) g.structure.shatter(b, at, BITE.glassR + hit * BITE.glassK, isGlass, dir);
+    if (hit <= BITE.from) return;
+    const r = Math.min(BITE.max, BITE.base + (hit - BITE.from) / BITE.per);
+    for (const d of g.structure.bite(b, at, dir, r, { force: Math.min(2, hit / 300) })) this.bitten.push(d);
+    // (pieces long gone, or a great many: only the last few kept count of)
+    if (this.bitten.length > 24) this.bitten = this.bitten.filter((d) => !d.destroyed).slice(-24);
   }
 
   /** Takes `n` hp off the body: badly hurt it smokes, then burns; at nothing the fuel goes up. */
@@ -668,6 +723,9 @@ export class Car extends Entity implements HandSwitched {
     this.unwreck();
     super.repair();
     this.strain = 0;
+    // (what blasts bit out of it is back in it: the pieces lying about go)
+    for (const d of this.bitten) if (!d.destroyed) this.game.remove(d);
+    this.bitten = [];
     for (const i of this.loose) this.remount(i);
     this.loose.clear();
     this.apply();
@@ -1185,6 +1243,8 @@ class FrontLayer {
         img[k] = d[j + 3];
         img[k + 1] = d[j + 4];
         img[k + 2] = d[j + 5];
+        // (carved out of the body, a hole in this too: drawn over it, a shot or a blast's bite didn't show)
+        if (d[j + 6] === 0) img[k + 3] = 0;
       }
     }
     this.body.entity.game.renderer.sprites.upload(this.region, img);

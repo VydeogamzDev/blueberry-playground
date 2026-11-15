@@ -40,6 +40,18 @@ export function connectionActions(c: Controls, k: Connection): ContextAction[] {
         action: () => tool.editConn(k, { strength: s === 'normal' ? undefined : s }, 'Strength'),
       });
     }
+    // (and all of them in the build it's part of, at once: a rocket has dozens of welds)
+    const build = buildLinks(c, k);
+    if (build.length > 1) {
+      for (const s of ['normal', 'unbreakable'] as const) {
+        const all = build.every((b) => (b.opts?.strength ?? 'normal') === s);
+        acts.push({
+          label: `Whole build (${build.length}): ${s}`,
+          checked: all,
+          action: () => tool.editConns(build, { strength: s === 'normal' ? undefined : s }, 'Strength of the whole build'),
+        });
+      }
+    }
   }
   // a weld's or hinge's parts: through each other (the usual), or knocking together
   if (RIGID_KINDS.has(k.kind) && k.b) {
@@ -68,6 +80,13 @@ export function connectionActions(c: Controls, k: Connection): ContextAction[] {
     acts.push({ label: `Light at the ${k.b ? `${k.b.entity.label}’s` : 'background'} end`, action: () => tool.lightFuse(k, 1) });
   }
   return acts;
+}
+
+/** The connections that can snap (see PHYSICAL_KINDS) holding together the build `k` is part of. */
+function buildLinks(c: Controls, k: Connection): Connection[] {
+  const C = c.game.connections;
+  const ents = new Set(C.assemblyOf([k.a.entity]));
+  return C.list.filter((o) => PHYSICAL_KINDS.has(o.kind) && ents.has(o.a.entity) && (!o.b || ents.has(o.b.entity)));
 }
 
 /** How far apart its ends are now (m). */

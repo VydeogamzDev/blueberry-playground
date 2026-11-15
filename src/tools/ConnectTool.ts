@@ -15,6 +15,8 @@ export const CONN_LABEL: Record<ConnKind, string> = {
 
 /** Screen pixels the pointer may move between press and release and still be a click. */
 const CLICK_SLOP = 4;
+/** How near a click with the Weld another part counts as touching it there (meters: two art pixels). */
+const TOUCHING = 2 * PX;
 /** Screen pixels from a connection's line or knot within which the cursor is on it. */
 const CONN_REACH = 4;
 /** On a touch screen the anchor is this far (screen px) above the finger, so the finger doesn't hide it. */
@@ -58,9 +60,12 @@ export interface ConnHit {
  * see-through ghost of the real thing follows, see ConnectionPreview), let go.
  * Let go over nothing, a weld, pin or wire is called off (Ctrl: fixed to the
  * background on purpose); a rope or spring is tied to the background. A click
- * welds or pins to whatever is behind (or the background), as People
- * Playground's pin does; with a rope, spring or wire it sets the first end and
- * the next click the second. Shift as the button comes up carries on from where
+ * pins to whatever is behind (or the background), as People Playground's pin
+ * does; a click with the Weld welds to what's behind or touching it there, and
+ * to the background only with Ctrl, as a weld let go over nothing (a short drag
+ * between two things reads as a click: it fixed a rocket's engine to the
+ * background unasked). With a rope, spring or wire a click sets the first end
+ * and the next click the second. Shift as the button comes up carries on from where
  * it ended (A→B→C). Ended on one of several things selected, it goes to each.
  */
 export class ConnectTool {
@@ -146,11 +151,15 @@ export class ConnectTool {
     return t === 'pin' ? 'hinge' : t;
   }
 
-  /** What a click with the Weld or Pin tool joins a part to: the part behind it there (not of its own), else the background. */
-  private behind(a: Anchor): Part | null {
+  /**
+   * What a click with the Weld or Pin tool joins a part to: the part behind it
+   * there (not of its own), else the background (null). The Weld's reaches a
+   * part just touching it there too (an end snapped to an edge is on the edge).
+   */
+  private behind(a: Anchor, weld = false): Part | null {
     if (!a.part) return null;
     const own = a.part.entity;
-    return this.c.game.pick(a.world.x, a.world.y, 0, (p) => p.entity !== own);
+    return this.c.game.pick(a.world.x, a.world.y, weld ? TOUCHING : 0, (p) => p.entity !== own);
   }
 
   /** The kind a click pins with: a hinge to the part behind; to the background, the Pin tool's pin (the Hinge tool's hinge). */
@@ -202,8 +211,14 @@ export class ConnectTool {
       if (c.toolKind === 'weld' || c.toolKind === 'pin' || c.toolKind === 'hinge') {
         this.pending = null;
         if (!p.a.part) return;
-        const under = this.behind(p.a);
-        const kind = c.toolKind === 'weld' ? 'weld' : this.pinKind(under);
+        const weld = c.toolKind === 'weld';
+        const under = this.behind(p.a, weld);
+        // (a weld to the background only on purpose: Ctrl, as when let go over nothing)
+        if (weld && !under && !ctrl) {
+          c.ui.toast('Nothing behind it to weld to: nothing made (drag to another thing; Ctrl+click fixes it to the background)');
+          return;
+        }
+        const kind = weld ? 'weld' : this.pinKind(under);
         // (welded or pinned where it was clicked, to what's there)
         this.connect(kind, p.a, [{ part: under, local: under ? under.worldToLocal(p.a.world.x, p.a.world.y) : { ...p.a.world }, world: { ...p.a.world }, kind: under ? 'free' : 'background', name: '' }]);
         return;
@@ -501,6 +516,17 @@ export class ConnectTool {
     c.game.connections.setOpts(k, patch);
   }
 
+  /** The same settings for several connections at once (a whole build's strength): one undo. */
+  editConns(ks: Connection[], patch: Partial<Record<keyof ConnOpts, unknown>>, label: string): void {
+    const c = this.c;
+    if (c.net) {
+      for (const k of ks) c.net.send({ op: 'editConn', conn: c.net.conn(k), patch });
+      return;
+    }
+    c.history.record(label);
+    for (const k of ks) c.game.connections.setOpts(k, patch);
+  }
+
   /** A rope's, spring's or fuse cord's length (m). */
   setRest(k: Connection, len: number): void {
     const c = this.c;
@@ -672,10 +698,16 @@ export class ConnectTool {
       else if (this.hoverConn) this.label = this.describe(this.hoverConn.c);
       return;
     }
-    if (tool === 'weld' || tool === 'pin' || tool === 'hinge') {
+    if (tool === 'weld') {
+      const under = this.behind(a, true);
+      const click = under ? `click: weld to the ${under.entity.label.toLowerCase()} there` : this.c.ctrlDown ? 'Ctrl+click: fix to the background' : 'drag to another thing';
+      this.label = `Weld from ${anchorLabel(a)} · ${click}`;
+      return;
+    }
+    if (tool === 'pin' || tool === 'hinge') {
       const under = this.behind(a);
       const to = under ? `${under.entity.label} behind` : 'the background';
-      this.label = tool === 'weld' ? `Weld from ${anchorLabel(a)} · click: fix to ${to}` : `Pin ${anchorLabel(a)} to ${to} · drag: hinge to another`;
+      this.label = `Pin ${anchorLabel(a)} to ${to} · drag: hinge to another`;
       return;
     }
     this.label = `${name} from ${anchorLabel(a)}`;

@@ -182,6 +182,47 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       if (back.some((b) => Math.abs(b.pilotT - t) > 0.01 || b.pilotOut === null || !b.running)) return `loaded: throttle ${back.map((b) => b.pilotT.toFixed(2)).join(', ')} (saved ${t.toFixed(2)}), running ${back.map((b) => b.running).join(', ')}`;
       return true;
     }],
+    ['extra: piloting: saved while flown at no throttle (a contraption saved selected), a rocket’s thrusters answer the throttle lever wired to them once loaded', () => {
+      kit.reset();
+      const { plank, l, r } = rocket(false);
+      const lever = kit.spawn('throttle-lever', 0, 1.2) as ThrottleLever;
+      kit.advance(0.2);
+      weld(plank, lever, { x: 0, y: plank.parts[0].y + 0.05 });
+      for (const t of [l, r]) C.create('wire', lever.main, { x: lever.main.x, y: lever.main.y }, t.main, { x: t.main.x, y: t.main.y });
+      // flown at nothing, and saved while it still is
+      controls.selection = new Set([plank]);
+      kit.advance(0.3);
+      if (l.pilotOut !== 0) return `flown at no throttle, its thruster's pilot setting is ${l.pilotOut}`;
+      const s = saveToString(game);
+      controls.selection = new Set();
+      kit.reset();
+      loadFromString(game, s);
+      kit.advance(1);
+      const back = game.entities.filter((e) => e.def.id === 'thruster') as Thruster[];
+      const lv = game.entities.find((e) => e.def.id === 'throttle-lever') as ThrottleLever | undefined;
+      if (back.length !== 2 || !lv) return `${back.length} thrusters and ${lv ? 'a' : 'no'} lever after loading`;
+      lv.set(1);
+      kit.advance(0.2);
+      if (back.some((t) => !t.running)) return `the lever pulled all the way: running ${back.map((t) => t.running).join(', ')} (pilot settings ${back.map((t) => t.pilotOut).join(', ')})`;
+      return true;
+    }],
+    ['extra: piloting: a tall craft’s engines side by side under it level it and turn it (they were counted against its height, and none did)', () => {
+      kit.reset();
+      const { plank, l, r } = rocket(false);
+      // a 10 m mast stood on the plank between them
+      const mast = kit.spawn('beam', 0, 5.5, { angle: Math.PI / 2, config: { w: 320, h: 6 } });
+      mast.setFrozen(true);
+      plank.setFrozen(true);
+      kit.advance(0.2);
+      weld(plank, mast, { x: 0, y: plank.parts[0].y + 0.05 });
+      controls.selection = new Set([plank]);
+      kit.advance(0.7);
+      const c = game.piloting.craftOf([plank]);
+      if (!c) return 'nothing to fly';
+      const m = [l, r].map((t) => c.mix.get(t));
+      if (!c.levels || m.some((x) => !x?.rot)) return `levels ${c.levels}; the thrusters turn it ${m.map((x) => x?.rot).join(', ')}`;
+      return true;
+    }],
     ['extra: piloting: a plank plane takes off on its throttle: its wing set at an angle lifts it once it’s fast enough (set level, the same build stays down)', () => {
       /** A plank fuselage with a thruster behind it and a gyroscope on it (holding it level), and a plank wing over it at `inc` (rad). */
       const plane = (inc: number) => {

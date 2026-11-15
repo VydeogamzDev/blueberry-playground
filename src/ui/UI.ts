@@ -1077,7 +1077,8 @@ export class UI implements UIBridge {
       [`Connection tool: hold ${k('com')}`, 'The end goes at the centre of mass'],
       ['Connection tool: Shift as you let go', 'Carry on from where it ended (A → B → C); Esc or right-click stops'],
       ['Connection tool: click, then click', 'Rope, spring, wire and fuse cord: the first end, then the second'],
-      ['Weld or pin: click', 'Fix it to what’s behind it, or the background'],
+      ['Weld: click', 'Weld it to what’s behind or touching it there (Ctrl+click: to the background)'],
+      ['Pin: click', 'Pin it to what’s behind it, or the background'],
       ['Let go over nothing', 'Weld, hinge or pin: nothing made (hold Ctrl to fix it to the background)'],
       ['Drag a connection’s knot (time paused)', 'Move that end somewhere else'],
       [`${k('delete')} over a connection`, 'Delete it (with nothing selected)'],
@@ -1271,7 +1272,8 @@ export class UI implements UIBridge {
       const btn = el('button', 'set-preset', label);
       btn.dataset.preset = id;
       btn.onclick = () => {
-        Object.assign(gfx, PRESETS[id]);
+        // (the frame rate cap is the player's: a preset leaves it, see PRESETS)
+        Object.assign(gfx, PRESETS[id], { fps: gfx.fps });
         this.graphicsChanged();
       };
       presets.appendChild(btn);
@@ -1695,7 +1697,12 @@ export class UI implements UIBridge {
     const snap = capture(this.game, live);
     const thumb = thumbnail(live);
     const fallback = `Contraption ${this.contraptions.list.length + 1}`;
-    this.dialog('Save as contraption', 'Its name in the toybox:', fallback, 'Save', (name) => {
+    // (fixed to the background: said before it's saved, not found out when it hangs in the air pasted)
+    const fixed = this.game.connections.fixedOf(live).length;
+    const note = fixed
+      ? `It’s fixed to the background ${fixed === 1 ? 'in one place' : `in ${fixed} places`}, so it will hang where it’s put. To save it loose, Cancel, right-click it: Free from the background. Its name in the toybox:`
+      : 'Its name in the toybox:';
+    this.dialog('Save as contraption', note, fallback, 'Save', (name) => {
       const c = this.contraptions.add(name.trim() || fallback, snap, thumb);
       if (!c) {
         this.toast('Not saved: the browser’s storage is full');
@@ -2004,7 +2011,9 @@ export class UI implements UIBridge {
     const climb = Math.abs(hud.climb) < 0.05 ? '0.0' : `${hud.climb > 0 ? '▲' : '▼'} ${Math.abs(hud.climb).toFixed(1)}`;
     // (on the World: how high it truly is, and the air there)
     const air = hud.alt === undefined ? '' : ` · alt ${altText(hud.alt)} · air ${(hud.air ?? 0) < 0.01 ? (hud.air ?? 0).toExponential(1) : (hud.air ?? 0).toFixed(2)} kg/m³ ${Math.round(hud.temp ?? 0)} °C`;
-    const text = `${hud.speed.toFixed(1)} m/s · ${hud.height.toFixed(1)} m up · climb ${climb} m/s · throttle ${Math.round(hud.throttle * 100)}% · ${hud.running}/${hud.engines} running${air}`;
+    // (fixed to the background: said first, or a player wonders why full throttle does nothing)
+    const fixed = hud.fixed ? 'Fixed to the background (right-click it: Free from the background) · ' : '';
+    const text = `${fixed}${hud.speed.toFixed(1)} m/s · ${hud.height.toFixed(1)} m up · climb ${climb} m/s · throttle ${Math.round(hud.throttle * 100)}% · ${hud.running}/${hud.engines} running${air}`;
     if (text !== this.pilotText) {
       this.pilotText = text;
       (this.pilotHud.firstChild as HTMLElement).textContent = text;

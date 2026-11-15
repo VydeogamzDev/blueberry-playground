@@ -77,6 +77,13 @@ const BEARS_PER_HP = 150;
 const CRUSHING = 0.01;
 
 /**
+ * (solid px) Something that burns, burnt through, crumbles to ash where it lies if it's
+ * no bigger than this (a plank, a tyre: see Structure.ash()); a bigger thing (a crate)
+ * falls in first, into pieces that burn on and go to ash in their turn.
+ */
+const ASH_PX = 240;
+
+/**
  * A single rigid object: crates, boxes, planks, furniture, and every machine,
  * gun and gadget made of one part. As strong as what it's made of, for its size
  * (unless its config says: a glass pane's hit points, wood's per kg, or never), it
@@ -96,6 +103,8 @@ export class Prop extends Entity {
   protected breakDir: V2 | undefined = undefined;
   /** It ran away molten (see onTemp()): drips, not pieces. */
   protected melted = false;
+  /** It burnt away (see damage()): ash, not pieces. */
+  protected burnt = false;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, x: number, y: number, opts: SpawnOptions) {
     super(game, def, opts.flip ?? false);
@@ -158,9 +167,16 @@ export class Prop extends Entity {
       if (e > 30) this.damage(info.part, e / 40, 'blunt', info.point, info.normal);
       return;
     }
-    // tougher things: nothing under half their toughness, all of them at it; and only as
-    // much as what hit them could give (a pebble at 30 m/s doesn't dent a steel box, the floor
-    // does; a bat swung into someone isn't hurt, one swung into a post is)
+    this.knock(info);
+  }
+
+  /**
+   * A knock to a tough thing: nothing under half its material's toughness, all of it at
+   * it; and only as much as what hit it could give (a pebble at 30 m/s doesn't dent a steel
+   * box, the floor does; a bat swung into someone isn't hurt, one swung into a post is).
+   */
+  protected knock(info: ImpactInfo): void {
+    const mat = this.main.mat;
     const v0 = mat.toughness * 0.5;
     if (info.speed <= v0) return;
     const share = Math.min(1, info.otherMass / Math.max(0.05, this.main.mass)) * (info.other ? hardness(info.other.mat) : 1);
@@ -227,6 +243,9 @@ export class Prop extends Entity {
     const worked = this.works;
     amount *= this.softness(part) * (kind === 'explosion' ? BLAST_K * blastShare(part) : 1);
     part.hp -= amount * (kind === 'fire' ? 0.3 : 1);
+    // (fire doesn't break what doesn't burn: oil or fuel burning on steel weakens and
+    // scorches it, and heat melts it in the end (see onTemp()), but it doesn't fall to pieces)
+    if (kind === 'fire' && !(part.mat.flammability > 0) && part.hp <= 0) part.hp = Math.min(before, 0.5);
     // (a machine knocked out of order: sparks, and the power it made or passed on is gone)
     if (this.usesPower || (this as Prop & { isPowerSource?(): boolean }).isPowerSource) {
       const c = this.condition;
@@ -238,6 +257,13 @@ export class Prop extends Entity {
       }
     }
     if (part.hp <= 0 && !this.destroyed) {
+      // burnt through: what burns goes to ash, not to pieces (that burnt on, and broke
+      // again, smaller, and again: a car's burning tyres ended as a swarm of crumbs)
+      if (kind === 'fire' && part.mat.flammability > 0 && (this.burnsAway || part.solidPx() <= ASH_PX)) {
+        this.burnt = true;
+        this.shatter(point);
+        return;
+      }
       // (overkill breaks it finer: a nuke's shock, not a last pistol round)
       const over = Math.min(2, (amount - Math.max(0, before)) / Math.max(1, part.maxHp));
       this.breakForce = (FORCE[kind] ?? 0.5) * (1 + over);
@@ -253,13 +279,24 @@ export class Prop extends Entity {
     const p = this.main;
     const g = this.game;
     g.structure.keep(this, this.breakApart(point));
-    if (p.mat.sound === 'glass') g.sound.play('impact/glass_break', { gain: 0.9, x: p.x });
+    if (this.burnt) {
+      // (ash falls in quietly)
+    } else if (p.mat.sound === 'glass') g.sound.play('impact/glass_break', { gain: 0.9, x: p.x });
     else g.sound.impact(p.mat.sound, 1, p.x);
     g.remove(this);
   }
 
+  /** Burnt through, it goes to ash whatever its size (see damage()): a broken piece does. */
+  protected get burnsAway(): boolean {
+    return false;
+  }
+
   /** Its pieces (see systems/Structure): flung out from `point`, as hard as it was broken. */
   protected breakApart(point?: V2): Debris[] {
+    if (this.burnt) {
+      this.game.structure.ash(this.main);
+      return [];
+    }
     if (this.melted) {
       this.game.structure.melt(this.main);
       return [];

@@ -2437,6 +2437,10 @@ export class Controls {
     }
     const whole = this.game.connections.assemblyOf(list);
     if (whole.length > list.length) acts.push({ label: `Select assembly (${whole.length})`, action: () => this.arrange.selectAssembly(e) });
+    // (fixed to the background anywhere in what it's built into: it hangs where it's put, and
+    // a rocket so fixed by one of its jets didn't move at full thrust, its player none the wiser)
+    const fixed = this.game.connections.fixedOf(whole);
+    if (fixed.length) acts.push({ label: `Free from the background (${fixed.length})`, action: () => this.connect.unconnect(fixed, true) });
     acts.push(...this.arrange.overlapActions(e));
     acts.push({ label: 'Save as contraption…', action: () => this.ui.saveContraption(this.withAttached(list)) });
     if (!multi && e.def.resizable && e.config && e.def.id !== 'shape') acts.push({ label: 'Reset size', action: () => this.setSize(e) });

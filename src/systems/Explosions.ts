@@ -242,7 +242,7 @@ export class Explosions {
     const diry = dl > 0.01 ? dy / dl : 1;
     // impulse grows sub-linearly with mass so light things fly further
     const mass = p.frozen ? 0 : p.mass;
-    const mag = power * f * Math.pow(Math.max(0.05, mass), 0.6) * 0.35;
+    const mag = power * f * Math.pow(Math.max(0.05, mass), 0.6) * 0.35 * p.entity.blastPush;
     if (!p.frozen) {
       const v0 = p.body.linvel();
       p.body.applyImpulseAtPoint({ x: dirx * mag, y: (diry + 0.25) * mag }, { x: qx, y: qy }, true);

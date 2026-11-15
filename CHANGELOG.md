@@ -4,6 +4,51 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.3.1 — 2026-11-14
+
+### Fixes
+- Choosing a graphics preset no longer changes the frame rate cap. Medium (picked to lighten a heavy
+  scene) used to hold the game to 60 fps as well, unasked. A cap already lowered that way stays where it
+  is until you set Settings > Graphics > Frame rate cap back yourself.
+- Heads stay on far better. A hard landing hurts the head only down to half and knocks someone out
+  beyond that, instead of draining their skull until the next knock burst it. A blunt blow bursts a head
+  only when it's crushing, not one that just drains the last of it. Blasts take a head
+  off only well inside where they'd take an arm, and a round to the head bites out far less of it.
+- Vehicles hit by blasts behave like the weight they are. A car is pushed like 1.15 tonnes and a tank like
+  30, not like the few hundred kilograms their parts add up to. A wreck drags on its rims instead of
+  rolling away.
+- Blasts eat into a car as they come: each one bursts the windows facing it and bites a hole out of the
+  body, torn steel flying, until enough of them tear it apart. A big enough one blows its wheels off.
+  Holes now show through the body drawn in front of the people inside.
+- A car or tank torn apart leaves fewer, bigger plates of steel, not dozens of small scraps.
+- Fire burns things to ash. A burning scrap, splinter or shed tyre crumbles away where it lies, instead
+  of breaking into smaller burning pieces again and again until a wreck is a swarm of crumbs. Fire
+  scorches and heats steel, but doesn't break it.
+- Broken pieces fare as what they're made of: steel scraps and rubber don't break smaller when they land
+  or have wreckage lying on them. Glass and stone still do.
+- A contraption saved while it was selected (being flown) with its throttle at nothing no longer comes
+  back with its engines stuck off. They ignored their own switch and any throttle lever wired to them
+  until they were flown again.
+- Welds on long parts hold against twisting as well as they hold against a pull: they can hold the lighter
+  part straight out. Before, how much twist a weld took didn't grow with what it held, so nudging a tall
+  welded rocket a metre with the mouse, or letting it slide a little on its feet, bent its welds apart.
+- A click with the Weld no longer fixes things to the background by surprise. It welds to whatever is
+  behind the click or touching it there (a jet's edge welds to the beam it sits against). Over nothing it
+  makes nothing and says so, just as a weld let go over nothing does. Ctrl+click still fixes something to
+  the background on purpose. Before, a click, or a drag too short to count as one, quietly welded the part
+  to the background. That's how a rocket's jet got fixed in place without its builder ever asking. The Pin
+  still pins to the background with a plain click, since that's what it's for.
+- Something fixed to the background now says so. Saving it as a contraption says so in the save dialog,
+  before you name it. Pasting or placing a copy or contraption that's fixed to the background shows a
+  message that it will stay where it's put. The flight readout says it while you try to fly it. Its
+  right-click menu has "Free from the background", which works from any part of the build. A pasted rocket
+  fixed by one jet used to hang in the air and not move at full thrust, with nothing to say why.
+- A weld's (or rope's, hinge's, pin's) menu sets the strength of every connection in its build at once
+  ("Whole build: unbreakable"), not only its own.
+- Tall craft can be levelled and turned by engines side by side under them. A 20 m rocket's jets, a
+  metre or two apart, were counted as too close to its middle to turn it, so nothing held it upright
+  and Q and E did nothing.
+
 ## 0.3.0 — 2026-11-14
 
 ### Everything breaks

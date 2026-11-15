@@ -108,6 +108,20 @@ try {
   }
 } catch (e) {
   console.error(`Self-test run failed: ${e.message}`);
+  // (a run that never answered: which test it was stuck in, and how the ones before it went)
+  if (page && /no answer from the page/.test(e.message)) {
+    try {
+      const now = JSON.parse(await page.evaluate('JSON.stringify(globalThis.selftestNow ?? null)', 10000));
+      if (now) {
+        const failed = now.results.filter((r) => !r.pass);
+        console.error(`Stuck in: ${now.name} (after ${now.results.length} tests, ${failed.length} failed)`);
+        for (const r of failed) console.error(`FAIL  ${r.name}
+      ${r.detail}`);
+      }
+    } catch {
+      console.error('(the page answers nothing at all: a test is stuck in a loop that never yields)');
+    }
+  }
   exitCode = 1;
 } finally {
   await page?.close();

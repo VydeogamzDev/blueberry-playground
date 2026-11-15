@@ -94,6 +94,11 @@ export abstract class Entity {
    * sinks or rises, that isn't at rest (see restCheck()).
    */
   adriftAt = -Infinity;
+  /**
+   * How hard a blast shoves it, of what it would anything its weight (see Explosions.strike()):
+   * a vehicle less, as heavy as it truly is (see CarConfig.trueKg).
+   */
+  blastPush = 1;
 
   constructor(game: Game, def: ItemDef, flipped = false) {
     this.id = Entity.nextId++;

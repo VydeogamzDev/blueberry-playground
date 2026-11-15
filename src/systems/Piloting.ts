@@ -156,6 +156,8 @@ export interface PilotHud {
   /** Its engines, and how many are running now. */
   engines: number;
   running: number;
+  /** Fixed to the background somewhere (see Connections.fixedOf()): nothing it does moves it. */
+  fixed?: boolean;
   /** On the World: its true height (m), and the air there: density (kg/m³) and temperature (°C). */
   alt?: number;
   air?: number;
@@ -173,8 +175,14 @@ const NO_KEYS: PilotInput = { x: 0, t: 0, r: 0 };
 const REMIX = 0.5;
 /** How often (s) a craft's make-up is looked over again (something welded on or cut off). */
 const REMAKE = 1;
-/** Of the build's size, how far off the centre of mass an engine's push passes to turn it (see remix()). */
+/**
+ * How far off the centre of mass an engine's push passes to turn it (see remix()): this
+ * share of the build's size, but never more than TURNS_MAX (m). A tall rocket's jets side
+ * by side under it, a metre or two apart, turn it (and level it) as a small drone's do;
+ * against its size alone (a fifth of 12 m), none of them did, and nothing held it up.
+ */
 const TURNS = 0.2;
+const TURNS_MAX = 0.5;
 /** Levelling (see fly()): how hard the engines answer being off the angle held (per rad), and turning (per rad/s). */
 const LEVEL = { k: 2.5, d: 0.8 };
 
@@ -236,9 +244,34 @@ export class Piloting {
     };
   }
 
+  /** When strays() last looked. */
+  private strayAt = -Infinity;
+
+  /**
+   * Engines under the pilot that no craft flies: what a save, a copy or a saved
+   * contraption made while it was flown brings back (see restorePilot()). They're
+   * left as letGo() leaves them: on the throttle and above nothing, it runs on (a
+   * rocket saved climbing climbs on); anything else is its own again. Before, one
+   * saved flown at nothing was held off for good: its switch did nothing, and nor
+   * did its wires (a throttle lever wired to a rocket's jets).
+   */
+  private strays(): void {
+    const flown = new Set<Entity>();
+    for (const c of this.crafts) for (const e of c.engines) flown.add(e);
+    for (const e of this.game.entities) {
+      if (e.destroyed || flown.has(e) || !isEngine(e) || e.pilotOut === null) continue;
+      if (!(e.pilotOut > 0 && Math.abs(e.pilotOut - e.pilotT) < 1e-6)) e.pilotOut = null;
+    }
+  }
+
   /** Each step, before the things in the world: the engines of each craft piloted run as the pilot has them. */
   step(dt: number): void {
     const now = this.game.time;
+    // (or the clock's gone back: a new game, a load)
+    if (now - this.strayAt > REMIX || now < this.strayAt) {
+      this.strayAt = now;
+      this.strays();
+    }
     for (let i = this.crafts.length - 1; i >= 0; i--) {
       let c = this.crafts[i];
       if (now - c.told > HOLD || c.ref.destroyed) {
@@ -368,7 +401,7 @@ export class Piloting {
       // (its turn about the middle per newton, against the build's size: the same in any frame)
       const tq = ((at.x - com.x) * d.y - (at.y - com.y) * d.x) / size;
       const lift = dc.x * ax + dc.y * ay > 0.7;
-      const rot = Math.abs(tq) > TURNS ? Math.sign(tq) : 0;
+      const rot = Math.abs(tq) > Math.min(TURNS, TURNS_MAX / size) ? Math.sign(tq) : 0;
       if (lift && rot > 0) up = true;
       if (lift && rot < 0) down = true;
       c.mix.set(e, {
@@ -428,7 +461,8 @@ export class Piloting {
     // (over the ground under it on the World, where the floor is far down out of sight)
     const g = this.game;
     const height = g.env.world ? p.y - g.env.groundAt(p.x, p.y) : p.y - WORLD.floor;
-    return { speed: Math.hypot(p.vx, p.vy), height, climb: p.vy, throttle: T, engines: n, running, ...(g.map.world ? { alt: p.y + g.origin.y, air: g.air.densityAt(p.y), temp: g.air.tempAt(p.y) } : {}) };
+    const fixed = g.connections.fixedOf(c.ents).length > 0;
+    return { speed: Math.hypot(p.vx, p.vy), height, climb: p.vy, throttle: T, engines: n, running, ...(fixed ? { fixed } : {}), ...(g.map.world ? { alt: p.y + g.origin.y, air: g.air.densityAt(p.y), temp: g.air.tempAt(p.y) } : {}) };
   }
 
   /** Forgets every craft (a scene cleared or loaded). */

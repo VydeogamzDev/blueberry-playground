@@ -131,9 +131,11 @@ function crossAt(px: number, py: number, qx: number, qy: number, rx: number, ry:
  * What a weld, a hinge or a pin holds before it gives way (see Connections.strain()):
  * the force (N) along it, `g` times the weight of the lighter of its two parts and at
  * least `floor` (a car hung from a little hook holds), and the twist (N·m) a weld takes
- * (and a hinge at its stops), that force times `arm`. A blast flings a part off what it's
- * welded to (C4 beside one gives it a few thousand g); a crash or a fall a few metres
- * down doesn't.
+ * (and a hinge at its stops): that force with the lighter part held straight out from it,
+ * at half its length (at least `arm`). A blast flings a part off what it's welded to (C4
+ * beside one gives it a few thousand g); a crash or a fall a few metres down doesn't.
+ * (The twist was that force times `arm` whatever the part: a 12 m beam's weld bent past it
+ * as the rocket it was built into slid a little on its feet, and the rocket came apart.)
  */
 const HOLD = {
   weld: { g: 60, floor: 20000, arm: 0.15 },
@@ -718,6 +720,16 @@ export class Connections {
    * (not wires, nor the background), and what they hold; with `physicalOnly`
    * false, through wires too.
    */
+  /**
+   * The welds, pins and hinges fixing any of `ents` to the background (a click with the
+   * Weld or the Pin, or a contraption saved with one): it stays where it's put, and no
+   * engine or push moves it.
+   */
+  fixedOf(ents: Iterable<Entity>): Connection[] {
+    const set = new Set(ents);
+    return this.list.filter((k) => !k.b && RIGID_KINDS.has(k.kind) && set.has(k.a.entity));
+  }
+
   assemblyOf(ents: Iterable<Entity>, physicalOnly = true): Entity[] {
     const out: Entity[] = [];
     const seen = new Set<Entity>();
@@ -1485,9 +1497,9 @@ export class Connections {
   /** What a weld, a hinge or a pin holds (see HOLD): a weak one a quarter of it. */
   private holdOf(c: Connection): { f: number; t: number } {
     const h = HOLD[c.kind as keyof typeof HOLD];
-    const m = Math.min(c.a.mass, c.b ? c.b.mass : Infinity);
-    const f = Math.max(h.floor, h.g * 9.81 * m) * (c.opts?.strength === 'weak' ? 0.25 : 1);
-    return { f, t: f * h.arm };
+    const light = !c.b || c.a.mass <= c.b.mass ? c.a : c.b;
+    const f = Math.max(h.floor, h.g * 9.81 * light.mass) * (c.opts?.strength === 'weak' ? 0.25 : 1);
+    return { f, t: f * Math.max(h.arm, (Math.max(light.w, light.h) * PX) / 2) };
   }
 
   /**

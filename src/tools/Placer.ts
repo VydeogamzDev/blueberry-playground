@@ -403,6 +403,9 @@ export class Placer {
     c.created(made);
     c.selection = new Set(made);
     c.refreshOutlines();
+    // (fixed to the background as it was saved or copied: it hangs where it's put)
+    const fixed = c.game.connections.fixedOf(made).length;
+    if (fixed) c.ui.toast(`Fixed to the background ${fixed === 1 ? 'in one place' : `in ${fixed} places`}: it stays where it’s put. Right-click it: Free from the background`);
     return made;
   }
 
