@@ -1,4 +1,4 @@
-import { register, lazyArt, previewOf } from './items';
+import { register, lazyArt, previewOf, sizeOf } from './items';
 import { MAT, ABLATOR, type PhysMaterial } from '../world/Materials';
 import { PX } from '../engine/constants';
 import * as R from '../art/rocketry';
@@ -58,10 +58,19 @@ export function registerRocketry(): void {
 
   const dec = lazyArt(R.decouplerArt);
   const decShapes = rects(32, 5, [[0, 0, 32, 5]]);
-  item('decoupler', 'Decoupler',
-    `Build it between a rocket’s stages: fired, it lets go of what’s fixed to its top side and throws the two apart. Fuel doesn’t pass it. ${STAGE} Or press F, or pulse it.`,
-    dec, (game, def, x, y, opts) => new Decoupler(game, def, cfg(dec, MAT.metal, decShapes, 8), x, y, opts),
+  const decDef = item('decoupler', 'Decoupler',
+    `Build it between a rocket’s stages, its stripes level: weld the stage below to it and the stage above to it, and nothing else across from one to the other. Fired, it lets go of what’s fixed to its top side and throws the two apart. Fuel doesn’t pass it. Flown, a build with decouplers stages itself (its lowest engines first; Enter, or F on the cockpit, drops them and lights the next), or ${STAGE.charAt(0).toLowerCase()}${STAGE.slice(1)} Or press F on it, pulse it, or switch power to it. Any size: drag its handles.`,
+    dec, (game, def, x, y, opts) => {
+      const size = sizeOf(opts.config);
+      if (!size) return new Decoupler(game, def, cfg(dec, MAT.metal, decShapes, 8), x, y, opts);
+      const [w, h] = size;
+      const art = R.decouplerArt(w, h);
+      const e = new Decoupler(game, def, cfg(() => art, MAT.metal, rects(w, h, [[0, 0, w, h]]), (8 * w * h) / (32 * 5), { ownTexture: true }), x, y, opts);
+      e.config = { w, h };
+      return e;
+    },
     ['decoupler', 'stage', 'separation', 'rocket', 'split']);
+  decDef.resizable = true;
 
   for (const big of [false, true]) {
     const art = lazyArt(() => R.parachutePackArt(false));

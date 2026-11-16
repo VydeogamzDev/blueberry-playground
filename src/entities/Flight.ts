@@ -398,6 +398,12 @@ export class Cockpit extends Prop {
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
+    this.activatable = true;
+  }
+
+  /** Activated (F, a pulse): the next stage of its build fires, as the stage key does flying it. */
+  activate(): void {
+    this.game.piloting.stageOf(this);
   }
 
   /** Who sits in it, if anyone. */

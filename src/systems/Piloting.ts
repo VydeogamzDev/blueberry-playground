@@ -117,15 +117,28 @@ export interface PilotInput {
  * (Its label starts STAGE_LABEL for a guest's pick to be found by: see Host.)
  */
 export const STAGE_LABEL = 'Stage: ';
-export function stageAction(e: Entity): ContextAction {
+export function stageAction(e: Entity, also: readonly Entity[] = []): ContextAction {
+  const auto = e.autoStaged ? ' (auto)' : '';
   return {
-    label: `${STAGE_LABEL}${e.stage ? `${e.stage}${e.staged ? ' (fired)' : ''}` : 'none'}`,
+    label: `${STAGE_LABEL}${e.stage ? `${e.stage}${e.staged ? ' (fired)' : auto}` : 'none'}${also.length ? ` (all ${also.length + 1})` : ''}`,
     hint: 'next',
     action: () => {
-      e.stage = (e.stage + 1) % 10;
-      e.staged = false;
+      // (set by hand: the build's stages are the player's now, see autoStage(); several
+      // selected, they all go to the next stage after this one's)
+      const next = (e.stage + 1) % 10;
+      for (const x of [e, ...also]) {
+        if (!x.stageable) continue;
+        x.stage = next;
+        x.staged = false;
+        x.autoStaged = false;
+      }
     },
   };
+}
+
+/** A decoupler (see entities/Rocketry): read by what it is, so this needn't load it. */
+function isDecoupler(e: Entity): e is Entity & { fired: boolean; readonly decoupler: true } {
+  return (e as { decoupler?: boolean }).decoupler === true;
 }
 
 /** A pilot's one-off orders (0.4.0): the next stage, stability assist, the landing gear, the parachutes, ejecting. */
@@ -398,6 +411,7 @@ export class Piloting {
 
   private assemble(sel: readonly Entity[]): Craft | null {
     const ents = this.game.connections.assemblyOf(sel);
+    this.autoStage(ents);
     const engines = ents.filter(isEngine);
     const steadiers = ents.filter(isSteadier);
     const commanded = ents.filter(isCommanded);
@@ -665,6 +679,113 @@ export class Piloting {
       tq += e.pushForce() * m.arm * (isLift ? Math.max(T, 0.05) : 1);
     }
     return tq;
+  }
+
+  /**
+   * The next stage of the build `e` is part of, fired from outside the flying (its cockpit
+   * activated: F): false if it has none left.
+   */
+  stageOf(e: Entity): boolean {
+    // (flown: its craft; not: the build as it is, staged and let go of again)
+    const c = this.crafts.find((k) => k.ents.includes(e)) ?? this.assemble([e]);
+    return !!c && this.stage(c);
+  }
+
+  /**
+   * Stages for a build with decouplers in it that no one's staged by hand (0.4.2), worked
+   * out from where each thing is: the build is cut where each decoupler lets go (its top
+   * side, see Decoupler.release()), and the pieces counted off from the cockpit's. The
+   * engines furthest from it run from the start; each decoupler fires with the engines of
+   * the piece it leaves the cockpit on, the next stage in. So a two-stage rocket climbs
+   * on its lower engines, and Enter (or F on the cockpit) drops them and lights the upper
+   * ones. Set any part's stage by hand and the build's stages are as set. Worked out again
+   * as the build changes, until a stage is fired.
+   */
+  private autoStage(ents: Entity[]): void {
+    const live = ents.filter((e) => !e.destroyed);
+    if (live.some((e) => e.stage > 0 && !e.autoStaged)) return;
+    if (live.some((e) => e.autoStaged && e.staged)) return;
+    for (const e of live) if (e.autoStaged) {
+      e.stage = 0;
+      e.autoStaged = false;
+    }
+    const decs = live.filter((e) => isDecoupler(e) && !e.fired);
+    if (!decs.length) return;
+    const C = this.game.connections;
+    const PHYSICAL = new Set(['rope', 'weld', 'spring', 'hinge', 'pin', 'fuse']);
+    // what each decoupler lets go of: what's fixed to its top side
+    const cut = new Set<unknown>();
+    const tops = new Map<Entity, Entity[]>();
+    for (const d of decs) {
+      const me = d.parts[0];
+      const up: Entity[] = [];
+      for (const k of C.connectionsOf(d)) {
+        const other = k.a.entity === d ? k.b : k.a;
+        if (!other || !PHYSICAL.has(k.kind)) continue;
+        if (me.worldToLocal(other.x, other.y).y <= 0) continue;
+        cut.add(k);
+        up.push(other.entity);
+      }
+      tops.set(d, up);
+    }
+    // the pieces left
+    const piece = new Map<Entity, number>();
+    let n = 0;
+    const set = new Set(live);
+    for (const e of live) {
+      if (piece.has(e)) continue;
+      const stack = [e];
+      piece.set(e, n);
+      while (stack.length) {
+        const x = stack.pop()!;
+        for (const k of C.connectionsOf(x)) {
+          if (!PHYSICAL.has(k.kind) || cut.has(k) || !k.b) continue;
+          const y = k.a.entity === x ? k.b.entity : k.a.entity;
+          if (!set.has(y) || piece.has(y)) continue;
+          piece.set(y, n);
+          stack.push(y);
+        }
+      }
+      n++;
+    }
+    // counted off from the cockpit's piece (no cockpit: the top-most piece's, a decoupler's top side)
+    const cockpit = live.find((e) => (e as { cockpit?: boolean }).cockpit);
+    const home = cockpit ? piece.get(cockpit)! : piece.get(tops.get(decs[0])![0] ?? decs[0])!;
+    const level = new Map<number, number>([[home, 0]]);
+    const links: [number, number][] = [];
+    for (const d of decs) for (const t of tops.get(d)!) links.push([piece.get(d)!, piece.get(t)!]);
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const [a, b] of links) {
+        const la = level.get(a);
+        const lb = level.get(b);
+        if (la !== undefined && (lb === undefined || lb > la + 1)) {
+          level.set(b, la + 1);
+          changed = true;
+        }
+        if (lb !== undefined && (la === undefined || la > lb + 1)) {
+          level.set(a, lb + 1);
+          changed = true;
+        }
+      }
+    }
+    let far = 0;
+    for (const l of level.values()) far = Math.max(far, l);
+    if (!far) return;
+    const give = (e: Entity, stage: number) => {
+      if (stage <= 0 || stage > 9 || !e.stageable) return;
+      e.stage = stage;
+      e.staged = false;
+      e.autoStaged = true;
+    };
+    for (const e of live) {
+      const l = level.get(piece.get(e)!);
+      if (l !== undefined && isEngine(e)) give(e, far - l);
+    }
+    for (const d of decs) {
+      const ls = [piece.get(d)!, ...tops.get(d)!.map((t) => piece.get(t)!)].map((p) => level.get(p)).filter((l): l is number => l !== undefined);
+      if (ls.length) give(d, far - Math.min(...ls));
+    }
   }
 
   /** Fires the craft's next stage (see Entity.stage): false if none is left. */

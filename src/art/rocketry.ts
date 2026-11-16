@@ -37,13 +37,14 @@ export const fuelTankArt = cached<'small' | 'big'>((size) => {
 });
 
 /** A decoupler: a thin plate in hazard stripes, bolts along it. */
-export function decouplerArt(): PixelArt {
-  const w = 32;
-  const a = new PixelArt(w, 5);
-  a.rect(0, 0, w, 5, GUNMETAL[2]);
+/** A decoupler: a steel band striped yellow, `w` × `h` (any size: it's resizable). */
+export function decouplerArt(w = 32, h = 5): PixelArt {
+  const a = new PixelArt(w, h);
+  a.rect(0, 0, w, h, GUNMETAL[2]);
   finish(a);
-  for (let x = 1; x < w - 1; x++) if (Math.floor((x + 1) / 3) % 2 === 0) a.set(x, 2, YELLOW[2]).set(x, 1, YELLOW[3]);
-  for (let x = 3; x < w; x += 7) a.set(x, 3, STEEL_LT[2]);
+  const mid = Math.max(1, Math.floor(h / 2) - 1);
+  for (let x = 1; x < w - 1; x++) if (Math.floor((x + 1) / 3) % 2 === 0) for (let y = Math.max(1, mid - Math.floor((h - 5) / 2)); y <= Math.min(h - 2, mid + 1); y++) a.set(x, y, y === mid + 1 ? YELLOW[2] : YELLOW[3]);
+  if (h >= 4) for (let x = 3; x < w; x += 7) a.set(x, h - 2, STEEL_LT[2]);
   return a;
 }
 

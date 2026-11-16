@@ -471,6 +471,25 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       if (ofKind('rope').length) return 'one undo left ropes';
       return true;
     }],
+    ['extra: building2: a weld let go on one of a selected build welds only the part under it (mending a broken joint)', () => {
+      kit.reset();
+      // a frame still selected (as after moving it), one of its welds broken: welded again
+      const left = kit.spawn('beam', -0.7, 1.6, { angle: Math.PI / 2 });
+      const right = kit.spawn('beam', 0.7, 1.6, { angle: Math.PI / 2 });
+      const top = kit.spawn('short-beam', 0, 3.05);
+      const bottom = kit.spawn('short-beam', 0, 0.15);
+      for (const e of [left, right, top, bottom]) e.setFrozen(true);
+      kit.advance(0.1);
+      c.selection = new Set([left, right, top, bottom]);
+      c.setTool('weld');
+      join({ x: -0.7, y: 0.5 }, { x: -0.3, y: 0.15 });
+      c.setTool('drag');
+      const welds = ofKind('weld');
+      if (welds.length !== 1) return `${welds.length} welds made, not 1 (to ${welds.map((k) => k.b?.entity.label ?? 'background').join(', ')})`;
+      const ends = new Set([welds[0].a.entity, welds[0].b?.entity]);
+      if (!ends.has(left) || !ends.has(bottom)) return 'the weld isn’t between the upright and the crossbar it was made on';
+      return true;
+    }],
     ['extra: building2: click, then click makes a rope; Shift as it’s let go carries on (A → B → C)', () => {
       kit.reset();
       const [a, b, d] = [-2, 0, 2].map((x) => kit.spawn('crate', x, 0.45));

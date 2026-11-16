@@ -658,17 +658,38 @@ export class Tutorial {
     this.point(s.target?.(this) ?? null);
   }
 
-  /** The card along to the right of the vitals while they show where it would cover them (selecting someone opens them). */
+  /**
+   * The card out of the way of what it would cover: along to the right of the vitals
+   * while they show (selecting someone opens them), and under the flight readout while
+   * something's flown (both sit at the top of the screen; over it, with no room under).
+   */
   private dodge(): void {
+    const c = this.card;
     const v = (q('.vitals') as HTMLElement | null)?.getBoundingClientRect();
-    const w = this.card.offsetWidth;
+    const w = c.offsetWidth;
     let x = innerWidth / 2;
-    if (v && v.width > 0 && v.height > 0 && v.right > x - w / 2 - 8 && v.top < this.card.offsetTop + this.card.offsetHeight) {
+    if (v && v.width > 0 && v.height > 0 && v.right > x - w / 2 - 8 && v.top < c.offsetTop + c.offsetHeight) {
       x = Math.max(x, Math.min(innerWidth - w / 2 - 8, v.right + 10 + w / 2));
     }
     const left = `${Math.round(x)}px`;
-    if (this.card.style.left !== left) this.card.style.left = left;
+    if (c.style.left !== left) c.style.left = left;
+    // (where the style sheet puts it, found while it's there: the readout can be moved, see Layout)
+    if (!c.style.top) this.cardHome = c.getBoundingClientRect().top;
+    const hud = (q('.pilot-hud:not(.hidden)') as HTMLElement | null)?.getBoundingClientRect();
+    const h = c.offsetHeight;
+    let top = '';
+    if (hud && hud.width > 0 && hud.height > 0 && hud.left < x + w / 2 && hud.right > x - w / 2 && hud.top < this.cardHome + h && hud.bottom > this.cardHome) {
+      const below = hud.bottom + 8;
+      top = `${Math.round(below + h <= innerHeight - 8 ? below : Math.max(4, hud.top - 8 - h))}px`;
+    }
+    if (c.style.top !== top) {
+      c.style.top = top;
+      c.style.bottom = top ? 'auto' : '';
+    }
   }
+
+  /** The card's top (px) where the style sheet puts it (see dodge()). */
+  private cardHome = 0;
 
   /** Points at a thing or a place in the sandbox (the arrow), or a button (its glow). */
   private point(t: Entity | V2 | Element | null): void {
@@ -3353,7 +3374,7 @@ export const FLIGHT: TutorialStep[] = [
     title: 'Throttle up',
     text: (t) =>
       `${selectIt(t, 'the cockpit')}, then hold ${padKey(t, 'aimUp', 'W', '▲')}: the throttle goes up, the thrusters burn and it climbs. ` +
-      `Let go and the throttle stays where it is; ${padKey(t, 'aimDown', 'S', '▼')} takes it down. The readout at the bottom shows its speed, height and throttle.`,
+      `Let go and the throttle stays where it is; ${padKey(t, 'aimDown', 'S', '▼')} takes it down. The flight readout shows its speed, height and throttle.`,
     setup: (t) => {
       t.memo.y = t.ref('craft')?.parts[0].y ?? 0;
     },

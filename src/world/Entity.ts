@@ -108,6 +108,8 @@ export abstract class Entity {
   stage = 0;
   /** Its stage has been fired. */
   staged = false;
+  /** Its stage was worked out for it from where it is in its build (see Piloting.autoStage()), not set by hand. */
+  autoStaged = false;
   /** Can it be given a stage (its menu offers one)? Engines, decouplers, parachutes and the like. */
   get stageable(): boolean {
     return false;
@@ -473,7 +475,7 @@ export abstract class Entity {
       ...(this.config ? { config: this.config } : {}),
       ...(this.layered ? { z: this.zBase } : {}),
       ...(this.fried ? { fried: true } : {}),
-      ...(this.stage ? { stage: this.stage, ...(this.staged ? { staged: true } : {}) } : {}),
+      ...(this.stage ? { stage: this.stage, ...(this.staged ? { staged: true } : {}), ...(this.autoStaged ? { autoStage: true } : {}) } : {}),
       extra: this.serializeExtra(),
     };
   }
@@ -498,6 +500,7 @@ export abstract class Entity {
     if (typeof s.stage === 'number' && Number.isInteger(s.stage) && s.stage >= 0 && s.stage <= 9) {
       this.stage = s.stage;
       this.staged = s.staged === true;
+      this.autoStaged = s.autoStage === true && s.stage > 0;
     }
     s.parts.forEach((ps, i) => {
       const p = this.parts[i];

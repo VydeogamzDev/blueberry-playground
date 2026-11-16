@@ -187,7 +187,11 @@ function massOf(ents: readonly Entity[]): number {
  */
 export class Decoupler extends Prop {
   readonly fuelWall = true;
+  /** It's a decoupler (see Piloting.autoStage()). */
+  readonly decoupler = true;
   fired = false;
+  /** Power came on to it (a switch, a lever wired to it): it fires at the next step, not inside the wiring's working out. */
+  private toFire = false;
 
   constructor(game: Game, def: ItemDef, cfg: PropConfig, x: number, y: number, opts: SpawnOptions) {
     super(game, def, cfg, x, y, opts);
@@ -200,6 +204,20 @@ export class Decoupler extends Prop {
 
   activate(): void {
     if (!this.fired) this.release();
+  }
+
+  setPowered(on: boolean): void {
+    const was = this.poweredIn;
+    super.setPowered(on);
+    if (on && !was && !this.fired) this.toFire = true;
+  }
+
+  preStep(dt = 0): void {
+    super.preStep(dt);
+    if (this.toFire) {
+      this.toFire = false;
+      this.release();
+    }
   }
 
   /** Lets go of everything fixed to its top side (and the wires across it), and throws the halves apart. */

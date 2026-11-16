@@ -235,7 +235,7 @@ export class ConnectTool {
     this.finish(p, ctrl, shift);
   }
 
-  /** The second end, where the tool's point is: made (to each selected thing, if it's on one of several). */
+  /** The second end, where the tool's point is: made (to each selected thing, if it's on one of several and it isn't rigid: see plan()). */
   private finish(p: Pending, ctrl: boolean, shift: boolean): void {
     const c = this.c;
     const plan = this.plan(p, ctrl);
@@ -277,11 +277,14 @@ export class ConnectTool {
     }
     if (wire && from && b.part.entity === from.entity) return { targets: [], why: 'Wires must connect two different objects' };
     if (p.kind === 'weld' && from && this.welded(from, b.part)) return { targets: [], why: 'Already fixed together' };
-    // onto one of several selected things: to each of them
+    // onto one of several selected things: to each of them (a switch wired to every
+    // thruster at once, a rope to each crate). Not a weld, a hinge or a pin: from one
+    // point to the middle of everything selected, that would fix a part rigidly to all
+    // of a build (still selected from moving it, say) where a broken joint was being mended
     const ent = b.part.entity;
     const sel = c.selection;
     const out: Anchor[] = [b];
-    if (from && sel.size > 1 && sel.has(ent)) {
+    if (from && sel.size > 1 && sel.has(ent) && !RIGID_KINDS.has(p.kind)) {
       for (const e of sel) {
         if (e === ent || e.destroyed || e === from.entity) continue;
         const t = this.like(b, e, p.kind);

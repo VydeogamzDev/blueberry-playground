@@ -854,7 +854,7 @@ export class Controls {
 
     game.preStepHandlers.push((dt) => this.preStep(dt));
     game.postStepHandlers.push(() => this.offerHeld());
-    game.frameHandlers.push((dt) => this.frame(dt));
+    game.frameHandlers.push((dt, alpha) => this.frame(dt, alpha));
     game.origin.listeners.push((dx, dy) => this.shift(dx, dy));
     game.hooks.onEntityRemoved = (e) => {
       this.selection.delete(e);
@@ -1712,8 +1712,9 @@ export class Controls {
     const r = this.game.renderer;
     const v = Math.hypot(p.vx, p.vy);
     const k = Math.min(1, dt * 4);
-    r.camX += (p.x + p.vx * 0.35 - r.camX) * k;
-    r.camY += (p.y + p.vy * 0.35 - r.camY) * k;
+    const a = this.alpha;
+    r.camX += (p.px + (p.x - p.px) * a + p.vx * 0.35 - r.camX) * k;
+    r.camY += (p.py + (p.y - p.py) * a + p.vy * 0.35 - r.camY) * k;
     const base = (this.chaseZoom ??= r.zoom);
     const want = base / (1 + v / 25);
     const z = r.zoom + (want - r.zoom) * Math.min(1, dt * 1.5);
@@ -1722,32 +1723,56 @@ export class Controls {
     r.clampCamera();
   }
 
-  private keepInView(list: Entity[], dt: number): void {
-    const r = this.game.renderer;
-    let cx = 0;
-    let cy = 0;
+  /**
+   * Where these are drawn this frame, all together (their middle), and how fast they go:
+   * between physics steps, as their sprites are (see Part.render()). Followed where they
+   * were at the end of the step instead, something fast jerked back and forth on screen
+   * by up to a step's travel (3 m a step at the speed of sound) as the frames fell between steps.
+   */
+  private drawnMiddle(list: Entity[]): { x: number; y: number; vx: number; vy: number } {
+    const a = this.alpha;
+    let x = 0;
+    let y = 0;
     let vx = 0;
     let vy = 0;
     for (const e of list) {
       const c = e.center();
-      cx += c.x / list.length;
-      cy += c.y / list.length;
       const p = e.parts.find((q) => !q.destroyed);
+      x += (c.x - (p ? (1 - a) * (p.x - p.px) : 0)) / list.length;
+      y += (c.y - (p ? (1 - a) * (p.y - p.py) : 0)) / list.length;
       if (p) {
         vx += p.vx / list.length;
         vy += p.vy / list.length;
       }
     }
-    const k = Math.min(1, dt * 3);
-    const dx = cx - r.camX;
-    const dy = cy - r.camY;
-    const mx = (r.viewWidth / r.zoom) * 0.25;
-    const my = (r.height / r.zoom) * 0.25;
+    return { x, y, vx, vy };
+  }
+
+  private keepInView(list: Entity[], dt: number): void {
+    const r = this.game.renderer;
+    const m = this.drawnMiddle(list);
+    const w = r.viewWidth / r.zoom;
+    const h = r.height / r.zoom;
+    // (slow, it may wander a quarter of the view from the middle before the camera goes after
+    // it; fast, it's kept to the middle, the camera going along at its speed, and looking a
+    // little ahead of it, to see where it's going: a rocket climbing ever faster was off the
+    // top of the screen)
+    const fast = clamp((Math.hypot(m.vx, m.vy) - 15) / 25, 0, 1);
+    r.camX += m.vx * dt * fast;
+    r.camY += m.vy * dt * fast;
+    const tx = m.x + clamp(m.vx * 0.15, -w * 0.18, w * 0.18) * fast;
+    const ty = m.y + clamp(m.vy * 0.15, -h * 0.18, h * 0.18) * fast;
+    const k = Math.min(1, dt * (3 + 5 * fast));
+    const dx = tx - r.camX;
+    const dy = ty - r.camY;
+    const mx = w * 0.25 * (1 - fast);
+    const my = h * 0.25 * (1 - fast);
     // (past the margin and going on out, the camera goes with it as well as closing in: easing
     // in alone, it trailed a third of a second's travel behind, and a craft climbing at 15 m/s
     // was off a phone's screen)
-    if (Math.abs(dx) > mx) r.camX += (dx - Math.sign(dx) * mx) * k + (vx * dx > 0 ? vx * dt : 0);
-    if (Math.abs(dy) > my) r.camY += (dy - Math.sign(dy) * my) * k + (vy * dy > 0 ? vy * dt : 0);
+    const slow = 1 - fast;
+    if (Math.abs(dx) > mx) r.camX += (dx - Math.sign(dx) * mx) * k + (m.vx * dx > 0 ? m.vx * dt * slow : 0);
+    if (Math.abs(dy) > my) r.camY += (dy - Math.sign(dy) * my) * k + (m.vy * dy > 0 ? m.vy * dt * slow : 0);
     r.clampCamera();
   }
 
@@ -2652,7 +2677,11 @@ export class Controls {
     // and put on a side, all of them picked (see Teams)
     if (!this.net) acts.push(...teamActions(list, () => this.history.record('Set team')));
     // (engines, decouplers, chutes: the stage they fire in when flown, Enter firing the next)
-    if (!multi && e.stageable) acts.push(...(this.net ? this.forHost(e, [stageAction(e)]) : [stageAction(e)]));
+    if (e.stageable) {
+      // (several selected: all of them to the same stage, ten engines at once)
+      const also = multi ? [...this.selection].filter((x) => x !== e && x.stageable && !x.destroyed) : [];
+      if (!multi || also.length) acts.push(...(this.net ? this.forHost(e, [stageAction(e)]) : [stageAction(e, also)]));
+    }
     if (!multi) acts.push(...(this.net ? this.forHost(e, e.contextActions(part), part) : e.contextActions(part)));
     this.ui.openContextMenu(this.sx, this.sy, multi ? `${list.length} objects` : e.label, acts);
     this.menuFor = list;
@@ -3162,7 +3191,11 @@ export class Controls {
 
   // ---- per-frame ----------------------------------------------------------------
 
-  private frame(dt: number): void {
+  /** How far between physics steps this frame's sprites are drawn (see Part.render()): what the camera follows is where it's drawn. */
+  private alpha = 1;
+
+  private frame(dt: number, alpha = 1): void {
+    this.alpha = alpha;
     const r = this.game.renderer;
     // keyboard panning (were the drive keys bound to the camera's, with vehicles selected those would drive them instead, and
     // with tanks, the aim keys' aim them; with Alt, time paused and something selected, the arrows nudge it instead)
@@ -3195,16 +3228,14 @@ export class Controls {
       const live = this.follow.filter((e) => !e.destroyed);
       if (!live.length) this.follow = null;
       else {
-        let cx = 0;
-        let cy = 0;
-        for (const e of live) {
-          const c = e.center();
-          cx += c.x / live.length;
-          cy += c.y / live.length;
-        }
+        // (going along at its speed, then closing in: easing in alone, it trailed a sixth of a
+        // second's travel behind, 60 m and more for a rocket, off the top of the screen)
+        const m = this.drawnMiddle(live);
+        r.camX += m.vx * dt;
+        r.camY += m.vy * dt;
         const k = Math.min(1, dt * 6);
-        r.camX += (cx - r.camX) * k;
-        r.camY += (cy - r.camY) * k;
+        r.camX += (m.x - r.camX) * k;
+        r.camY += (m.y - r.camY) * k;
         r.clampCamera();
       }
     }

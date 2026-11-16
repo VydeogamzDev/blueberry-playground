@@ -4,6 +4,38 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.4.2 — 2026-11-15
+
+Rockets that stage themselves, decouplers any size, a camera that keeps up with fast things without shaking,
+and welds that join only what they're made on.
+
+### Changes
+
+- A build with decouplers stages itself when flown, unless you've set stages by hand: the engines furthest from
+  the cockpit run from the start, and each decoupler fires together with the engines of the piece it leaves
+  you on. So a two-stage rocket climbs on its lower engines, and Enter drops them and lights the upper ones.
+- F on a cockpit fires its build's next stage, as Enter does while flying it.
+- A decoupler fires when power comes on to it (a switch, a lever), as well as on a pulse.
+- Decouplers can be made any size with their handles.
+- The Stage item in the menu sets every selected part's stage at once (it was only offered with one thing
+  selected), and says when a stage was worked out for you ("auto").
+
+### Fixes
+
+- The camera no longer shakes following something fast. It followed where things were at the end of each
+  physics step, not where they're drawn between steps, so past the speed of sound a rocket juddered back and
+  forth by metres a frame on a fast screen.
+- The camera keeps a fast craft in view. Following one, it trailed a sixth of a second behind (60 m and more
+  for a rocket, off the top of the screen); keeping a flown craft in view, it let it ride a quarter of the
+  screen out. Now, moving fast, it goes along at the craft's speed with the craft a little behind the middle,
+  so you see where it's going.
+
+- A weld, hinge or pin made onto one of several selected things joins just the part it's made on. It used
+  to join every selected thing too, at its middle: mending a broken joint on a build still selected welded
+  that spot to the whole build. (Wires, ropes, springs and fuses still go to each selected thing.)
+- The tutorial card moves out from over the flight readout (below it, or above it on a phone) while something's
+  flown, and the flight tour no longer calls the readout "at the bottom".
+
 ## 0.4.1 — 2026-11-15
 
 The World as the starting map and the tutorials' home, puddles on it, and a clearer x-ray.

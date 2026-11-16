@@ -138,6 +138,8 @@ export interface EntityState {
   /** Its stage, and whether it's been fired (see Entity.stage). */
   stage?: number;
   staged?: boolean;
+  /** Its stage was worked out for it (see Piloting.autoStage()), not set by hand. */
+  autoStage?: boolean;
   /** Which entity it was (undo's own captures only, never saved: see History). */
   uid?: number;
 }
