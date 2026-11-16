@@ -15,7 +15,7 @@ import type { ContextAction, ImpactInfo, ItemDef, SpawnOptions } from '../world/
 import type { V2 } from '../engine/math';
 import type { EditField, ValueEditor } from '../tools/Controls';
 import { BURN } from '../systems/Fuel';
-import { engineLevel, jobAction, pilotState, restorePilot, type Engine, type Job } from '../systems/Piloting';
+import { engineLevel, jobAction, pilotState, restorePilot, startedByHand, type Engine, type Job } from '../systems/Piloting';
 
 /** A machine that runs while switched on by hand or while powered (thrusters, lamps, motors, pistons, timers). */
 export interface HandSwitched {
@@ -337,6 +337,8 @@ export class Thruster extends Prop implements HandSwitched, Engine {
       this.pilotT = 0;
     }
     toggleRun(this, this.running, this.powered);
+    // (switched on by hand, it doesn't wait for its stage: see startedByHand())
+    if (this.running) startedByHand(this);
     this.game.sound.click(this.main.x, 0.9);
   }
 
@@ -355,6 +357,7 @@ export class Thruster extends Prop implements HandSwitched, Engine {
   setPowered(on: boolean): void {
     super.setPowered(on);
     if (!on) this.heldOff = false;
+    else startedByHand(this);
   }
 
   canRest(): boolean {

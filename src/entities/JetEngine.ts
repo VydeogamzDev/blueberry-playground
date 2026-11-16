@@ -3,7 +3,7 @@ import { GROUP, PX, groups } from '../engine/constants';
 import { Prop, type PropConfig } from './Prop';
 import { toggleRun, setting, settingField, type HandSwitched } from './Machines';
 import { BURN } from '../systems/Fuel';
-import { AIR_GONE, engineLevel, jobAction, pilotState, restorePilot, type Engine, type Job } from '../systems/Piloting';
+import { AIR_GONE, engineLevel, jobAction, pilotState, restorePilot, startedByHand, type Engine, type Job } from '../systems/Piloting';
 import type { ValueEditor } from '../tools/Controls';
 import { PK } from '../systems/Particles';
 import { jetEngineArt, JET_INTAKE, JET_NOZZLE } from '../art/floats';
@@ -141,6 +141,8 @@ export class JetEngine extends Prop implements HandSwitched, Engine {
       this.pilotT = 0;
     }
     toggleRun(this, this.running, this.powered);
+    // (switched on by hand, it doesn't wait for its stage: see startedByHand())
+    if (this.running) startedByHand(this);
     this.game.sound.click(this.main.x, 0.8);
   }
 
@@ -159,6 +161,7 @@ export class JetEngine extends Prop implements HandSwitched, Engine {
   setPowered(on: boolean): void {
     super.setPowered(on);
     if (!on) this.heldOff = false;
+    else startedByHand(this);
   }
 
   canRest(): boolean {

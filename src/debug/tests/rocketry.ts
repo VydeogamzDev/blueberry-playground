@@ -224,6 +224,79 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       if (!big.def.resizable || big.parts[0].w !== 72 || big.parts[0].h !== 8) return `a decoupler made 72 × 8 is ${big.parts[0].w} × ${big.parts[0].h} (resizable: ${big.def.resizable})`;
       return true;
     }],
+    ['extra: rocketry: staged by hand, the bottom engines burn before the decoupler over them drops them; W lights a first stage of engines; F or a wire lights a staged engine (0.4.3)', () => {
+      kit.reset();
+      game.fuel.mode = 'normal';
+      const low = [-0.5, 0, 0.5].map((x) => kit.spawn('thruster', x, 0.23, { angle: Math.PI / 2 }) as Thruster);
+      const bar = kit.spawn('short-beam', 0, 0.54);
+      const dec = kit.spawn('decoupler', 0, 0.71) as Decoupler;
+      const beam = kit.spawn('beam', 0, 0.88);
+      const up = [-1.3, 1.3].map((x) => kit.spawn('thruster', x, 0.565, { angle: Math.PI / 2 }) as Thruster);
+      const seat = kit.spawn('cockpit', 0, 1.35);
+      kit.advance(0.2);
+      for (const t of low) weld(bar, t, { x: t.main.x, y: 0.46 });
+      weld(bar, dec, { x: 0, y: 0.64 });
+      weld(dec, beam, { x: 0, y: 0.8 });
+      for (const t of up) weld(beam, t, { x: t.main.x, y: 0.8 });
+      weld(beam, seat, { x: 0, y: 0.95 });
+      // (the bottom engines given the decoupler's stage, the top ones the next: as a player set them)
+      for (const t of low) t.stage = 1;
+      dec.stage = 1;
+      for (const t of up) t.stage = 2;
+      controls.selection = new Set([seat]);
+      kit.advance(0.2);
+      if (low.some((t) => t.stage !== 1) || dec.stage !== 1 || up.some((t) => t.stage !== 2)) return 'stages set by hand were changed';
+      hold('KeyW', 1);
+      if (dec.fired) return 'the throttle fired the decoupler';
+      if (low.some((t) => lit(t) <= 0)) return 'on the throttle, the bottom engines (the decoupler’s stage) don’t push till they’re dropped';
+      if (up.some((t) => lit(t) > 0)) return 'on the throttle, the top engines push before their stage';
+      let hud = game.piloting.hudOf([seat]);
+      if (hud?.stageNext !== 1 || hud.stages !== 2) return `its readout says next stage ${hud?.stageNext} of ${hud?.stages}`;
+      tap('Enter');
+      if (!dec.fired) return 'Enter didn’t fire the decoupler';
+      kit.advance(0.2);
+      if (up.some((t) => lit(t) > 0)) return 'the decoupler fired, the top engines push before their stage (2)';
+      hud = game.piloting.hudOf([seat]);
+      if (hud?.stageNext !== 2) return `the decoupler fired, the readout says next stage ${hud?.stageNext}`;
+      tap('Enter');
+      kit.advance(0.5);
+      if (up.some((t) => lit(t) <= 0)) return 'the second stage fired, the top engines don’t push';
+      // one stage, set by hand on its engine: W lights it (it lets nothing go)
+      kit.reset();
+      const plank = kit.spawn('plank', 0, 0.54);
+      const t1 = kit.spawn('thruster', 0, 0.23, { angle: Math.PI / 2 }) as Thruster;
+      const s1 = kit.spawn('cockpit', 0, 0.95);
+      kit.advance(0.1);
+      weld(plank, t1, { x: 0, y: 0.46 });
+      weld(plank, s1, { x: 0, y: 0.62 });
+      t1.stage = 2;
+      controls.selection = new Set([s1]);
+      kit.advance(0.1);
+      hold('KeyW', 1);
+      if (!t1.staged || lit(t1) <= 0) return 'W on a craft whose only engine waits for stage 2 didn’t light it';
+      hud = game.piloting.hudOf([s1]);
+      if (hud?.stageNext !== 0) return `its stage lit, the readout says next stage ${hud?.stageNext}`;
+      controls.selection = new Set();
+      // not flown: F on a staged engine lights it, and so does power down a wire
+      kit.reset();
+      const t2 = kit.spawn('thruster', -3, 0.3, { angle: Math.PI / 2 }) as Thruster;
+      const t3 = kit.spawn('thruster', 3, 0.3, { angle: Math.PI / 2 }) as Thruster;
+      const sw = kit.spawn('switch', 5, 0.3);
+      kit.advance(0.1);
+      t2.stage = 1;
+      t3.stage = 1;
+      C.create('wire', sw.parts[0], { x: 5, y: 0.3 }, t3.parts[0], { x: 3, y: 0.3 });
+      t2.activate();
+      kit.advance(0.1);
+      if ((sw as unknown as { on: boolean }).on) sw.activate();
+      kit.advance(0.1);
+      if (lit(t3) > 0) return 'staged, wired to a switch that’s off, the thruster pushes';
+      sw.activate();
+      kit.advance(0.2);
+      if (lit(t2) <= 0) return 'staged, F on the thruster doesn’t light it';
+      if (lit(t3) <= 0) return 'staged, power switched on down its wire doesn’t light the thruster';
+      return true;
+    }],
     ['extra: rocketry: a parachute opened slows a falling tank to a gentle landing; opened at 120 m/s it tears', () => {
       kit.reset();
       const tank = kit.spawn('fuel-tank', 0, 40) as FuelTank;

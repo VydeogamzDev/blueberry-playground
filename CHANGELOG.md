@@ -4,6 +4,25 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.4.3 — 2026-11-16
+
+Staged rockets that light their first stage, and staged engines that start when you switch them on.
+
+### Fixes
+
+- A rocket's bottom engines run before the decoupler above them drops them. Given that decoupler's stage (or a
+  later one) by hand, they waited until it fired, so a staged rocket never left the pad and its first-stage
+  engines only lit as they fell away. An engine a decoupler lets go of now fires in the stage before it at the
+  latest.
+- W lights a craft's first stage when all its engines are waiting for stages and that stage drops nothing. The
+  readout said "throttle 100%, 0 running" until you pressed Enter; now, if the engines are still waiting, it
+  says to press Enter.
+- An engine with a stage starts when you switch it on (F) or power comes to it down a wire. It waited for its
+  stage all the same, so it did nothing, with nothing to say why.
+- The readout's stage count goes by the highest stage, not how many different stages there are (stages 1 and 3
+  read "3 of 2").
+- A build with decouplers but no cockpit counts its stages from its highest part.
+
 ## 0.4.2 — 2026-11-15
 
 Rockets that stage themselves, decouplers any size, a camera that keeps up with fast things without shaking,

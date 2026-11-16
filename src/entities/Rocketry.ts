@@ -8,7 +8,7 @@ import { Human } from './Human';
 import { PK } from '../systems/Particles';
 import { Liquid } from '../systems/Liquids';
 import type { FuelStore } from '../systems/Fuel';
-import { engineLevel, isEngine, type Commanded, type PilotCommand, type Swiveller } from '../systems/Piloting';
+import { engineLevel, isEngine, startedByHand, type Commanded, type PilotCommand, type Swiveller } from '../systems/Piloting';
 import { getItem } from '../catalog/items';
 import { MAT } from '../world/Materials';
 import * as R from '../art/rocketry';
@@ -776,6 +776,7 @@ export class SolidBooster extends Thruster {
     if (this.ignited || this.grain <= 0) return;
     this.ignited = true;
     this.on = true;
+    startedByHand(this);
     this.game.sound.play('explosion/firework_launch', { gain: 0.6, x: this.main.x });
   }
 
@@ -790,7 +791,7 @@ export class SolidBooster extends Thruster {
   }
 
   protected level(): number {
-    if (!this.ignited && this.pilotOut !== null && this.pilotOut > 0.05 && (this.stage === 0 || this.staged)) this.activate();
+    if (!this.ignited && this.pilotOut !== null && this.pilotOut > 0.05 && !this.game.piloting.held(this)) this.activate();
     return this.running ? 1 : 0;
   }
 

@@ -2246,7 +2246,8 @@ export function dashboardText(hud: PilotHud, key: (id: ActionId) => string): str
   const k = (id: ActionId) => key(id) || '—';
   if (hud.fuelCap) out.push(`fuel ${Math.round(((hud.fuel ?? 0) / hud.fuelCap) * 100)}% (${Math.round(hud.fuel ?? 0)} kg)`);
   if (kind === 'rocket' || hud.stages) {
-    if (hud.stages) out.push(hud.stageNext ? `next stage ${hud.stageNext} of ${hud.stages} [${k('stage')}]` : 'all stages fired');
+    // (the throttle open and nothing running: the engines wait for a stage, and it says so)
+    if (hud.stages) out.push(!hud.stageNext ? 'all stages fired' : hud.throttle > 0.02 && hud.engines > 0 && hud.running === 0 && !hud.noFuel && !hud.noAir ?`engines wait for stage ${hud.stageNext}: press ${k('stage')}` : `next stage ${hud.stageNext} of ${hud.stages} [${k('stage')}]`);
     if (hud.peri !== undefined && hud.peri > 0) out.push(hud.peri === Infinity ? 'escaping the planet' : `in orbit ${altText(hud.peri)} to ${altText(hud.apo ?? hud.peri)}`);
     else if (hud.apo !== undefined && hud.climb > 1) out.push(`top ${hud.apo === Infinity ? '∞' : altText(hud.apo)}`);
   }

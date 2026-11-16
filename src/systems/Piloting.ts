@@ -88,10 +88,19 @@ export function restorePilot(e: Engine, x: Record<string, unknown>): void {
  * throttle lever's: see Entity.powerLevel).
  */
 export function engineLevel(e: Entity & Engine, on: boolean): number {
-  // (given a stage, it waits for it: see Entity.stage)
-  if (e.stage > 0 && !e.staged) return 0;
+  // (given a stage, it waits for it: see Entity.stage, Piloting.held())
+  if (e.game.piloting.held(e)) return 0;
   if (e.pilotOut !== null) return Math.abs(e.pilotOut);
   return on ? 1 : e.powered ? e.powerLevel : 0;
+}
+
+/**
+ * An engine with a stage switched on by hand (F) or by power down its wires (0.4.3): its
+ * stage is as good as fired, for it. Before, it waited for its stage all the same, and
+ * F on it, or a switch wired to it, did nothing that could be seen.
+ */
+export function startedByHand(e: Entity): void {
+  if (e.stage > 0 && !e.staged) e.staged = true;
 }
 
 export function isEngine(e: Entity): e is Entity & Engine {
@@ -354,6 +363,8 @@ const NO_KEYS: PilotInput = { x: 0, t: 0, r: 0 };
 const REMIX = 0.5;
 /** How often (s) a craft's make-up is looked over again (something welded on or cut off). */
 const REMAKE = 1;
+/** How often (s) what lets go of an engine (see Piloting.droppedAt()) is looked for again. */
+const DROP_RELOOK = 0.5;
 /**
  * How far off the centre of mass an engine's push passes to turn it (see remix()): this
  * share of the build's size, but never more than TURNS_MAX (m). A tall rocket's jets side
@@ -374,9 +385,47 @@ const ASSIST = { rate: 0.9, k: 1.6, d: 2.5, dead: 0.04, tau: 0.25 };
 export class Piloting {
   private game: Game;
   private crafts: Craft[] = [];
+  /** For each engine looked at (see droppedAt()): when, and the stage that lets go of it. */
+  private drops = new WeakMap<Entity, { at: number; k: number }>();
 
   constructor(game: Game) {
     this.game = game;
+  }
+
+  /**
+   * Is the engine `e` waiting for its stage (see Entity.stage)? It waits for the stage it
+   * fires in (see firesIn()), till that's fired, or it's switched on by hand (see startedByHand()).
+   */
+  held(e: Entity): boolean {
+    return e.stage > 0 && !e.staged && this.firesIn(e) > 0;
+  }
+
+  /**
+   * The stage `e` fires in: its own; but an engine a decoupler lets go of (one of the stages
+   * that comes off) is burning before that, in the stage before the decoupler's at the
+   * latest. Before 0.4.3, the bottom engines of a rocket staged by hand, given the stage of
+   * the decoupler over them (or one after it), waited till they were dropped to light.
+   */
+  firesIn(e: Entity): number {
+    if (e.stage <= 0 || !isEngine(e)) return e.stage;
+    const k = this.droppedAt(e);
+    return k > 0 ? Math.min(e.stage, k - 1) : e.stage;
+  }
+
+  /**
+   * The stage (not yet fired) that first lets go of `e` from its build's cockpit: the lowest
+   * stage of the decouplers between them (0: none does). Looked for now and then (see DROP_RELOOK).
+   */
+  private droppedAt(e: Entity): number {
+    const now = this.game.time;
+    const c = this.drops.get(e);
+    if (c && now - c.at < DROP_RELOOK && now >= c.at) return c.k;
+    const ents = this.game.connections.assemblyOf([e]);
+    const lay = this.layout(ents);
+    for (const x of ents) if (isEngine(x)) this.drops.set(x, { at: now, k: lay?.drop.get(x) ?? 0 });
+    const k = lay?.drop.get(e) ?? 0;
+    this.drops.set(e, { at: now, k });
+    return k;
   }
 
   /** The craft these are (part of), if it has anything to pilot: found, or put together. */
@@ -496,6 +545,8 @@ export class Piloting {
     const { x, t, r } = input;
     // (the pilot's hand on the throttle or the turn takes it off autopilot)
     if (c.auto && (t || r)) c.auto = null;
+    // (W on a craft whose engines all wait for stages: the first lights)
+    if (t > 0 && !c.auto) this.launch(c);
     let T = (c.T = Math.min(1, Math.max(0, c.T + t * T_RATE * dt)));
     if (c.auto) {
       // autopilot: climb (or sink) toward the height it holds, no faster than AUTO_CLIMB,
@@ -709,8 +760,36 @@ export class Piloting {
       e.stage = 0;
       e.autoStaged = false;
     }
+    const lay = this.layout(live);
+    if (!lay || !lay.far) return;
+    const { piece, level, tops, far } = lay;
+    const give = (e: Entity, stage: number) => {
+      if (stage <= 0 || stage > 9 || !e.stageable) return;
+      e.stage = stage;
+      e.staged = false;
+      e.autoStaged = true;
+    };
+    for (const e of live) {
+      const l = level.get(piece.get(e)!);
+      if (l !== undefined && isEngine(e)) give(e, far - l);
+    }
+    for (const [d, up] of tops) {
+      const ls = [piece.get(d)!, ...up.map((t) => piece.get(t)!)].map((p) => level.get(p)).filter((l): l is number => l !== undefined);
+      if (ls.length) give(d, far - Math.min(...ls));
+    }
+  }
+
+  /**
+   * How a build comes apart (see autoStage(), droppedAt()), or null with no decoupler in
+   * it: the pieces left were each decoupler to let go (of what's fixed to its top side, see
+   * Decoupler.release()); each piece's level, how many decouplers from the cockpit's piece
+   * (no cockpit: the piece of its highest part); the furthest; and for each thing in it,
+   * the lowest stage of the decouplers not yet fired between it and the cockpit (0: none).
+   */
+  private layout(ents: readonly Entity[]): { piece: Map<Entity, number>; level: Map<number, number>; tops: Map<Entity, Entity[]>; far: number; drop: Map<Entity, number> } | null {
+    const live = ents.filter((e) => !e.destroyed);
     const decs = live.filter((e) => isDecoupler(e) && !e.fired);
-    if (!decs.length) return;
+    if (!decs.length) return null;
     const C = this.game.connections;
     const PHYSICAL = new Set(['rope', 'weld', 'spring', 'hinge', 'pin', 'fuse']);
     // what each decoupler lets go of: what's fixed to its top side
@@ -748,61 +827,82 @@ export class Piloting {
       }
       n++;
     }
-    // counted off from the cockpit's piece (no cockpit: the top-most piece's, a decoupler's top side)
+    // counted off from the cockpit's piece (no cockpit: the piece of the highest thing in it)
     const cockpit = live.find((e) => (e as { cockpit?: boolean }).cockpit);
-    const home = cockpit ? piece.get(cockpit)! : piece.get(tops.get(decs[0])![0] ?? decs[0])!;
+    let top = live[0];
+    for (const e of live) if (e.parts[0] && top.parts[0] && e.parts[0].y > top.parts[0].y) top = e;
+    const home = piece.get(cockpit ?? top)!;
+    // (each link: the pieces either side of a decoupler, and the stage it fires in, if it has one)
+    const links: [number, number, number][] = [];
+    for (const d of decs) for (const t of tops.get(d)!) links.push([piece.get(d)!, piece.get(t)!, d.stage]);
     const level = new Map<number, number>([[home, 0]]);
-    const links: [number, number][] = [];
-    for (const d of decs) for (const t of tops.get(d)!) links.push([piece.get(d)!, piece.get(t)!]);
-    for (let changed = true; changed; ) {
-      changed = false;
-      for (const [a, b] of links) {
-        const la = level.get(a);
-        const lb = level.get(b);
-        if (la !== undefined && (lb === undefined || lb > la + 1)) {
-          level.set(b, la + 1);
-          changed = true;
-        }
-        if (lb !== undefined && (la === undefined || la > lb + 1)) {
-          level.set(a, lb + 1);
-          changed = true;
+    const drop = new Map<number, number>([[home, Infinity]]);
+    for (let q = [home]; q.length; ) {
+      const next: number[] = [];
+      for (const at of q) {
+        for (const [a, b, st] of links) {
+          const to = a === at ? b : b === at ? a : -1;
+          if (to < 0 || level.has(to)) continue;
+          level.set(to, level.get(at)! + 1);
+          drop.set(to, Math.min(drop.get(at)!, st > 0 ? st : Infinity));
+          next.push(to);
         }
       }
+      q = next;
     }
     let far = 0;
     for (const l of level.values()) far = Math.max(far, l);
-    if (!far) return;
-    const give = (e: Entity, stage: number) => {
-      if (stage <= 0 || stage > 9 || !e.stageable) return;
-      e.stage = stage;
-      e.staged = false;
-      e.autoStaged = true;
-    };
+    const dropOf = new Map<Entity, number>();
     for (const e of live) {
-      const l = level.get(piece.get(e)!);
-      if (l !== undefined && isEngine(e)) give(e, far - l);
+      const k = drop.get(piece.get(e)!);
+      dropOf.set(e, k !== undefined && Number.isFinite(k) ? k : 0);
     }
-    for (const d of decs) {
-      const ls = [piece.get(d)!, ...tops.get(d)!.map((t) => piece.get(t)!)].map((p) => level.get(p)).filter((l): l is number => l !== undefined);
-      if (ls.length) give(d, far - Math.min(...ls));
-    }
+    return { piece, level, tops, far, drop: dropOf };
   }
 
   /** Fires the craft's next stage (see Entity.stage): false if none is left. */
   private stage(c: Craft): boolean {
     const next = this.nextStage(c.ents);
     if (!next) return false;
-    for (const e of c.ents) if (!e.destroyed && e.stage === next && !e.staged) e.fireStage();
+    for (const e of c.ents) {
+      if (e.destroyed || e.stage <= 0 || e.staged) continue;
+      // (an engine let go of in this stage was burning already, or never lit: it's done with)
+      const at = this.firesIn(e);
+      if (at === next) e.fireStage();
+      else if (at < next) e.staged = true;
+    }
     // (a stage let go: what's flown is what's held together now)
     c.madeAt = -Infinity;
     return true;
   }
 
-  /** The lowest stage number among these not yet fired (0: none). */
+  /** The lowest stage among these not yet fired, as they fire (see firesIn(); 0: none). */
   private nextStage(ents: readonly Entity[]): number {
     let next = 0;
-    for (const e of ents) if (!e.destroyed && e.stage > 0 && !e.staged && (!next || e.stage < next)) next = e.stage;
+    for (const e of ents) {
+      if (e.destroyed || e.stage <= 0 || e.staged) continue;
+      const at = this.firesIn(e);
+      if (at > 0 && (!next || at < next)) next = at;
+    }
     return next;
+  }
+
+  /**
+   * The throttle opened on a craft none of whose engines can run, all waiting for stages
+   * (0.4.3): the next stage fires, if it lights engines and lets nothing go. Before, W did
+   * nothing until Enter, and nothing said why.
+   */
+  private launch(c: Craft): void {
+    for (const e of c.engines) if (!e.destroyed && e.job !== 'wire' && !this.held(e)) return;
+    const next = this.nextStage(c.ents);
+    if (!next) return;
+    let engines = false;
+    for (const e of c.ents) {
+      if (e.destroyed || e.stage <= 0 || e.staged || this.firesIn(e) !== next) continue;
+      if (isDecoupler(e)) return;
+      if (isEngine(e)) engines = true;
+    }
+    if (engines) this.stage(c);
   }
 
   /** Is the autopilot on for the craft these are part of? */
@@ -945,7 +1045,7 @@ export class Piloting {
       n++;
       T = Math.max(T, e.pilotT);
       if ((e.pilotOut ?? 0) === 0 && !(e as { on?: boolean }).on) continue;
-      if (e.stage > 0 && !e.staged) continue;
+      if (this.held(e)) continue;
       if (e.starved) noAir++;
       else if ((e as { dry?: boolean }).dry) noFuel++;
       else running++;
@@ -955,12 +1055,9 @@ export class Piloting {
     const height = g.env.world ? p.y - g.env.groundAt(p.x, p.y) : p.y - WORLD.floor;
     const fixed = g.connections.fixedOf(c.ents).length > 0;
     const tank = g.fuel.levelOf(c.ents);
+    // (its stages: as many as the highest numbered; counted, stages 1 and 3 read "3 of 2")
     let stages = 0;
-    const seen = new Set<number>();
-    for (const e of c.ents) if (!e.destroyed && e.stage > 0 && !seen.has(e.stage)) {
-      seen.add(e.stage);
-      stages++;
-    }
+    for (const e of c.ents) if (!e.destroyed) stages = Math.max(stages, e.stage);
     const next = this.nextStage(c.ents);
     // what it is, for its dashboard
     const wing = c.ents.find((e) => !e.destroyed && typeof (e as { aoa?: number }).aoa === 'number') as { aoa: number; stalled: boolean } | undefined;
