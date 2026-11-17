@@ -1210,10 +1210,10 @@ const ropeKnot = (t: Tutorial, e: Entity | null): Entity | V2 | null => {
 const drag = (t: Tutorial) => (t.touch ? 'drag your finger' : 'drag');
 const clickTap = (t: Tutorial) => (t.touch ? 'tap' : 'click');
 /** The rocket's pieces (see the steps from "rocket" on). */
-const rocket = (t: Tutorial) => ({ beam: t.ref('beam'), left: t.ref('thrusterL'), right: t.ref('thrusterR'), lever: t.ref('lever') });
+const rocket = (t: Tutorial) => ({ beam: t.ref('beam'), left: t.ref('thrusterL'), right: t.ref('thrusterR'), lever: t.ref('lever'), tank: t.ref('rocketTank') });
 const rocketParts = (t: Tutorial): Entity[] => {
   const r = rocket(t);
-  return [r.beam, r.left, r.right, r.lever].filter((e): e is Entity => !!e);
+  return [r.beam, r.left, r.right, r.lever, r.tank].filter((e): e is Entity => !!e);
 };
 /** Where the view goes along with the rocket in flight (null: it's still). */
 const rocketView = (t: Tutorial): V2 | null => {
@@ -1399,7 +1399,7 @@ export const BUILDING: TutorialStep[] = [
     id: 'rocket',
     title: 'Now: a rocket',
     text: () =>
-      'All together now. Here are two <b>thrusters</b> (pointing up), a <b>beam</b> resting on them and a <b>switch</b>. ' +
+      'All together now. Here are two <b>thrusters</b> (pointing up), a <b>beam</b> resting on them with a <b>fuel tank</b> welded on top (thrusters burn fuel), and a <b>switch</b>. ' +
       'You’ll join them up, wire them, give it a pilot and fly it.',
     setup: (t) => {
       // a clean floor to build on (Ctrl+Z brings back what was here)
@@ -1410,7 +1410,16 @@ export const BUILDING: TutorialStep[] = [
       const x = t.game.renderer.camX;
       t.keep('thrusterL', t.put('thruster', x - 0.6, { angle: Math.PI / 2 }));
       t.keep('thrusterR', t.put('thruster', x + 0.6, { angle: Math.PI / 2 }));
-      t.keep('beam', t.put('short-beam', x, { dy: 0.5 }));
+      // (the beam just over the thrusters (0.44 m stood up), the tank stood on its middle: lying
+      // down, its fuel lay to one side and the little rocket tipped over)
+      const beam = t.keep('beam', t.put('short-beam', x, { dy: 0.44 }));
+      const tank = t.keep('rocketTank', t.put('fuel-tank', x, { dy: 0.64 }));
+      if (beam && tank) {
+        const at = { x, y: FLOOR + 0.64 };
+        t.game.connections.create('weld', tank.parts[0], at, beam.parts[0], at);
+        // (a little fuel, enough to lift off: full, it weighed the little rocket down and it tipped over)
+        (tank as Entity & { take?(kg: number): number }).take?.(28);
+      }
       t.keep('lever', t.put('switch', x + 2.4));
     },
     info: 'Let’s go',
@@ -1459,7 +1468,8 @@ export const BUILDING: TutorialStep[] = [
         // stood on top of the beam first
         const b = r.beam.center();
         const l = r.lever.center();
-        r.lever.translate(b.x + 0.3 - l.x, b.y + 0.35 - l.y);
+        // (beside the tank)
+        r.lever.translate(b.x + 0.42 - l.x, b.y + 0.35 - l.y);
         r.lever.setVelocity(0, 0);
         join(t, 'weld', r.lever, r.beam);
       }
@@ -3326,7 +3336,8 @@ const selectFirst = (t: Tutorial, e: Entity | null) => (e && !t.controls.selecti
 
 /**
  * The flight tour's craft: a plank on a thruster at each end (under it, pushing up,
- * their flames at the floor: not into the plank) and a cockpit seat in the middle.
+ * their flames at the floor: not into the plank), a fuel tank lying under it between
+ * them, and a cockpit seat in the middle.
  */
 const craftOut = (t: Tutorial, x: number) => {
   // (a thruster stood on end is 0.44 m tall, the plank 0.16 m thick)
@@ -3334,6 +3345,10 @@ const craftOut = (t: Tutorial, x: number) => {
   const l = t.keep('craftL', putAt(t, 'thruster', x - 0.75, 0.23, { angle: Math.PI / 2 }));
   const r = t.keep('craftR', putAt(t, 'thruster', x + 0.75, 0.23, { angle: Math.PI / 2 }));
   const seat = t.keep('seat', putAt(t, 'cockpit', x, 0.99));
+  const tank = t.keep('craftTank', putAt(t, 'fuel-tank', x, 0.2, { angle: Math.PI / 2 }));
+  weldAt(t, plank, tank, x, 0.43);
+  // (enough for the tour, and no more to weigh it down)
+  (tank as (Entity & { take?(kg: number): number }) | null)?.take?.(20);
   weldAt(t, plank, l, x - 0.75, 0.47);
   weldAt(t, plank, r, x + 0.75, 0.47);
   weldAt(t, plank, seat, x, 0.6);
@@ -3646,8 +3661,11 @@ export const AIRSEA: TutorialStep[] = [
       const plank = t.keep('heli', putAt(t, 'plank', x, 0.3));
       const seat = t.keep('heliSeat', putAt(t, 'cockpit', x - 0.4, 0.75));
       const rotor = t.keep('rotor', putAt(t, 'heli-rotor', x + 0.4, 0.62));
+      // (its turbine's fuel: a tank stood on the plank's end)
+      const tank = t.keep('heliTank', putAt(t, 'fuel-tank', x + 0.86, 0.76));
       weldAt(t, plank, seat, x - 0.4, 0.35);
       weldAt(t, plank, rotor, x + 0.4, 0.35);
+      weldAt(t, plank, tank, x + 0.86, 0.37);
       t.memo.y = plank?.parts[0].y ?? 0;
     },
     done: (t) => (t.ref('heli')?.parts[0].y ?? -Infinity) > t.memo.y + 2,
@@ -3842,6 +3860,9 @@ export const COMBAT: TutorialStep[] = [
       const post = t.keep('post', putAt(t, 'metal-box', x + 7, 0.4, { frozen: true }));
       const hot = t.keep('hot', putAt(t, 'thruster', x + 7, 1.2, { angle: Math.PI / 2 }));
       weldAt(t, post, hot, x + 7, 0.85);
+      // (its fuel: a big tank beside the post)
+      const tank = t.keep('hotTank', putAt(t, 'big-fuel-tank', x + 8, 0.7));
+      weldAt(t, post, tank, x + 7.6, 0.4);
       hot?.activate();
       t.keep('pod', putAt(t, 'heat-seeker-pod', x - 5, 1.2, { frozen: true }));
       t.seen.blasts = 0;
@@ -4011,7 +4032,10 @@ export const BREAKING: TutorialStep[] = [
       freshFloor(t);
       const x = t.game.renderer.camX;
       t.keep('beam', putAt(t, 'short-beam', x - 0.3, 1, { angle: Math.PI / 2, frozen: true }));
-      t.keep('torch', putAt(t, 'jet-engine', x + 1, 1, { frozen: true }));
+      const jet = t.keep('torch', putAt(t, 'jet-engine', x + 1, 1, { frozen: true }));
+      // (its fuel: a tank lying under it)
+      const tank = t.keep('torchTank', putAt(t, 'big-fuel-tank', x + 1, 0.32, { angle: Math.PI / 2 }));
+      weldAt(t, jet, tank, x + 1, 0.68);
     },
     done: (t) => (t.ref('beam')?.parts.some((p) => p.temp > 120) ?? true),
     target: (t) => useAt(t, t.ref('torch')),

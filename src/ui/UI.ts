@@ -1377,8 +1377,8 @@ export class UI implements UIBridge {
     const fuel = this.game.fuel;
     row(
       'Fuel',
-      choice('set-fuel', [['normal', 'Tanks run dry'], ['infinite', 'Infinite'], ['required', 'Engines need a tank']] as [FuelMode, string][], fuel.mode, (v) => (fuel.mode = v)),
-      'Thrusters, jets and engines burn the fuel in the tanks built in with them (a build with no tank runs free). Infinite: tanks never run dry. Engines need a tank: one with none in its build doesn’t run',
+      choice('set-fuel', [['required', 'Engines need fuel'], ['free', 'No tank, runs free'], ['infinite', 'Infinite']] as [FuelMode, string][], fuel.mode, (v) => (fuel.mode = v)),
+      'Thrusters, jets and engines burn the fuel in the tanks built in with them, and one with no tank, or only empty ones, doesn’t run. No tank, runs free: a build with no tank at all runs without one, as before there was fuel. Infinite: tanks never run dry and nothing needs one',
     );
     this.syncIterations = () => {
       // a guest's game shows the host's world: the host's setting is the one that counts

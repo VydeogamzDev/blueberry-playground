@@ -367,12 +367,13 @@ const REMAKE = 1;
 const DROP_RELOOK = 0.5;
 /**
  * How far off the centre of mass an engine's push passes to turn it (see remix()): this
- * share of the build's size, but never more than TURNS_MAX (m). A tall rocket's jets side
- * by side under it, a metre or two apart, turn it (and level it) as a small drone's do;
- * against its size alone (a fifth of 12 m), none of them did, and nothing held it up.
+ * share of the furthest any of its engines' does, and at least TURNS_MIN (m). Engines side
+ * by side under a rocket turn it (and level it) as a small drone's do, however far apart:
+ * against a fixed half metre (0.4.3), a second stage's three thrusters, 0.43 m apart, didn't,
+ * and once the first stage was dropped nothing steered it.
  */
-const TURNS = 0.2;
-const TURNS_MAX = 0.5;
+const TURNS = 0.25;
+const TURNS_MIN = 0.06;
 /** Levelling (see fly()): how hard the engines answer being off the angle held (per rad), and turning (per rad/s). */
 const LEVEL = { k: 2.5, d: 0.8 };
 /**
@@ -682,8 +683,14 @@ export class Piloting {
     if (v > 90 && temp < -25 && rho > 0.004 && Math.random() < 0.8) {
       const from = c.engines.filter((e) => !e.destroyed && (e.pilotOut ?? 0) > 0.05);
       const list = from.length ? from.map((e) => e.pushAt()) : [{ x: p.x, y: p.y }];
+      // (laid along the way it came this step, a puff each metre or so: one a step, fast, was a string of beads)
+      const dt = g.stepDt;
+      const n = Math.min(6, Math.max(1, Math.ceil(v * dt)));
       for (const at of list.slice(0, 4)) {
-        g.particles.emit(PK.Smoke, at.x - p.vx * 0.02, at.y - p.vy * 0.02, { vx: p.vx * 0.05, vy: p.vy * 0.05, life: 5, size: 0.12, size1: 0.7, color: 0xffffff, color1: 0xe6ecf2, alpha: 0.75, alpha1: 0, gravity: 0, drag: 0.3 });
+        for (let i = 0; i < n; i++) {
+          const f = 0.02 + ((i + Math.random()) / n) * dt;
+          g.particles.emit(PK.Smoke, at.x - p.vx * f, at.y - p.vy * f, { vx: p.vx * 0.05, vy: p.vy * 0.05, life: 5, size: 0.12, size1: 0.7, color: 0xffffff, color1: 0xe6ecf2, alpha: 0.75, alpha1: 0, gravity: 0, drag: 0.3 });
+        }
       }
     }
   }
@@ -723,7 +730,9 @@ export class Piloting {
   private authority(c: Craft, T: number): number {
     let tq = 0;
     for (const e of c.engines) {
-      if (e.destroyed || e.job === 'wire' || e.job === 'always') continue;
+      // (not one waiting for its stage, out of air or fuel: counted, the craft was thought
+      // ten times as quick to turn as it was, and Q and E only nudged the engines it had)
+      if (e.destroyed || e.job === 'wire' || e.job === 'always' || this.held(e) || e.starved || (e as { dry?: boolean }).dry) continue;
       const m = c.mix.get(e);
       if (!m || !m.rot || !m.arm || m.drive || e.hovers) continue;
       const isLift = e.job === 'throttle' || (e.job === 'auto' && m.lift);
@@ -975,18 +984,28 @@ export class Piloting {
     c.mix.clear();
     let up = false;
     let down = false;
+    // (each engine's lever about the middle (m, + anticlockwise): the same in any frame)
+    const arms = c.engines.map((e, i) => {
+      if (!dirs[i]) return 0;
+      const d = e.pushDir()!;
+      const at = e.pushAt();
+      return (at.x - com.x) * d.y - (at.y - com.y) * d.x;
+    });
+    // (against those that can run now: not one waiting for a later stage)
+    let reach = 0;
+    c.engines.forEach((e, i) => {
+      if (e.job !== 'wire' && e.job !== 'always' && !this.held(e)) reach = Math.max(reach, Math.abs(arms[i]));
+    });
+    const turns = Math.max(TURNS_MIN, reach * TURNS);
     c.engines.forEach((e, i) => {
       const dc = dirs[i];
       if (!dc) {
         c.mix.set(e, { lift: false, mx: 0, rot: 0, drive: !e.hovers });
         return;
       }
-      const d = e.pushDir()!;
-      const at = e.pushAt();
-      // (its turn about the middle per newton, against the build's size: the same in any frame)
-      const tq = ((at.x - com.x) * d.y - (at.y - com.y) * d.x) / size;
+      const tq = arms[i] / size;
       const lift = dc.x * ax + dc.y * ay > 0.7;
-      const rot = Math.abs(tq) > Math.min(TURNS, TURNS_MAX / size) ? Math.sign(tq) : 0;
+      const rot = Math.abs(arms[i]) >= turns ? Math.sign(tq) : 0;
       if (lift && rot > 0) up = true;
       if (lift && rot < 0) down = true;
       c.mix.set(e, {
@@ -1140,7 +1159,7 @@ export class Piloting {
     const thrust = Math.hypot(fx, fy);
     const weight = m * Math.abs(g.gravity) * (g.map.world ? g.air.gravityAt(my / m) : 1);
     const tank = g.fuel.levelOf(ents);
-    const burn = g.fuel.mode === 'infinite' || (!tank.capacity && g.fuel.mode === 'normal') ? Infinity : rate > 0 ? tank.fuel / rate : Infinity;
+    const burn = g.fuel.mode === 'infinite' || (!tank.capacity && g.fuel.mode === 'free') ? Infinity : rate > 0 ? tank.fuel / rate : Infinity;
     return {
       mass: m, com: { x: mx / m, y: my / m },
       thrust, cot: f > 0 ? { x: cx / f, y: cy / f } : null, dir: thrust > 0 ? { x: fx / thrust, y: fy / thrust } : null,

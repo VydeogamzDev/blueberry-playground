@@ -347,8 +347,8 @@ export class JetEngine extends Prop implements HandSwitched, Engine {
     const hot = Math.min(1, k);
     for (let i = 0; i < 1 + Math.round(2 * hot); i++) {
       const sp = (8 + Math.random() * 6) * (0.4 + hot);
-      ps.emit(PK.Fire, n.x, n.y, {
-        vx: -f.x * sp + (Math.random() - 0.5) * 1.5 + p.vx, vy: -f.y * sp + (Math.random() - 0.5) * 1.5 + p.vy,
+      // (going along with the nozzle: see Particles.plume())
+      ps.plume(PK.Fire, n.x, n.y, p.vx - p.av * (n.y - p.y), p.vy + p.av * (n.x - p.x), -f.x * sp + (Math.random() - 0.5) * 1.5, -f.y * sp + (Math.random() - 0.5) * 1.5, {
         life: 0.08 + 0.14 * hot + Math.random() * 0.06, size: 0.1 + 0.12 * hot, size1: 0.04,
         color: hot > 0.6 ? 0xd8f0ff : 0xffd080, color1: 0xff5a1a, alpha: 0.4 + 0.5 * hot, alpha1: 0.1, gravity: 0, drag: 2,
       });
@@ -364,7 +364,7 @@ export class JetEngine extends Prop implements HandSwitched, Engine {
 
   frame(): void {
     if (this.spool < 0.2 || this.main.frozen) return;
-    const n = this.main.pixelToWorld(JET_NOZZLE[0] + 2, JET_NOZZLE[1]);
+    const n = this.main.pixelDrawn(JET_NOZZLE[0] + 2, JET_NOZZLE[1]);
     this.game.renderer.addLight(n.x, n.y, 1.2 + 2.2 * this.spool, 0.25 + 0.45 * Math.min(1, this.power) + Math.random() * 0.08, 0xffa860);
   }
 

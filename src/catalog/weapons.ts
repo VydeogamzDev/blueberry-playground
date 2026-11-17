@@ -407,7 +407,7 @@ export function registerMachinery(): void {
     const shapes: ShapeSpec[] = [{ kind: 'ball', r: 4, y: 2 }, artRect(8, 12, 2, 7, 4, 5)];
     return new LightBulb(game, def, { art, material: MAT.plastic, shapes, density: densityFor(0.25, shapes), hp: 4 }, bulbOn, x, y, opts);
   }, ['lamp', 'lightbulb', 'electric']);
-  item('thruster', 'Thruster', 'Machinery', 'Pushes forward while active or powered: one lifts a person, a few lift a car. Set its thrust in its menu, 300 N to 4800 N (1200 N to start with). Select what it’s built into to fly it: W and S throttle, A and D move, Q and E turn.', I.thrusterArt, (game, def, art, x, y, opts) => {
+  item('thruster', 'Thruster', 'Machinery', 'Pushes forward while active or powered: one lifts a person, a few lift a car. Set its thrust in its menu, 300 N to 4800 N (1200 N to start with). It burns fuel: weld a fuel tank into what it’s built into. Select what it’s built into to fly it: W and S throttle, A and D move, Q and E turn.', I.thrusterArt, (game, def, art, x, y, opts) => {
     const shapes = rects(14, 10, [[5, 1, 9, 8], [0, 1, 6, 8]]);
     // (a push 20 times its own weight from standing, fading toward THRUST_TOP m/s)
     return new Thruster(game, def, { art, material: MAT.metal, shapes, density: densityFor(6, shapes) }, 1200, x, y, opts);

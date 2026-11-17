@@ -324,6 +324,7 @@ export function beginGrab(game: Game, part: Part, wx: number, wy: number): Grab 
     part.body.wakeUp();
   }
   part.entity.onGrab(part, true);
+  part.entity.handHeld++;
   return g;
 }
 
@@ -352,6 +353,7 @@ export function releaseGrab(game: Game, g: Grab, at: V2): void {
   const world = game.physics.world;
   if (g.joint && g.joint.isValid()) world.removeImpulseJoint(g.joint, true);
   if (g.anchor && g.anchor.isValid()) world.removeRigidBody(g.anchor);
+  g.part.entity.handHeld = Math.max(0, g.part.entity.handHeld - 1);
   if (!g.part.destroyed) {
     g.part.body.setAngularDamping(g.savedDamping);
     g.part.entity.onGrab(g.part, false, at);
@@ -1748,9 +1750,33 @@ export class Controls {
     return { x, y, vx, vy };
   }
 
+  /** What the camera went along with last frame (see camStep()): the first of it, how many, and where it was drawn from the camera. */
+  private camLast: { key: Entity; n: number; ox: number; oy: number } | null = null;
+  private camWas: { key: Entity; n: number; ox: number; oy: number } | null = null;
+
+  /**
+   * How far (m) what the camera goes along with has moved on from it since the last frame,
+   * as drawn (0.4.4); the first frame, as far as its speed takes it. Gone along at its speed
+   * times the frame's time, the camera ran on ahead of it whenever the game ran slower than
+   * the clock (slow motion, a heavy scene) and was pulled back each frame: a fast craft shook.
+   */
+  private camStep(list: Entity[], m: { x: number; y: number; vx: number; vy: number }, dt: number): { x: number; y: number } {
+    const r = this.game.renderer;
+    const was = this.camWas;
+    if (was && list.length === was.n && list[0] === was.key) return { x: m.x - r.camX - was.ox, y: m.y - r.camY - was.oy };
+    return { x: m.vx * dt, y: m.vy * dt };
+  }
+
+  /** Remembers where what the camera goes along with is drawn from it, for the next frame (see camStep()). */
+  private camKeep(list: Entity[], m: { x: number; y: number }): void {
+    const r = this.game.renderer;
+    if (list.length) this.camLast = { key: list[0], n: list.length, ox: m.x - r.camX, oy: m.y - r.camY };
+  }
+
   private keepInView(list: Entity[], dt: number): void {
     const r = this.game.renderer;
     const m = this.drawnMiddle(list);
+    const step = this.camStep(list, m, dt);
     const w = r.viewWidth / r.zoom;
     const h = r.height / r.zoom;
     // (slow, it may wander a quarter of the view from the middle before the camera goes after
@@ -1758,8 +1784,8 @@ export class Controls {
     // little ahead of it, to see where it's going: a rocket climbing ever faster was off the
     // top of the screen)
     const fast = clamp((Math.hypot(m.vx, m.vy) - 15) / 25, 0, 1);
-    r.camX += m.vx * dt * fast;
-    r.camY += m.vy * dt * fast;
+    r.camX += step.x * fast;
+    r.camY += step.y * fast;
     const tx = m.x + clamp(m.vx * 0.15, -w * 0.18, w * 0.18) * fast;
     const ty = m.y + clamp(m.vy * 0.15, -h * 0.18, h * 0.18) * fast;
     const k = Math.min(1, dt * (3 + 5 * fast));
@@ -1771,9 +1797,10 @@ export class Controls {
     // in alone, it trailed a third of a second's travel behind, and a craft climbing at 15 m/s
     // was off a phone's screen)
     const slow = 1 - fast;
-    if (Math.abs(dx) > mx) r.camX += (dx - Math.sign(dx) * mx) * k + (m.vx * dx > 0 ? m.vx * dt * slow : 0);
-    if (Math.abs(dy) > my) r.camY += (dy - Math.sign(dy) * my) * k + (m.vy * dy > 0 ? m.vy * dt * slow : 0);
+    if (Math.abs(dx) > mx) r.camX += (dx - Math.sign(dx) * mx) * k + (step.x * dx > 0 ? step.x * slow : 0);
+    if (Math.abs(dy) > my) r.camY += (dy - Math.sign(dy) * my) * k + (step.y * dy > 0 ? step.y * slow : 0);
     r.clampCamera();
+    this.camKeep(list, m);
   }
 
   // ---- connections (see ConnectTool) -------------------------------------------------
@@ -3197,6 +3224,9 @@ export class Controls {
   private frame(dt: number, alpha = 1): void {
     this.alpha = alpha;
     const r = this.game.renderer;
+    // (what the camera went along with last frame: forgotten if it doesn't this frame)
+    this.camWas = this.camLast;
+    this.camLast = null;
     // keyboard panning (were the drive keys bound to the camera's, with vehicles selected those would drive them instead, and
     // with tanks, the aim keys' aim them; with Alt, time paused and something selected, the arrows nudge it instead)
     const speed = (900 / r.zoom) * dt * (this.isHeld('fast') ? 2.5 : 1);
@@ -3231,12 +3261,14 @@ export class Controls {
         // (going along at its speed, then closing in: easing in alone, it trailed a sixth of a
         // second's travel behind, 60 m and more for a rocket, off the top of the screen)
         const m = this.drawnMiddle(live);
-        r.camX += m.vx * dt;
-        r.camY += m.vy * dt;
+        const step = this.camStep(live, m, dt);
+        r.camX += step.x;
+        r.camY += step.y;
         const k = Math.min(1, dt * 6);
         r.camX += (m.x - r.camX) * k;
         r.camY += (m.y - r.camY) * k;
         r.clampCamera();
+        this.camKeep(live, m);
       }
     }
     // world position under a stationary mouse changes as the camera moves

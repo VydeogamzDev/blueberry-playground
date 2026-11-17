@@ -382,7 +382,7 @@ export class Rocket extends Entity {
     if (this.spent) return;
     const p = this.main;
     if (this.burn > 0) {
-      const t = p.pixelToWorld(NOZZLE[0], NOZZLE[1]);
+      const t = p.pixelDrawn(NOZZLE[0], NOZZLE[1]);
       const flicker = 0.85 + Math.random() * 0.3;
       this.game.renderer.addLight(t.x, t.y, 2.4 * flicker, 0.7 * flicker, 0xffb060);
     } else this.game.renderer.addLight(p.x, p.y, 0.8, 0.25, 0xffb060);

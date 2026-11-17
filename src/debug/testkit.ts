@@ -43,6 +43,9 @@ export function makeTestKit(game: Game, controls: Controls) {
       controls.history.clear();
       game.paused = false;
       game.timeScale = 1;
+      // (engines need fuel in a game (0.4.4), but most tests build without tanks: those about
+      // fuel, and the tutorials, set it as the game has it)
+      game.fuel.mode = 'free';
     },
     spawn(id: string, x: number, y: number, opts: SpawnOptions = {}): Entity {
       const def = getItem(id);

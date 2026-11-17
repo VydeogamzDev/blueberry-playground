@@ -34,6 +34,27 @@ function atRest(snap: Snapshot): Snapshot {
   return { ...snap, entities: snap.entities.map((e) => ({ ...e, parts: e.parts.map((p) => ({ ...p, vx: 0, vy: 0, av: 0 })) })) };
 }
 
+/**
+ * The snapshot with its stages ready to fire again (0.4.4). A rocket saved after its
+ * stages had fired came back with them fired: its engines' stages counted as done (they
+ * ran, or never would), its decouplers spent, its booster lit, its parachute used.
+ */
+export function unfired(snap: Snapshot): Snapshot {
+  return {
+    ...snap,
+    entities: snap.entities.map((e) => {
+      if (!e.stage || !e.staged) return e;
+      const { staged: _, ...rest } = e;
+      const x = { ...(e.extra ?? {}) } as Record<string, unknown>;
+      if (x.fired === true) x.fired = false;
+      if (x.lit === true) x.lit = false;
+      if (x.on === true) x.on = false;
+      if (x.state === 'spent') x.state = 'packed';
+      return e.extra ? { ...rest, extra: x } : rest;
+    }),
+  };
+}
+
 /** The player's contraptions, kept in the browser's storage, as toybox items. */
 export class Contraptions {
   list: Contraption[] = [];
@@ -113,8 +134,8 @@ export class Contraptions {
         description: `Your contraption: ${n} object${n === 1 ? '' : 's'}. Right-click it here to rename, export or delete it.`,
         tags: ['contraption', 'creation', 'saved'],
         preview: () => document.createElement('canvas'),
-        // (at rest: those saved before they were kept so)
-        snapshot: atRest(c.snap), thumb: c.thumb,
+        // (at rest: those saved before they were kept so; their stages not yet fired)
+        snapshot: unfired(atRest(c.snap)), thumb: c.thumb,
       };
       this.defs.set(c.id, d);
     }

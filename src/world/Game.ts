@@ -178,6 +178,8 @@ export class Game {
   actor = 1;
   /** Length of a physics step (s): FIXED_DT, or COARSE_DT while the scene is too heavy for real time (see pickStep()). */
   stepDt = FIXED_DT;
+  /** How far between the last two steps this frame is drawn (see Part.render(), pixelDrawn()). */
+  drawAlpha = 1;
   /** Always the long step (Settings > Graphics' lightest physics), rather than the short one while the scene allows. */
   longSteps = false;
   /** How long (s) the step has looked worth changing (see pickStep()). */
@@ -868,7 +870,11 @@ export class Game {
     if (steps > 0) this.stepMs = this.stepMs * 0.9 + (stepTime / steps) * 0.1;
     if (!this.paused && realDt > 0) this.pickStep(realDt);
 
-    const alpha = this.paused ? 1 : Math.min(1, Math.max(0, this.acc / dt));
+    // (a step taken a little early, STEP_SLACK, leaves the time owed below none: drawn that
+    // much short of the step before, not held at it. Held, a frame or two in every few on a
+    // screen whose rate isn't a multiple of the step's was drawn up to a millisecond late:
+    // 25 px at 400 m/s, and a fast craft the camera followed juddered by as much)
+    const alpha = this.paused ? 1 : Math.min(1, Math.max(-0.5, this.acc / dt));
     this.renderFrame(realDt, alpha);
     this.frameMs = this.frameMs * 0.9 + (performance.now() - t0) * 0.1;
   }
@@ -929,6 +935,7 @@ export class Game {
   }
 
   private drawFrame(realDt: number, alpha: number): void {
+    this.drawAlpha = alpha;
     const lap = this.lapper();
     for (const h of this.frameHandlers) h(realDt, alpha);
     for (const e of this.entities) {
@@ -940,7 +947,7 @@ export class Game {
     this.fire.frame();
     this.puddles.frame();
     this.projectiles.frame();
-    this.particles.frame();
+    this.particles.frame(alpha);
     this.casings.frame();
     this.stains.frame(this.renderer.zoom * this.renderer.dpr);
     this.env.frame(this.renderer.camX, this.renderer.width / (2 * this.renderer.zoom));

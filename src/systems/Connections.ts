@@ -112,6 +112,24 @@ const CORDS = new Set<ConnKind>(['wire', 'rope', 'fuse']);
 export const ROUND_CUTS = 0.3;
 /** Seconds a wire's insulation (a rope: itself) stands in a fire before it burns through. */
 const WIRE_BURNS = 2;
+/**
+ * How far a wire stretches before it snaps (0.4.4): this much of the length it was made
+ * at, or WIRE_GIVE (m) more if that's more (a short one across a hinge). Before, a wire
+ * held whatever happened: a rocket's wires ran on to its dropped stage, kilometres down.
+ * Held in a hand (dragged), a thing pays its wires out instead.
+ */
+const WIRE_STRETCH = 1.1;
+const WIRE_GIVE = 0.15;
+/** How far a wire's ends may be apart (m) before it snaps (see WIRE_STRETCH). */
+function wireReach(c: Connection): number {
+  return Math.max(c.rest * WIRE_STRETCH, c.rest + WIRE_GIVE);
+}
+/** A wire's sag as drawn, its ends `d` apart: slack as it was made, pulled straight as it nears snapping. */
+function wireSag(c: Connection, d: number): number {
+  if (d <= c.rest) return Math.max(d * 0.08, Math.sqrt(Math.max(0, c.rest * c.rest - d * d)) * 0.5);
+  const reach = wireReach(c);
+  return d * 0.08 * Math.max(0, (reach - d) / Math.max(1e-6, reach - c.rest));
+}
 const ROPE_BURNS = 3.5;
 
 /** Where segment p→q crosses r→s: the fraction of the way along r→s (-1: it doesn't). */
@@ -806,7 +824,7 @@ export class Connections {
       else {
         const pb = this.anchorRender(c.b, c.lb, 1);
         // (sagging as drawn: see frame())
-        const sag = c.kind === 'wire' ? Math.hypot(pb.x - pa.x, pb.y - pa.y) * 0.08 : c.kind === 'spring' ? 0 : this.sagOf(c, pa, pb);
+        const sag = c.kind === 'wire' ? wireSag(c, Math.hypot(pb.x - pa.x, pb.y - pa.y)) : c.kind === 'spring' ? 0 : this.sagOf(c, pa, pb);
         d = this.nearCurve(pa, pb, sag, x, y);
       }
       if (d < bd) {
@@ -835,7 +853,7 @@ export class Connections {
       let d = Math.min(da, db);
       let end: 'a' | 'b' | 'line' = da <= db ? 'a' : 'b';
       if (pb) {
-        const sag = c.kind === 'wire' ? Math.hypot(pb.x - pa.x, pb.y - pa.y) * 0.08 : c.kind === 'rope' || c.kind === 'fuse' ? this.sagOf(c, pa, pb) : 0;
+        const sag = c.kind === 'wire' ? wireSag(c, Math.hypot(pb.x - pa.x, pb.y - pa.y)) : c.kind === 'rope' || c.kind === 'fuse' ? this.sagOf(c, pa, pb) : 0;
         const dl = this.nearCurve(pa, pb, sag, x, y);
         if (dl < d) {
           d = dl;
@@ -868,7 +886,7 @@ export class Connections {
       return;
     }
     const d = Math.hypot(pb.x - pa.x, pb.y - pa.y);
-    const sag = c.kind === 'wire' ? d * 0.08 : c.kind === 'spring' ? 0 : this.sagOf(c, pa, pb);
+    const sag = c.kind === 'wire' ? wireSag(c, d) : c.kind === 'spring' ? 0 : this.sagOf(c, pa, pb);
     this.curve(pa, pb, sag, c.kind === 'spring' ? PX * 9 : w, col);
     L.quad(pa.x, pa.y, PX * 6, col);
     L.quad(pb.x, pb.y, PX * 6, col);
@@ -1393,7 +1411,7 @@ export class Connections {
 
   /** A cord's sag as drawn (see frame()). */
   private drawnSag(c: Connection, pa: V2, pb: V2): number {
-    return c.kind === 'wire' ? Math.hypot(pb.x - pa.x, pb.y - pa.y) * 0.08 : this.sagOf(c, pa, pb);
+    return c.kind === 'wire' ? wireSag(c, Math.hypot(pb.x - pa.x, pb.y - pa.y)) : this.sagOf(c, pa, pb);
   }
 
   /**
@@ -1451,6 +1469,23 @@ export class Connections {
     for (const { c, t } of cut ?? []) this.cutAt(c, t);
   }
 
+  /**
+   * A wire pulled past what it stretches to (see WIRE_STRETCH) snaps, sparking where it
+   * parts (or, held in a hand, pays out): did it go?
+   */
+  private overstretched(c: Connection): boolean {
+    const pa = this.anchorWorld(c, 'a');
+    const pb = this.anchorWorld(c, 'b');
+    const d = Math.hypot(pa.x - pb.x, pa.y - pb.y);
+    if (d <= wireReach(c)) return false;
+    if (c.a.entity.handHeld > 0 || (c.b && c.b.entity.handHeld > 0)) {
+      c.rest = Math.min(1000, d / WIRE_STRETCH);
+      return false;
+    }
+    this.cutAt(c, 0.5);
+    return true;
+  }
+
   /** Cuts a cord `t` of the way along it: a live wire sparks there, a rope's ends fall loose. */
   private cutAt(c: Connection, t: number): void {
     if (!this.list.includes(c)) return;
@@ -1503,7 +1538,9 @@ export class Connections {
   private holdOf(c: Connection): { f: number; t: number } {
     const h = HOLD[c.kind as keyof typeof HOLD];
     const light = !c.b || c.a.mass <= c.b.mass ? c.a : c.b;
-    const f = Math.max(h.floor, h.g * 9.81 * light.mass) * (c.opts?.strength === 'weak' ? 0.25 : 1);
+    // (and what one end's made to bear: a parachute pack's weld holds what its canopy pulls)
+    const bears = Math.max(c.a.entity.holdsPull, c.b?.entity.holdsPull ?? 0);
+    const f = Math.max(h.floor, h.g * 9.81 * light.mass, bears) * (c.opts?.strength === 'weak' ? 0.25 : 1);
     return { f, t: f * Math.max(h.arm, (Math.max(light.w, light.h) * PX) / 2) };
   }
 
@@ -1623,6 +1660,7 @@ export class Connections {
         if (!c.burn) this.catchFire(c, fireCheck);
         if (c.burn && this.burnFuse(c, dt)) continue;
       } else if (fireCheck && (c.kind === 'wire' || c.kind === 'rope') && this.burnThrough(c)) continue;
+      if (c.kind === 'wire' && c.b && this.overstretched(c)) continue;
       if (c.breakAt === Infinity || !c.joint) continue;
       const pa = this.anchorWorld(c, 'a');
       const pb = this.anchorWorld(c, 'b');
@@ -1664,8 +1702,9 @@ export class Connections {
           const d = Math.hypot(pb.x - pa.x, pb.y - pa.y);
           const lit = this.liveWires.has(c);
           const W = lit ? (this.backWires.has(c) ? REVERSED : ORANGE) : R;
-          this.curve(pa, pb, d * 0.08, PX * 2, W[0]);
-          this.curve(pa, pb, d * 0.08, PX, W[lit ? 3 : 2]);
+          const sag = wireSag(c, d);
+          this.curve(pa, pb, sag, PX * 2, W[0]);
+          this.curve(pa, pb, sag, PX, W[lit ? 3 : 2]);
           this.knot(pa, PX * 2.5, GUNMETAL);
           this.knot(pb, PX * 2.5, GUNMETAL);
           break;

@@ -310,6 +310,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
   return [
     ['extra: tutorial: played through as a player would, from the main menu to the end', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       kit.spawn('crate', 3, 0.45);
       try {
         const started = startFromMenu();
@@ -584,6 +586,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: the building tour played through with the tools, to a rocket saved and flown', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       const saved0 = ui().contraptions.items().map((c) => c.id);
       try {
         const music = game.music as unknown as { play(mood: string): void };
@@ -733,6 +737,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: steps can be skipped, each putting out what it needs, and × ends it at once', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       try {
         const started = startFromMenu();
         if (started !== true) return started;
@@ -763,6 +769,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: skipping the rocket’s steps builds them for the player, and it still flies', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       try {
         tut().start('building');
         tut().go(tut().steps.findIndex((s) => s.id === 'rocket'));
@@ -789,6 +797,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: people & medicine played through: hurt, x-rayed, and every cure', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       try {
         return keepingProgress(() => {
           const patient = () => ref<Human>('patient');
@@ -853,6 +863,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: weapons & explosives played through, from a pistol on the floor to a nuke', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       try {
         return keepingProgress(() =>
           play('weapons', {
@@ -924,6 +936,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: vehicles played through: a car spawned, boarded, driven, geared, steered, crashed; a tank aimed, fired, driven, crewed', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       try {
         return keepingProgress(() => {
           const ride = () => ref<Car>('ride');
@@ -963,6 +977,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: the world played through: fire, water, oil, acid, buckets, time, the powers, another map and ground of your own', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       let made = '';
       try {
         const r = keepingProgress(() =>
@@ -1065,6 +1081,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: editing & saving played through: select, move, copy, delete, undo, freeze, ghost, flip, turn, snap, resize, draw, settings, keys, save', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       let quick: string | null = null;
       try {
         quick = localStorage.getItem('blueberry-quicksave');
@@ -1193,6 +1211,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: animals played through: a dog, a cat, a fox, medicine for animals, a cow’s kick and bacon', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       try {
         return keepingProgress(() => {
           const dog = () => ref<Creature>('dog');
@@ -1258,6 +1278,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     // ---- the 0.4.0 tours, played through
     ['extra: tutorial: the flying tour played through: a pilot seated, throttled up, tilted and landed; a rocket staged; a crate let down on a parachute', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       const sel = (name: string) => (controls.selection = new Set([ref(name)]));
       try {
         return keepingProgress(() => play('flight', {
@@ -1277,6 +1299,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: the cars-you-build tour played through: driven, boosted, lit, jumped, filled up and raced', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       const chassis = () => ref('chassis');
       const hold = (ids: ActionId[], step: string, s: number) => {
         controls.selection = new Set([chassis()]);
@@ -1317,6 +1341,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: the air-and-sea tour played through: a helicopter lifts, a raft is driven on the sea, a ballast tank floods', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       try {
         return keepingProgress(() => play('airsea', {
           'as-heli': [() => { controls.selection = new Set([ref('heliSeat')]); holdKey('aimUp', 'as-heli', 12); }, 1],
@@ -1330,6 +1356,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: the power tour played through: a solar panel lights a bulb, a crate trips a sensor, a button flips a toggle', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       /** A wire from a's middle (or `la` m along it) to b's (or `lb`): the toggle's ports are either side of its. */
       const wire = (a: Entity, b: Entity, la = 0, lb = 0) =>
         game.connections.create('wire', a.parts[0], a.parts[0].localToWorld(la, 0), b.parts[0], b.parts[0].localToWorld(lb, 0));
@@ -1361,6 +1389,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: the combat tour played through: a guided missile steered into a car, a round stopped by armour, a heat seeker after a burning thruster, a bomb dropped', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       try {
         return keepingProgress(() => play('combat', {
           'cb-missile': [() => {
@@ -1382,6 +1412,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: the rails tour played through: track laid, a coaster launched round its loop, a claw shut on a crate', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       try {
         return keepingProgress(() => play('rails', {
           'rl-lay': () => {
@@ -1400,6 +1432,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: the breaking tour played through: a box shot full of holes, a beam heated red, a car blown apart and repaired', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       try {
         return keepingProgress(() => play('breaking', {
           'br-shoot': [() => {
@@ -1492,6 +1526,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
             for (const tour of TOURS) {
               if (tour.id === 'basics' || tour.id === 'building') continue;
               kit.reset();
+              // (engines need fuel, as in a game: the tours' builds bring their tanks)
+              game.fuel.mode = 'required';
               if (!tut().start(tour.id)) return `${tour.id} would not start`;
               const been: string[] = [];
               for (let n = 0; n < 60 && tut().active; n++) {
@@ -1520,6 +1556,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: the Tutorials panel lists every tour, starts one, ticks it once finished; the pause menu and the main menu offer them', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       const music = game.music as unknown as { play(mood: string): void };
       const play0 = music.play;
       try {
@@ -1589,6 +1627,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
     }],
     ['extra: tutorial: a step greys out what it isn’t about (a toy it doesn’t ask for won’t spawn, a key it doesn’t give does nothing); quitting puts it all back', () => {
       kit.reset();
+      // (engines need fuel, as in a game: the tours' builds bring their tanks)
+      game.fuel.mode = 'required';
       const x0 = game.renderer.camX;
       try {
         return keepingProgress(() => {
@@ -1697,6 +1737,8 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
           // (a quick throw, and a slower one)
           for (const frames of [6, 14]) {
             kit.reset();
+            // (engines need fuel, as in a game: the tours' builds bring their tanks)
+            game.fuel.mode = 'required';
             tut().start('people');
             tut().go(tut().steps.findIndex((s) => s.id === 'p-stab'));
             live(0.6);

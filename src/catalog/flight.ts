@@ -52,7 +52,7 @@ export function registerFlight(): void {
   const hover = lazyArt(() => F.hoverThrusterArt(false));
   const hoverShapes = rects(18, 10, [[0, 1, 18, 6], [2, 6, 14, 4]]);
   item('hover-thruster', 'Hover Thruster',
-    `Blows down from its underside to hold itself, and what it’s built into, at a height over whatever is under it (up to ${HOVER.max} m), and eases itself upright. Several hold a build level. Switched on, it holds the height it’s at; flown, the throttle sets the height. ${FLY}`,
+    `Blows down from its underside to hold itself, and what it’s built into, at a height over whatever is under it (up to ${HOVER.max} m), and eases itself upright. Several hold a build level. Switched on, it holds the height it’s at; flown, the throttle sets the height. It burns fuel from a tank built in with it. ${FLY}`,
     hover, (game, def, x, y, opts) => new HoverThruster(game, def, cfg(hover, MAT.metal, hoverShapes, 8), x, y, opts),
     ['hover', 'float', 'levitate', 'thruster', 'engine', 'fly', 'hovercraft']);
 

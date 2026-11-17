@@ -168,11 +168,12 @@ class Layer {
     }
   }
 
-  upload(): void {
+  /** `back`: how far (s) before the last step the frame is drawn (see Particles.frame()). */
+  upload(back = 0): void {
     for (let i = 0; i < this.count; i++) {
       const t = 1 - this.life[i] / this.max[i];
-      this.pos[i * 3] = this.x[i];
-      this.pos[i * 3 + 1] = this.y[i];
+      this.pos[i * 3] = this.x[i] - this.vx[i] * back;
+      this.pos[i * 3 + 1] = this.y[i] - this.vy[i] * back;
       this.pos[i * 3 + 2] = 0;
       const kd = this.kind[i];
       for (let k = 0; k < 4; k++) this.rgba[i * 4 + k] = this.col[i * 4 + k] + (this.col1[i * 4 + k] - this.col[i * 4 + k]) * t;
@@ -615,12 +616,31 @@ export class Particles {
     }
   }
 
-  frame(): void {
+  /**
+   * Drawn where they were `alpha` of the way through the last step, as everything else is
+   * (see Part.render()). Drawn where the step left them, a fast engine's flame was a step
+   * ahead of the engine drawn, or behind it, by metres at 400 m/s.
+   */
+  frame(alpha = 1): void {
     const s = this.game.renderer.zoom * this.game.renderer.dpr;
+    const back = (1 - alpha) * this.game.stepDt;
     for (const L of [this.smokeL, this.normal, this.fireL, this.additive]) {
       L.mat.uniforms.uScale.value = s;
-      L.upload();
+      L.upload(back);
     }
+  }
+
+  /**
+   * A puff of an engine's exhaust out of a nozzle at (x, y) going (bvx, bvy) (0.4.4): it
+   * leaves at (ex, ey) from the nozzle, and goes on with it, the air slowing it as fast
+   * as its drag, the faster the engine goes the less (it's carried in the engine's own
+   * slipstream). Before, flames left at the exhaust's speed alone: at 400 m/s each stood
+   * where it was made, three metres behind the last, a string of dots.
+   */
+  plume(kind: PK, x: number, y: number, bvx: number, bvy: number, ex: number, ey: number, o: EmitOpts = {}): void {
+    const v = Math.hypot(bvx, bvy);
+    const drag = (o.drag ?? 0) * Math.min(1, 25 / Math.max(25, v));
+    this.emit(kind, x, y, { ...o, vx: bvx + ex, vy: bvy + ey, drag });
   }
 
   /** Everything here moved by (dx, dy): the floating origin moved (see world/Origin). */

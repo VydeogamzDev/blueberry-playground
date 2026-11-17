@@ -105,7 +105,8 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       const bat = kit.spawn('battery', -6, 0.4);
       kit.advance(1);
       const x0 = cart.x;
-      C.create('wire', bat.parts[0], { x: bat.parts[0].x, y: bat.parts[0].y }, fan.main, { x: fan.main.x, y: fan.main.y });
+      // (a long wire, lying slack: one pulled straight from the battery snaps as the cart drives off)
+      C.create('wire', bat.parts[0], { x: bat.parts[0].x, y: bat.parts[0].y }, fan.main, { x: fan.main.x, y: fan.main.y }, 12);
       // (its draw behind it pulled the cart it was fixed to backward, the way the wind blows)
       kit.advance(4);
       if (!fan.running) return 'the fan is not running';

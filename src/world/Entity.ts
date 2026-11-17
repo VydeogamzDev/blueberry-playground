@@ -83,6 +83,12 @@ export abstract class Entity {
   activatable = false;
   /** Has had no net movement for a while (see restCheck()/settle()). */
   atRest = false;
+  /** How many hands (the player's, a guest's) drag it now: its wires pay out rather than snap (see Connections). */
+  handHeld = 0;
+  /** The pull (N) a weld, hinge or pin on it holds at least (see Connections.holdOf()): a parachute pack's, its canopy's. */
+  get holdsPull(): number {
+    return 0;
+  }
   /** Part poses at the last rest check, and how many checks in a row found them still. */
   restRef: number[] = [];
   restChecks = 0;

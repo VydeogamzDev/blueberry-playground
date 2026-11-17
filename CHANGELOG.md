@@ -4,6 +4,46 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.4.4 — 2026-11-16
+
+Engines that need fuel and tanks that feed a chosen stage, wires that snap, a second stage that steers,
+parachutes that tear, flames that keep up with fast engines, and no more judder following fast things.
+
+### Changes
+
+- Engines need fuel. A thruster, jet, hover thruster, helicopter rotor, outboard, car engine or generator with
+  no fuel tank in its build doesn't run; before, a build with no tank at all ran for free. Settings > Physics >
+  Fuel still offers "No tank, runs free" (the old way) and "Infinite". The tutorials' builds come with tanks.
+- A fuel tank's menu has "Fuel to:". Set to a stage, the tank feeds that stage's engines wherever they are in
+  the build, across decouplers, until they're dropped. Left alone, it feeds the engines on its own side of any
+  decoupler, as before. So a rocket's lower tanks can feed its upper stage.
+- A wire snaps once it's pulled more than a tenth past its length (it flexes freely up to that). Before, wires
+  never broke: a rocket's wires stretched on to its dropped stage, a kilometre down. Dragging a thing pays its
+  wires out instead of snapping them.
+- A contraption saved after its stages fired spawns with them ready to fire again: decouplers armed,
+  parachutes packed, engines waiting for their stage.
+
+### Fixes
+
+- A second stage steers. Engines only counted for turning when at least half a metre off the craft's centre
+  line, so three thrusters 0.43 m apart steered nothing once the wider first stage was dropped. Now any engine
+  well out from the middle, compared with the others, counts. The turn also no longer counts engines still
+  waiting for their stage (or out of fuel or air), which made Q and E only nudge the engines that could fire.
+- A parachute opened far too fast is ruined instead of stopping the craft dead. A torn canopy kept an eighth of
+  its pull, on lines that never broke, and only a cap of "nine tenths of the speed a step" held it back, so
+  opened at 400 m/s it stopped a craft in a blink. Now it tears to shreds, the shreds come off their lines if
+  still pulled hard, and the pack's weld holds what its canopy can pull (a heavy chute tore its pack off before).
+- The fuel in a tank lying on its side settles toward the ground. It settled toward the tank's own bottom, off
+  to one side, so a craft built round a tank lying down leaned and tipped over.
+- Engine flames stay at the nozzle at speed. They left at the exhaust's own few metres a second, so at 400 m/s
+  each stood where it was made, a string of dots three metres apart; now they go along with the engine. Smoke,
+  booster smoke and contrails are laid along the way the craft came, not a puff every few metres.
+- Fast things no longer judder on screen. On a screen whose refresh rate isn't a multiple of the physics step
+  (144 Hz, 165 Hz, uncapped), every few frames were drawn up to a millisecond late, which at 400 m/s is 25
+  pixels. The camera following something also went by speed times frame time instead of where the thing is
+  drawn, so it shook in slow motion or under load. Particles and engine glow are now drawn between steps as
+  everything else is.
+
 ## 0.4.3 — 2026-11-16
 
 Staged rockets that light their first stage, and staged engines that start when you switch them on.

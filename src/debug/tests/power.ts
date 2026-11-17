@@ -16,7 +16,7 @@ export default function tests({ game, kit }: TestCtx): Test[] {
     C.create('wire', a.parts[0], a.parts[0].localToWorld(la, 0), b.parts[0], b.parts[0].localToWorld(lb, 0))!;
   const weld = (a: Entity, b: Entity, at: { x: number; y: number }) => C.create('weld', a.parts[0], at, b.parts[0], at);
   /** Runs `f` with Settings' fuel set to `mode`, then back. */
-  const withMode = <T>(mode: 'normal' | 'infinite' | 'required', f: () => T): T => {
+  const withMode = <T>(mode: 'free' | 'infinite' | 'required', f: () => T): T => {
     const was = game.fuel.mode;
     game.fuel.mode = mode;
     try {
@@ -27,7 +27,7 @@ export default function tests({ game, kit }: TestCtx): Test[] {
   };
 
   return [
-    ['extra: power: a battery running a motor runs down; flat, the motor stops; recharged, it runs again; infinite fuel keeps it full', () => withMode('normal', () => {
+    ['extra: power: a battery running a motor runs down; flat, the motor stops; recharged, it runs again; infinite fuel keeps it full', () => withMode('free', () => {
       kit.reset();
       const bat = kit.spawn('battery', -2, 0.3) as Battery;
       const motor = kit.spawn('motor', 1, 0.5);
@@ -54,7 +54,7 @@ export default function tests({ game, kit }: TestCtx): Test[] {
       if (bat.charge !== c1) return `with infinite fuel the battery still ran down (${c1} → ${bat.charge})`;
       return true;
     })],
-    ['extra: power: a solar panel facing the sun charges a flat battery and lights a lamp; face down, or at night, it makes nothing', () => withMode('normal', () => {
+    ['extra: power: a solar panel facing the sun charges a flat battery and lights a lamp; face down, or at night, it makes nothing', () => withMode('free', () => {
       kit.reset();
       game.weather.set({ light: 1 });
       const sun = kit.spawn('solar-panel', -2, 0.3) as SolarPanel;
@@ -84,7 +84,7 @@ export default function tests({ game, kit }: TestCtx): Test[] {
       if (sun.isPowerSource() && night >= 30) return `at night it makes ${night.toFixed(0)} W and still gives power`;
       return true;
     })],
-    ['extra: power: a generator started burns its tank’s fuel and powers a lamp and charges a battery; its tank dry, it stops', () => withMode('normal', () => {
+    ['extra: power: a generator started burns its tank’s fuel and powers a lamp and charges a battery; its tank dry, it stops', () => withMode('free', () => {
       kit.reset();
       const gen = kit.spawn('generator', 0, 0.4) as Generator;
       const tank = kit.spawn('fuel-tank', 0, 1.6) as FuelTank;
@@ -111,7 +111,7 @@ export default function tests({ game, kit }: TestCtx): Test[] {
       if (gen.isPowerSource()) return 'its tank dry, it still runs';
       return true;
     })],
-    ['extra: sensors: an altimeter, a speed sensor, a tilt sensor, a fuel gauge and a proximity sensor each power a lamp when their reading’s past what they’re set to', () => withMode('normal', () => {
+    ['extra: sensors: an altimeter, a speed sensor, a tilt sensor, a fuel gauge and a proximity sensor each power a lamp when their reading’s past what they’re set to', () => withMode('free', () => {
       kit.reset();
       // altimeter (on below 50 m): on the ground, on; 60 m up (held there), off
       const alt = kit.spawn('altimeter', -6, 0.3) as Sensor;

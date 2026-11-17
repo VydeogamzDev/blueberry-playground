@@ -584,7 +584,7 @@ export class Missile extends Entity {
 
   frame(): void {
     if (this.spent || this.phase !== 'boost') return;
-    const t = this.nozzle();
+    const t = this.main.pixelDrawn(-0.5, this.size.h / 2 - 0.5);
     const flicker = (0.85 + Math.random() * 0.3) * this.scale;
     this.game.renderer.addLight(t.x, t.y, 2 * flicker, 0.6 * flicker, 0xffb060);
   }

@@ -51,7 +51,7 @@ export function registerRocketry(): void {
     const shapes = rects(w, h, [[0, 1, w, h - 2]], 2);
     const fuel = size === 'small' ? 40 : 200;
     item(size === 'small' ? 'fuel-tank' : 'big-fuel-tank', size === 'small' ? 'Fuel Tank' : 'Big Fuel Tank',
-      `Holds ${fuel} kg of fuel for the thrusters, jets and engines built into the same build (not across a decoupler: each stage burns its own). It gets lighter as it empties. Shot, it leaks; burning, or broken open full, it goes up. Fill it from its menu. ${FLY}`,
+      `Holds ${fuel} kg of fuel for the thrusters, jets and engines built into the same build (not across a decoupler: each stage burns its own, unless its menu sends its fuel to one stage’s engines, wherever they are in the build). With no tank, an engine doesn’t run. It gets lighter as it empties. Shot, it leaks; burning, or broken open full, it goes up. Fill it from its menu. ${FLY}`,
       art, (game, def, x, y, opts) => new FuelTank(game, def, cfg(art, MAT.sheetMetal, shapes, size === 'small' ? 6 : 25, { hollow: true }), fuel, x, y, opts),
       ['fuel', 'tank', 'rocket', 'propellant', 'gas', 'petrol', 'stage']);
   }

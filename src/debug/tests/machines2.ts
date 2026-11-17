@@ -194,7 +194,8 @@ export default function tests({ game, kit, human }: TestCtx): Test[] {
       kit.advance(0.3);
       const y0 = crate.main.y;
       if (prop.running) return 'it runs with no power';
-      wire(bat, prop);
+      // (a long wire, lying slack: one pulled straight from the floor snaps as the crate goes up)
+      C.create('wire', bat.parts[0], { x: bat.parts[0].x, y: bat.parts[0].y }, prop.main, { x: prop.main.x, y: prop.main.y }, 8);
       kit.advance(2);
       const rise = crate.main.y - y0;
       if (rise < 1.5) return `the crate rose only ${rise.toFixed(2)} m in 2 s`;

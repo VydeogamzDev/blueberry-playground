@@ -9,6 +9,9 @@ import type { EjectionSeat } from '../../entities/Crew';
 import type { Part } from '../../world/Part';
 import { saveToString, loadFromString } from '../../world/SaveLoad';
 import { WORLD_MAP } from '../../world/Maps';
+import { Fuel } from '../../systems/Fuel';
+import { unfired } from '../../world/Contraptions';
+import type { Snapshot } from '../../world/Snapshot';
 
 /** The rocketry parts (0.4.0: entities/Rocketry), fuel (systems/Fuel) and staging (systems/Piloting). */
 export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
@@ -67,7 +70,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
   return [
     ['extra: rocketry: a thruster burns the fuel in the tank built in with it, the tank gets lighter, and empty, the thruster stops pushing (its readout says so)', () => {
       kit.reset();
-      game.fuel.mode = 'normal';
+      game.fuel.mode = 'free';
       const { tank, thr } = tankRocket();
       const full = tank.main.mass;
       tank.take(tank.fuel - 1);
@@ -93,7 +96,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       if (thr.dry || lit(thr) <= 0) return 'filled again, it doesn’t light';
       return true;
     }],
-    ['extra: rocketry: Settings’ fuel: infinite never runs a tank dry; needing a tank, a thruster with none doesn’t push; normal, a build with no tank runs free', () => {
+    ['extra: rocketry: Settings’ fuel: infinite never runs a tank dry; needing fuel (as a game starts), a thruster with no tank doesn’t push; free, a build with no tank runs free', () => {
       kit.reset();
       try {
         const { tank, thr } = tankRocket();
@@ -107,12 +110,13 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
         lone.activate();
         kit.advance(0.3);
         if (lit(lone) > 0) return 'needing a tank, a thruster with none pushes';
-        game.fuel.mode = 'normal';
+        game.fuel.mode = 'free';
         kit.advance(0.3);
-        if (lit(lone) <= 0) return 'normal, a thruster with no tank doesn’t push';
+        if (lit(lone) <= 0) return 'free, a thruster with no tank doesn’t push';
+        if (new Fuel(game).mode !== 'required') return `a game starts with fuel ${new Fuel(game).mode}, not needed by engines`;
         return true;
       } finally {
-        game.fuel.mode = 'normal';
+        game.fuel.mode = 'free';
       }
     }],
     ['extra: rocketry: a fuel tank shot leaks, and one burning with fuel in it goes up', () => {
@@ -131,7 +135,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
     }],
     ['extra: rocketry: fuel doesn’t cross a decoupler; Enter fires the stages in turn: the decoupler lets the top go (thrown apart), then the top’s engine lights', () => {
       kit.reset();
-      game.fuel.mode = 'normal';
+      game.fuel.mode = 'free';
       const low = kit.spawn('big-fuel-tank', 0, 0.75) as FuelTank;
       const dec = kit.spawn('decoupler', 0, 1.53) as Decoupler;
       const top = kit.spawn('fuel-tank', 0, 1.98) as FuelTank;
@@ -166,7 +170,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
     }],
     ['extra: rocketry: a build with a decoupler stages itself: the lower engines climb, F on the cockpit drops them and lights the upper ones; a decoupler fires on power, and comes any size', () => {
       kit.reset();
-      game.fuel.mode = 'normal';
+      game.fuel.mode = 'free';
       // engines under a bar, a decoupler on it, a beam on that with an engine hanging from each end, the cockpit on top
       const low = [-0.5, 0, 0.5].map((x) => kit.spawn('thruster', x, 0.23, { angle: Math.PI / 2 }) as Thruster);
       const bar = kit.spawn('short-beam', 0, 0.54);
@@ -226,7 +230,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
     }],
     ['extra: rocketry: staged by hand, the bottom engines burn before the decoupler over them drops them; W lights a first stage of engines; F or a wire lights a staged engine (0.4.3)', () => {
       kit.reset();
-      game.fuel.mode = 'normal';
+      game.fuel.mode = 'free';
       const low = [-0.5, 0, 0.5].map((x) => kit.spawn('thruster', x, 0.23, { angle: Math.PI / 2 }) as Thruster);
       const bar = kit.spawn('short-beam', 0, 0.54);
       const dec = kit.spawn('decoupler', 0, 0.71) as Decoupler;
@@ -279,8 +283,9 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       controls.selection = new Set();
       // not flown: F on a staged engine lights it, and so does power down a wire
       kit.reset();
-      const t2 = kit.spawn('thruster', -3, 0.3, { angle: Math.PI / 2 }) as Thruster;
-      const t3 = kit.spawn('thruster', 3, 0.3, { angle: Math.PI / 2 }) as Thruster;
+      // (pushing down into the floor: they stay put, and the wire isn't pulled apart)
+      const t2 = kit.spawn('thruster', -3, 0.3, { angle: -Math.PI / 2 }) as Thruster;
+      const t3 = kit.spawn('thruster', 3, 0.3, { angle: -Math.PI / 2 }) as Thruster;
       const sw = kit.spawn('switch', 5, 0.3);
       kit.advance(0.1);
       t2.stage = 1;
@@ -322,7 +327,26 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       for (const e of [t2, c2]) e.main.body.setLinvel({ x: 0, y: -120 }, true);
       c2.activate();
       kit.advance(0.6);
-      if (!c2.canopy?.torn) return 'opened at 120 m/s it held';
+      if (!c2.canopy?.torn && c2.state !== 'spent') return 'opened at 120 m/s it held';
+      return true;
+    }],
+    ['extra: rocketry: a big parachute opened at 400 m/s tears and its lines snap: it doesn’t stop the craft dead (0.4.4)', () => {
+      world(0, 200);
+      const tank = kit.spawn('big-fuel-tank', 0, 200) as FuelTank;
+      const chute = kit.spawn('big-parachute', 0, 200.9) as Parachute;
+      kit.advance(0.05);
+      weld(tank, chute, { x: 0, y: 200.7 });
+      for (const e of [tank, chute]) e.main.body.setLinvel({ x: 400, y: 0 }, true);
+      game.renderer.camX = tank.main.x;
+      chute.activate();
+      const v0 = tank.main.vx;
+      for (let i = 0; i < 5; i++) {
+        kit.advance(0.1);
+        game.renderer.camX = tank.main.x;
+      }
+      const v = Math.hypot(tank.main.vx, tank.main.vy);
+      if (v < v0 - 150) return `half a second after opening at ${v0.toFixed(0)} m/s it’s down to ${v.toFixed(0)} m/s`;
+      if (chute.state !== 'spent') return `opened at 400 m/s, the chute’s ${chute.state}${chute.canopy?.torn ? ' (torn)' : ''}, still on its lines`;
       return true;
     }],
     ['extra: rocketry: a backpack parachute dropped on someone straps on, and opens by itself as they fall from high up', () => kit.still(async () => {
@@ -583,5 +607,193 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       if (!s.cot || !s.dir || s.dir.y < 0.99) return 'no push marker (or it points the wrong way)';
       return true;
     }],
+    // ---------------------------------------------------------------- 0.4.4
+    ['extra: rocketry: engines need fuel as a game starts: a thruster or a hover thruster with no tank doesn’t push; given one, it does (0.4.4)', () => {
+      kit.reset();
+      game.fuel.mode = 'required';
+      try {
+        const thr = kit.spawn('thruster', -3, 0.3, { angle: -Math.PI / 2 }) as Thruster;
+        const hover = kit.spawn('hover-thruster', 3, 0.3) as Entity & { push: number; dry: boolean };
+        kit.advance(0.2);
+        thr.activate();
+        hover.activate();
+        kit.advance(0.3);
+        if (lit(thr) > 0) return 'a thruster with no tank pushes';
+        if (hover.push > 0 || !hover.dry) return `a hover thruster with no tank pushes (${hover.push.toFixed(2)})`;
+        const t1 = kit.spawn('fuel-tank', -3, 1.2) as FuelTank;
+        const t2 = kit.spawn('fuel-tank', 3, 1.2) as FuelTank;
+        kit.advance(0.05);
+        weld(t1, thr, { x: -3, y: 0.6 });
+        weld(t2, hover, { x: 3, y: 0.6 });
+        kit.advance(0.8);
+        if (lit(thr) <= 0) return 'given a tank, the thruster doesn’t push';
+        if (hover.dry) return 'given a tank, the hover thruster still has no fuel';
+        if (!(t2.fuel < t2.capacity)) return 'the hover thruster burns none of its tank';
+        return true;
+      } finally {
+        game.fuel.mode = 'free';
+      }
+    }],
+    ['extra: rocketry: a tank set to feed stage 2 feeds that stage’s engine across a decoupler, till it fires; set to its own side, it doesn’t (0.4.4)', () => {
+      kit.reset();
+      game.fuel.mode = 'required';
+      try {
+        const low = kit.spawn('big-fuel-tank', 0, 0.75) as FuelTank;
+        const dec = kit.spawn('decoupler', 0, 1.53) as Decoupler;
+        const thr = kit.spawn('thruster', 0, 1.8, { angle: Math.PI / 2 }) as Thruster;
+        kit.advance(0.1);
+        weld(low, dec, { x: 0, y: 1.47 });
+        weld(dec, thr, { x: 0, y: 1.6 });
+        low.setFrozen(true);
+        dec.stage = 1;
+        thr.stage = 2;
+        thr.activate();
+        kit.advance(0.3);
+        if (game.fuel.tanksOf(thr).includes(low)) return 'set to its own side, the tank feeds the engine over the decoupler';
+        if (lit(thr) > 0) return 'with no tank on its side, the stage 2 thruster pushes';
+        const act = low.contextActions().find((a) => a.label.startsWith('Fuel to: '));
+        if (!act) return `no Fuel to entry in the tank’s menu: ${low.contextActions().map((a) => a.label).join(', ')}`;
+        act.action();
+        act.action();
+        if (low.feeds !== 2) return `two clicks on Fuel to set it to ${low.feeds}`;
+        if (!low.contextActions().some((a) => a.label === 'Fuel to: stage 2’s engines')) return 'its menu doesn’t say it feeds stage 2';
+        kit.advance(0.7);
+        if (!game.fuel.tanksOf(thr).includes(low)) return 'set to feed stage 2, the tank doesn’t feed its engine';
+        const f0 = low.fuel;
+        kit.advance(0.5);
+        if (lit(thr) <= 0 || !(low.fuel < f0)) return 'set to feed stage 2, the engine doesn’t burn the tank’s fuel';
+        // saved with it
+        const back = loadFromString(game, saveToString(game));
+        if (!back) return 'it didn’t load';
+        const again = game.entities.find((e) => e.def.id === 'big-fuel-tank') as FuelTank | undefined;
+        if (again?.feeds !== 2) return `saved and loaded, the tank feeds ${again?.feeds}`;
+        const thr2 = game.entities.find((e) => e.def.id === 'thruster') as Thruster;
+        const dec2 = game.entities.find((e) => e.def.id === 'decoupler') as Decoupler;
+        dec2.activate();
+        kit.advance(0.7);
+        if (game.fuel.tanksOf(thr2).includes(again)) return 'its decoupler fired, the dropped tank still feeds the engine';
+        return true;
+      } finally {
+        game.fuel.mode = 'free';
+      }
+    }],
+    ['extra: rocketry: a wire stretches a little and snaps past a tenth more than its length; dragged, a thing pays its wires out (0.4.4)', () => {
+      kit.reset();
+      const a = kit.spawn('crate', -1, 0.5);
+      const b = kit.spawn('crate', 1, 0.5);
+      kit.advance(0.3);
+      const w = C.create('wire', a.parts[0], { x: a.parts[0].x, y: a.parts[0].y }, b.parts[0], { x: b.parts[0].x, y: b.parts[0].y })!;
+      const rest = w.rest;
+      b.translate(rest * 0.05, 0);
+      kit.advance(0.1);
+      if (!C.list.includes(w)) return 'stretched 5%, the wire snapped';
+      // held in a hand: it pays out
+      b.handHeld++;
+      b.translate(rest, 0);
+      kit.advance(0.1);
+      b.handHeld--;
+      if (!C.list.includes(w)) return 'dragged away, the wire snapped';
+      if (!(w.rest > rest * 1.5)) return `dragged twice as far, the wire’s ${w.rest.toFixed(2)} m long (was ${rest.toFixed(2)})`;
+      b.translate(w.rest * 0.15, 0);
+      kit.advance(0.1);
+      if (C.list.includes(w)) return 'pulled 15% past its length, the wire held';
+      return true;
+    }],
+    ['extra: rocketry: a contraption saved with its stages fired spawns with them ready again (0.4.4)', () => {
+      const snap = {
+        entities: [
+          { def: 'thruster', parts: [], stage: 1, staged: true, extra: { on: true, thrust: 4 } },
+          { def: 'decoupler', parts: [], stage: 1, staged: true, extra: { fired: true } },
+          { def: 'big-parachute', parts: [], stage: 3, staged: true, extra: { state: 'spent', auto: false } },
+          { def: 'solid-booster', parts: [], stage: 2, staged: true, extra: { grain: 3, lit: true } },
+          { def: 'thruster', parts: [], stage: 2, extra: { on: true } },
+        ],
+        connections: [],
+      } as unknown as Snapshot;
+      const out = unfired(snap).entities as unknown as { staged?: boolean; extra: Record<string, unknown> }[];
+      if (out.some((e) => e.staged)) return 'a part’s still staged';
+      if (out[0].extra.on !== false || out[0].extra.thrust !== 4) return `the thruster came back ${JSON.stringify(out[0].extra)}`;
+      if (out[1].extra.fired !== false) return 'the decoupler came back fired';
+      if (out[2].extra.state !== 'packed') return `the parachute came back ${String(out[2].extra.state)}`;
+      if (out[3].extra.lit !== false) return 'the booster came back lit';
+      if (out[4].extra.on !== true) return 'a part whose stage hadn’t fired was changed';
+      return true;
+    }],
+    ['extra: rocketry: three thrusters side by side under a small craft, 0.43 m apart, turn it on Q and E (a second stage’s steered nothing: 0.4.4)', () => {
+      world(0, 2);
+      game.fuel.mode = 'free';
+      const beam = kit.spawn('short-beam', 0, 0.62);
+      const ts = [-0.43, 0, 0.43].map((x) => kit.spawn('thruster', x, 0.23, { angle: Math.PI / 2 }) as Thruster);
+      const seat = kit.spawn('cockpit', 0, 1.1);
+      kit.advance(0.2);
+      for (const t of ts) weld(beam, t, { x: t.main.x, y: 0.5 });
+      weld(beam, seat, { x: 0, y: 0.7 });
+      const h = kit.spawn('human', 0, 1.8) as Human;
+      (seat as unknown as { seat(h: Human): void }).seat(h);
+      controls.selection = new Set([seat]);
+      kit.advance(0.2);
+      kit.key('KeyW', true);
+      kit.advance(1);
+      const p = seat.parts[0];
+      const a0 = p.bodyAngle;
+      kit.key('KeyQ', true);
+      kit.advance(0.6);
+      kit.key('KeyQ', false);
+      const q = ((p.bodyAngle - a0) * 180) / Math.PI;
+      const av = p.av;
+      kit.key('KeyE', true);
+      kit.advance(0.6);
+      kit.key('KeyE', false);
+      const av2 = p.av;
+      kit.key('KeyW', false);
+      controls.selection = new Set();
+      if (q < 8) return `Q for 0.6 s turned it ${q.toFixed(1)}°`;
+      if (!(av > 0.3)) return `turning on Q at only ${av.toFixed(2)} rad/s`;
+      if (!(av2 < av - 0.5)) return `E didn’t turn it back (${av.toFixed(2)} → ${av2.toFixed(2)} rad/s)`;
+      return true;
+    }],
+    ['extra: rocketry: a thruster’s flame stays at its nozzle going 400 m/s, not left behind as dots (0.4.4)', () => {
+      world(0, 400);
+      game.fuel.mode = 'free';
+      const tank = kit.spawn('big-fuel-tank', 0, 400) as FuelTank;
+      const thr = kit.spawn('thruster', 0, 399.1, { angle: Math.PI / 2 }) as Thruster;
+      kit.advance(0.05);
+      weld(tank, thr, { x: 0, y: 399.3 });
+      thr.activate();
+      kit.advance(0.1);
+      for (const e of [tank, thr]) for (const q of e.parts) q.body.setLinvel({ x: 0, y: 400 }, true);
+      for (let i = 0; i < 10; i++) {
+        kit.advance(0.02);
+        r.camY = tank.main.y;
+      }
+      const n = thr.main.pixelToWorld(7, 14);
+      const L = (game.particles as unknown as { fireL: { count: number; x: Float64Array; y: Float64Array } }).fireL;
+      let near = 0;
+      for (let i = 0; i < L.count; i++) if (Math.hypot(L.x[i] - n.x, L.y[i] - n.y) < 3) near++;
+      if (near < 8) return `going 400 m/s, ${near} of its ${L.count} flames are within 3 m of its nozzle`;
+      return true;
+    }],
+    ['extra: rocketry: the camera following something at 400 m/s holds it still on screen at 165 frames a second (it juddered by tens of pixels: 0.4.4)', () => kit.still(async () => {
+      world(0, 3000);
+      const box = kit.spawn('metal-box', 0, 3000);
+      box.parts[0].body.setLinvel({ x: 400, y: 0 }, true);
+      controls.setFollow([box]);
+      const g = game as unknown as { frameAt(t: number): void; lastTime: number };
+      let t = performance.now();
+      g.lastTime = t;
+      const p = box.parts[0];
+      const sx: number[] = [];
+      for (let i = 0; i < 220; i++) {
+        t += 1000 / 165 + (Math.random() - 0.5) * 0.4;
+        g.frameAt(t);
+        sx.push((p.sprite.x - r.camX) * r.zoom);
+      }
+      controls.setFollow(null);
+      let worst = 0;
+      for (let i = 121; i < sx.length; i++) worst = Math.max(worst, Math.abs(sx[i] - sx[i - 1]));
+      if (game.halted) return 'the physics broke';
+      if (worst > 3) return `followed at 400 m/s, it jumps by up to ${worst.toFixed(1)} px a frame on screen`;
+      return true;
+    })],
   ];
 }

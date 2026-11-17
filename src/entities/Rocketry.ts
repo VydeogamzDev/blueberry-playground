@@ -35,6 +35,9 @@ const MOST_HOLES = 8;
 const COOK_T = 2.5;
 const COOK_TEMP = 380;
 
+/** Its menu's entry for the stage it feeds (see FuelTank.feeds). */
+const FEEDS_LABEL = 'Fuel to: ';
+
 /**
  * A fuel tank: the engines built into the same build draw on it (see systems/Fuel),
  * and it gets lighter as it empties. Shot, it leaks through each hole, and may catch;
@@ -43,6 +46,8 @@ const COOK_TEMP = 380;
 export class FuelTank extends Prop implements FuelStore {
   fuel: number;
   readonly capacity: number;
+  /** The stage whose engines it feeds, anywhere in its build (0: the engines on its side of any decoupler: see FuelStore.feeds). */
+  feeds = 0;
   /** Where it's been holed (art pixels): fuel runs out of each. */
   holes: [number, number][] = [];
   private load = -1;
@@ -74,7 +79,11 @@ export class FuelTank extends Prop implements FuelStore {
     return t;
   }
 
-  /** Weighs it down with the fuel in it (low in it: it settles), when that's changed by a fair bit. */
+  /**
+   * Weighs it down with the fuel in it, when that's changed by a fair bit: low in it, toward
+   * the ground as it lies then (0.4.4: it went to the tank's own bottom, so one lying on its
+   * side had its fuel off to one side, and a rocket built round one leaned and tipped over).
+   */
   private weigh(force = false): void {
     const m = this.fuel;
     if (!force && Math.abs(m - this.load) < this.capacity * 0.01 && (m > 0 || this.load === 0)) return;
@@ -84,7 +93,12 @@ export class FuelTank extends Prop implements FuelStore {
     const w = p.w * PX;
     const h = p.h * PX;
     const f = m / this.capacity;
-    p.body.setAdditionalMassProperties(m, { x: 0, y: -h * 0.5 * (1 - f) }, (m * (w * w + h * h * f * f)) / 12, true);
+    // (the way down, in its own frame, and how far it reaches that way from its middle)
+    const a = p.body.rotation();
+    const dx = -Math.sin(a);
+    const dy = -Math.cos(a);
+    const reach = (Math.abs(dx) * w + Math.abs(dy) * h) * 0.5 * (1 - f);
+    p.body.setAdditionalMassProperties(m, { x: dx * reach, y: dy * reach }, (m * (w * w + h * h * f * f)) / 12, true);
     p.aeroFresh = false;
   }
 
@@ -141,16 +155,22 @@ export class FuelTank extends Prop implements FuelStore {
       { label: `Fuel: ${pct}% (${Math.round(this.fuel)} of ${this.capacity} kg)`, disabled: true, action: () => {} },
       { label: 'Fill up', action: () => this.fill(this.capacity) },
       { label: 'Empty', action: () => this.take(this.fuel) },
+      {
+        label: `${FEEDS_LABEL}${this.feeds ? `stage ${this.feeds}’s engines` : 'engines this side of a decoupler'}`,
+        hint: 'next',
+        action: () => (this.feeds = (this.feeds + 1) % 10),
+      },
       ...(this.holes.length ? [{ label: `Patch ${this.holes.length === 1 ? 'the hole' : `${this.holes.length} holes`}`, action: () => (this.holes = []) }] : []),
     ];
   }
 
   protected serializeExtra(): Record<string, unknown> {
-    return { fuel: this.fuel, holes: this.holes };
+    return { fuel: this.fuel, holes: this.holes, ...(this.feeds ? { feeds: this.feeds } : {}) };
   }
 
   protected restoreExtra(x: Record<string, unknown>): void {
     this.fuel = num(x.fuel, 0, this.capacity, this.capacity);
+    this.feeds = Math.round(num(x.feeds, 0, 9, 0));
     this.holes = Array.isArray(x.holes)
       ? x.holes.slice(0, MOST_HOLES).filter((h): h is [number, number] => Array.isArray(h) && h.length === 2 && h.every((v) => typeof v === 'number' && Number.isFinite(v)))
       : [];
@@ -278,6 +298,14 @@ export const CHUTE = {
   small: { area: 16, open: 0.9, tear: 16000, rope: 3.2 },
   big: { area: 48, open: 1.4, tear: 90000, rope: 5 },
 };
+/**
+ * What's left of a torn canopy's pull (a share of its area: shreds), and the pull what's
+ * left of it bears (a share of what tore it) before it tears off its lines and is gone (0.4.4). A torn
+ * one kept an eighth of its pull, on lines that never broke, and nothing but a cap of nine
+ * tenths of the speed a step held it: opened at 400 m/s, it stopped a craft dead in a blink.
+ */
+const TORN_AREA = 0.03;
+const TORN_HOLDS = 0.5;
 /** A worn pack opens itself falling faster than this (m/s), this high (m) over the ground. */
 const AUTO_SPEED = 12;
 const AUTO_HEIGHT = 25;
@@ -287,7 +315,8 @@ const CUT_LAST = 25;
 /**
  * An open parachute's canopy (made by its pack: see Parachute): it pulls against the air
  * as ½ρv²·area, opening over a second (less of a jolt), and if the pull ever passes what
- * it bears (opened too fast), it tears and hardly holds any more.
+ * it bears (opened too fast), it tears to shreds and hardly holds any more; pulled harder
+ * still, its lines snap and it's gone.
  */
 export class Canopy extends Prop {
   readonly big: boolean;
@@ -339,17 +368,36 @@ export class Canopy extends Prop {
     if (v < 0.3) return;
     const rho = g.air.densityAt(p.y);
     if (rho <= 1e-6) return;
-    const area = s.area * this.inflate * this.inflate * (this.torn ? 0.12 : this.cut ? 0.25 : 1);
-    let f = 0.5 * rho * v * v * area;
-    if (!this.torn && !this.cut && f > s.tear) this.tear();
+    let f = 0.5 * rho * v * v * s.area * this.inflate * this.inflate * (this.cut ? 0.25 : 1);
+    if (!this.torn && !this.cut && f > s.tear) {
+      // (it bears the pull that tears it, and no more)
+      this.tear();
+      f = s.tear;
+    } else if (this.torn) {
+      f *= TORN_AREA;
+      // (shreds pulled harder than they bear: torn off its lines)
+      if (!this.cut && f > s.tear * TORN_HOLDS) {
+        this.snapLines();
+        f = s.tear * TORN_HOLDS;
+      }
+    }
     // (never more in a step than stops it and what it holds)
-    f = Math.min(f, (0.9 * this.carried() * v) / dt);
+    f = Math.min(f, (0.5 * this.carried() * v) / dt);
     p.body.applyImpulse({ x: (-vx / v) * f * dt, y: (-vy / v) * f * dt }, true);
     // (it hangs dome up: a little turn toward its pull)
     const up = p.localDir(0, 1);
     const want = { x: -vx / v, y: -vy / v };
     const cross = up.x * want.y - up.y * want.x;
     p.body.applyTorqueImpulse((cross * 6 - p.av * 1.5) * p.mass * dt, true);
+  }
+
+  /** Pulled past what its lines bear: they snap, and it blows away (its pack's spent: see Parachute). */
+  snapLines(): void {
+    if (this.cut) return;
+    const g = this.game;
+    for (const k of g.connections.connectionsOf(this)) if (k.kind === 'rope') g.connections.remove(k);
+    this.cut = true;
+    g.sound.play('machine/rope_snap', { gain: 0.9, x: this.main.x, rate: 0.8 });
   }
 
   /** Opened too fast: it tears (and hardly holds). */
@@ -390,6 +438,14 @@ export class Canopy extends Prop {
  */
 export class Parachute extends Prop implements Commanded {
   readonly big: boolean;
+
+  /**
+   * What its welds hold (0.4.4): what its canopy can pull. Held as a light part's are, a
+   * heavy canopy opened fast tore the pack off what it was on and they flew off together.
+   */
+  get holdsPull(): number {
+    return (this.big ? CHUTE.big : CHUTE.small).tear * 1.5;
+  }
   readonly worn: boolean;
   state: 'packed' | 'open' | 'spent' = 'packed';
   canopy: Canopy | null = null;
@@ -500,9 +556,10 @@ export class Parachute extends Prop implements Commanded {
     super.preStep(dt);
     const p = this.main;
     if (this.destroyed || p.destroyed) return;
-    // (its canopy shot away or burnt: spent)
-    if (this.state === 'open' && (!this.canopy || this.canopy.destroyed)) {
+    // (its canopy shot away or burnt, or torn off its lines: spent)
+    if (this.state === 'open' && (!this.canopy || this.canopy.destroyed || this.canopy.cut)) {
       this.canopy = null;
+      this.lines = null;
       this.state = 'spent';
     }
     if (this.state === 'packed' && this.auto && p.vy < -AUTO_SPEED && !p.frozen) {
@@ -813,11 +870,10 @@ export class SolidBooster extends Thruster {
     // (a solid motor's thick white smoke)
     const p = this.main;
     const n = p.pixelToWorld(this.nozzlePx[0], this.nozzlePx[1]);
-    if (Math.random() < 0.7) {
-      this.game.particles.emit(PK.Smoke, n.x - f.x * 0.4, n.y - f.y * 0.4, {
+    this.trail(n, this.nozzleVel(n), 0.7, (x, y) =>
+      this.game.particles.emit(PK.Smoke, x - f.x * 0.4, y - f.y * 0.4, {
         vx: -f.x * 3 + (Math.random() - 0.5), vy: -f.y * 3 + (Math.random() - 0.5), life: 2.5, size: 0.3, size1: 1.2, color: 0xeeeeee, color1: 0xbdbdbd, alpha: 0.8, alpha1: 0, gravity: -0.05, drag: 1.5,
-      });
-    }
+      }));
   }
 
   contextActions(): ContextAction[] {
@@ -889,8 +945,9 @@ export class RcsThruster extends Thruster {
     const p = this.main;
     const n = p.pixelToWorld(this.nozzlePx[0], this.nozzlePx[1]);
     const g = this.game;
-    g.particles.emit(PK.Smoke, n.x, n.y, {
-      vx: -f.x * 6 + (Math.random() - 0.5) * 1.5, vy: -f.y * 6 + (Math.random() - 0.5) * 1.5, life: 0.3, size: 0.06, size1: 0.3, color: 0xffffff, color1: 0xdfe8f0, alpha: 0.8, alpha1: 0, gravity: 0, drag: 4,
+    const nv = this.nozzleVel(n);
+    g.particles.plume(PK.Smoke, n.x, n.y, nv.x, nv.y, -f.x * 6 + (Math.random() - 0.5) * 1.5, -f.y * 6 + (Math.random() - 0.5) * 1.5, {
+      life: 0.3, size: 0.06, size1: 0.3, color: 0xffffff, color1: 0xdfe8f0, alpha: 0.8, alpha1: 0, gravity: 0, drag: 4,
     });
     g.sound.hold(this, 'machine/extinguisher_loop', 0.18, p.x, 1.6);
   }

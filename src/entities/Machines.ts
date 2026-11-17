@@ -455,17 +455,39 @@ export class Thruster extends Prop implements HandSwitched, Engine {
     const thin = g.map.world ? g.air.thinness(p.y) : 1;
     const wide = 1 + 3 * (1 - thin);
     const ps = g.particles;
-    ps.emit(PK.Fire, n.x, n.y, {
-      vx: ex * sp + (Math.random() - 0.5) * wide, vy: ey * sp + (Math.random() - 0.5) * wide,
+    // (going along with the nozzle: see Particles.plume())
+    const nv = this.nozzleVel(n);
+    ps.plume(PK.Fire, n.x, n.y, nv.x, nv.y, ex * sp + (Math.random() - 0.5) * wide, ey * sp + (Math.random() - 0.5) * wide, {
       life: (0.12 + Math.random() * 0.1) * (1 + (wide - 1) * 0.5), size: 0.12 * Math.sqrt(wide), size1: 0.03 * wide, color: 0xbfe7ff, color1: 0xff7a2a, alpha: 0.9, alpha1: 0.2, gravity: 0, drag: 2,
     });
-    if (Math.random() < 0.15 * thin) ps.smoke(n.x + ex * 0.3, n.y + ey * 0.3, 1, 0.15);
+    this.trail(n, nv, 0.15 * thin, (x, y) => ps.smoke(x + ex * 0.3, y + ey * 0.3, 1, 0.15));
     g.sound.hold(this, 'machine/thruster_loop', 0.45, p.x);
+  }
+
+  /** How fast the nozzle at `n` (world) is going: its part's speed and turn. */
+  protected nozzleVel(n: V2): V2 {
+    const p = this.main;
+    return { x: p.vx - p.av * (n.y - p.y), y: p.vy + p.av * (n.x - p.x) };
+  }
+
+  /**
+   * What an engine leaves in the air behind it (smoke), `chance` a step: spread along the
+   * way the nozzle came this step, a puff each half metre or so, so a fast one leaves a
+   * trail and not a puff every few metres.
+   */
+  protected trail(n: V2, nv: V2, chance: number, puff: (x: number, y: number) => void): void {
+    const dt = this.game.stepDt;
+    const k = Math.min(8, Math.max(1, Math.ceil((Math.hypot(nv.x, nv.y) * dt) / 0.5)));
+    for (let i = 0; i < k; i++) {
+      if (Math.random() >= chance) continue;
+      const f = (i + Math.random()) / k;
+      puff(n.x - nv.x * dt * f, n.y - nv.y * dt * f);
+    }
   }
 
   frame(): void {
     if (!this.running || this.main.frozen || this.lit <= 0) return;
-    const n = this.main.pixelToWorld(this.nozzlePx[0], this.nozzlePx[1]);
+    const n = this.main.pixelDrawn(this.nozzlePx[0], this.nozzlePx[1]);
     this.game.renderer.addLight(n.x, n.y, 1.8, 0.3 + Math.random() * 0.1, 0xffa860);
   }
 

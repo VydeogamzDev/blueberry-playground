@@ -6,6 +6,7 @@ import { Human } from './Human';
 import { placeInSeat, type SeatSpec } from './Car';
 import { cushionOf } from './Safety';
 import { PK } from '../systems/Particles';
+import { BURN } from '../systems/Fuel';
 import { jobAction, pilotState, restorePilot, type Engine, type Job, type Steadier } from '../systems/Piloting';
 import { GYRO_FRAMES, HOVER_NOZZLE, LEVER_STEPS, COCKPIT, gyroArt, hoverThrusterArt, keyTriggerArt, throttleLeverArt } from '../art/flight';
 import type { Entity } from '../world/Entity';
@@ -26,7 +27,8 @@ export const HOVER = { force: 2500, min: 0.5, max: 8, reach: 10 };
  * the ground or anything solid, pushing down as hard as that takes: several on a
  * build each hold their own corner, so it rides level. Switched on, it holds the
  * height it was at then; flown (see systems/Piloting), the throttle sets the
- * height (none: it lets down). It eases itself upright as well.
+ * height (none: it lets down). It eases itself upright as well. It burns fuel from the
+ * tanks in its build, as a jet does (0.4.4: it ran on nothing).
  */
 export class HoverThruster extends Prop implements HandSwitched, Engine {
   on = false;
@@ -39,6 +41,8 @@ export class HoverThruster extends Prop implements HandSwitched, Engine {
   hold = 1.5;
   /** How hard it pushes now (0 to 1). */
   push = 0;
+  /** Out of fuel: running, but its build's tanks are empty, or it has none (see systems/Fuel). */
+  dry = false;
   private sum = 0;
   /** What it's built into, not felt for as the ground under it (looked over now and then). */
   private mine = new Set<Entity>();
@@ -93,6 +97,11 @@ export class HoverThruster extends Prop implements HandSwitched, Engine {
     return { x: this.main.x, y: this.main.y };
   }
 
+  /** The fuel it burns at full (kg/s: see Piloting.buildStats()). */
+  burnRate(): number {
+    return HOVER.force * BURN.jet;
+  }
+
   /** The height it's holding now: the pilot's throttle's, or its own. */
   get target(): number {
     return this.pilotOut !== null ? HOVER.min + this.pilotOut * (HOVER.max - HOVER.min) : this.hold;
@@ -134,6 +143,7 @@ export class HoverThruster extends Prop implements HandSwitched, Engine {
     if (!run) {
       this.push = 0;
       this.sum = 0;
+      this.dry = false;
       return;
     }
     const d = this.pushDir();
@@ -145,7 +155,15 @@ export class HoverThruster extends Prop implements HandSwitched, Engine {
     if (Math.abs(err) < 1.5) this.sum = clamp(this.sum + err * dt, -2, 2);
     const g = Math.abs(this.game.physics.world.gravity.y);
     const level = this.pilotOut !== null || this.on ? 1 : this.powerLevel;
-    const f = clamp(this.share * (g + 6 * err - 4 * v + 1.5 * this.sum), 0, HOVER.force) * level;
+    const want = clamp(this.share * (g + 6 * err - 4 * v + 1.5 * this.sum), 0, HOVER.force) * level;
+    const got = this.game.fuel.draw(this, want * BURN.jet * dt);
+    this.dry = got <= 0;
+    if (this.dry) {
+      this.push = 0;
+      this.sum = 0;
+      return;
+    }
+    const f = want * got;
     const k = (this.push = f / HOVER.force);
     p.body.applyImpulse({ x: d.x * f * dt, y: d.y * f * dt }, true);
     // it eases itself (and what it's on) upright

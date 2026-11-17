@@ -569,6 +569,16 @@ export class Part {
     return { x: lx + this.w / 2, y: this.h / 2 - ly };
   }
 
+  /**
+   * A sprite pixel's centre where it's drawn this frame (see render(), Game.drawAlpha): for
+   * what's drawn at it each frame (a nozzle's glow), which at 400 m/s was a step ahead.
+   */
+  pixelDrawn(ix: number, iy: number): V2 {
+    const w = this.pixelToWorld(ix, iy);
+    const back = 1 - this.entity.game.drawAlpha;
+    return { x: w.x - (this.x - this.px) * back, y: w.y - (this.y - this.py) * back };
+  }
+
   /** Sprite pixel center -> world point. */
   pixelToWorld(ix: number, iy: number): V2 {
     const l = this.pixelToLocal(ix, iy);
