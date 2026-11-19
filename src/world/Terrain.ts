@@ -13,6 +13,8 @@ import { smoothstep } from '../engine/math';
 
 /** How far (m) either side of the start the ground is flat (and at 0). */
 export const FLAT = 200;
+/** And east of the start, the airfield (0.4.5): flat on to here (m), long enough for an airliner to take off and land. */
+export const AIRFIELD = 2600;
 /** Over how much more (m) past FLAT the land rises into its own shape. */
 const EASE = 300;
 /** How far apart (m) the ground's heights are sampled for the physics and its drawing (see Environment's chunks). */
@@ -93,7 +95,8 @@ export class TerrainGen {
 
   /** The ground's height at x along the land as it's made, before it goes round. */
   private rawHeight(x: number): number {
-    const a = Math.abs(x);
+    // (how far past the flat start, or the airfield east of it)
+    const a = x < 0 ? -x : x > AIRFIELD ? x - AIRFIELD + FLAT : Math.min(x, FLAT);
     if (a <= FLAT) return 0;
     const s = this.seed;
     // what kind of land it is, changing every few kilometres: plains, hills, mountains

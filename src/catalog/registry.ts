@@ -1,6 +1,7 @@
 import { register, registerProps } from './items';
 import { registerWeapons, registerMelee, registerExplosives, registerMedical, registerLiquids, registerMachinery, registerDevices, registerTools } from './weapons';
 import { registerVehicles } from './vehicles';
+import { registerAircraft } from './aircraft';
 import { registerArsenal } from './arsenal';
 import { registerMissiles } from './missiles';
 import { registerMachines2 } from './machines2';
@@ -96,6 +97,7 @@ export function registerAll(): void {
   registerMachinery();
   registerDevices();
   registerVehicles();
+  registerAircraft();
   registerTools();
   registerArsenal();
   registerMissiles();

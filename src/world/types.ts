@@ -4,7 +4,7 @@ import type { Entity } from './Entity';
 import type { Part } from './Part';
 import type { Snapshot } from './Snapshot';
 
-export type Category = 'Characters' | 'Objects' | 'Weapons' | 'Melee' | 'Explosives' | 'Medical' | 'Machinery' | 'Vehicles' | 'Flight' | 'Contraptions' | 'Tools';
+export type Category = 'Characters' | 'Objects' | 'Weapons' | 'Melee' | 'Explosives' | 'Medical' | 'Machinery' | 'Vehicles' | 'Aircraft' | 'Flight' | 'Contraptions' | 'Tools';
 
 export const CATEGORIES: { id: Category; icon: string; label: string }[] = [
   { id: 'Characters', icon: 'human', label: 'Characters' },
@@ -15,6 +15,7 @@ export const CATEGORIES: { id: Category; icon: string; label: string }[] = [
   { id: 'Medical', icon: 'syringe', label: 'Medical' },
   { id: 'Machinery', icon: 'gear', label: 'Machinery' },
   { id: 'Vehicles', icon: 'car', label: 'Vehicles' },
+  { id: 'Aircraft', icon: 'plane', label: 'Aircraft' },
   { id: 'Flight', icon: 'rocket', label: 'Flight & space' },
   { id: 'Contraptions', icon: 'blueprint', label: 'Contraptions' },
   { id: 'Tools', icon: 'wrench', label: 'Tools' },
@@ -47,6 +48,8 @@ export interface ItemDef {
   halfHeight?: number;
   /** Search keywords. */
   tags?: string[];
+  /** The heading it's listed under on its shelf (the aircraft's FAA categories). */
+  group?: string;
   /** Can be made any size: its config's w and h (sprite pixels) are its size. */
   resizable?: boolean;
   /** Not listed in the toybox (drawn shapes: made with the Shape tool). */

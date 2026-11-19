@@ -23,6 +23,8 @@ interface Wheel {
   flat: boolean;
   grip: number;
   thumpT: number;
+  /** An aircraft's (see Aircraft.apply()): its grip its own, and rolling it slides by design. */
+  own: boolean;
 }
 
 /**
@@ -59,7 +61,7 @@ export class Wheels {
         const col = p.colliders[0];
         if (!col.isValid() || col.shapeType() !== RAPIER.ShapeType.Ball) continue;
         const was = this.byPart.get(p);
-        const w = was && was.col === col ? was : { part: p, col, r0: col.radius(), f0: col.friction(), flat: false, grip: -1, thumpT: 0 };
+        const w = was && was.col === col ? was : { part: p, col, r0: col.radius(), f0: col.friction(), flat: false, grip: -1, thumpT: 0, own: (e as { ownWheels?: boolean }).ownWheels === true };
         next.push(w);
         seen.set(p, w);
       }
@@ -93,6 +95,7 @@ export class Wheels {
           g.particles.debris(p.x, p.y, 0, 1, 4, 0x2f3034, 3);
         }
       }
+      if (w.own) continue;
       const grip = ground * (w.flat ? FLAT.grip : 1);
       if (Math.abs(grip - w.grip) > 0.02) {
         w.grip = grip;

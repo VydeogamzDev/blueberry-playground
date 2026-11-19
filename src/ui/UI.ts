@@ -491,7 +491,11 @@ export class UI implements UIBridge {
       imp.onclick = () => this.importFile();
       this.grid.appendChild(imp);
     }
+    let group: string | undefined;
     for (const def of list) {
+      // (a shelf's groups headed: the aircraft by their kind)
+      if (!q && def.group && def.group !== group) this.grid.appendChild(el('div', 'items-group', def.group));
+      group = def.group;
       const tile = el('div', 'item');
       tile.title = def.description;
       // (what it is, for a tutorial step that greys out the toys it isn't about)
@@ -2077,7 +2081,7 @@ export class UI implements UIBridge {
     const fixed = hud.fixed ? 'Fixed to the background (right-click it: Free from the background) · ' : '';
     // (jets flamed out up high, propellers with nothing to bite: said, or full throttle and nothing happening is a mystery)
     const noAir = hud.noAir ? ` · ${hud.noAir} out of air (jets and propellers need it: rocket thrusters don’t)` : '';
-    const text = `${fixed}${hud.speed.toFixed(1)} m/s · ${hud.height.toFixed(1)} m up · climb ${climb} m/s · throttle ${Math.round(hud.throttle * 100)}% · ${hud.running}/${hud.engines} running${noAir}${air}`;
+    const text = `${fixed}${hud.speed.toFixed(1)} m/s · ${hud.height.toFixed(1)} m up · climb ${climb} m/s · throttle ${Math.round(hud.throttle * 100)}% · ${hud.running}/${hud.engines} running${noAir}${air}${hud.note ? ` · ${hud.note}` : ''}`;
     if (text !== this.pilotText) {
       this.pilotText = text;
       (this.pilotHud.firstChild as HTMLElement).textContent = text;

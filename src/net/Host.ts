@@ -746,7 +746,7 @@ export class NetHost {
       case 'noCollide': c.setNoCollide(this.entities(m.ids), !!m.on); break;
       case 'rotate': c.rotateSelection(this.entities(m.ids), Number(m.angle) || 0); break;
       case 'drive':
-        for (const e of this.entities(m.ids)) if (e instanceof Car) e.steer(clamp(Number(m.x) || 0, -1, 1), clamp(Number(m.aim) || 0, -1, 1), clamp(Number(m.r) || 0, -1, 1));
+        for (const e of this.entities(m.ids)) if (e instanceof Car) e.steer(clamp(Number(m.x) || 0, -1, 1), clamp(Number(m.aim) || 0, -1, 1), clamp(Number(m.r) || 0, -1, 1), m.f === 1, m.b === 1);
         break;
       case 'key': pressKey(game, String(m.code), !!m.down); break;
       case 'pilot': {

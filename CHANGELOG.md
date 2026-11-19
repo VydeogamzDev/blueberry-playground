@@ -4,6 +4,73 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.4.5 — 2026-11-19
+
+Prebuilt aircraft: a new Aircraft shelf with one of each of the FAA's seven aircraft categories, and under
+Airplane two airliners, two light aircraft and two military jets. Each is drawn to the real one's measurements
+and flies by its numbers. Each breaks apart the way the cars and tanks do.
+
+### New
+
+- **The Aircraft shelf**, grouped by FAA category:
+
+  | Category | Aircraft |
+  |---|---|
+  | Airplane · Commercial | Boeing 737-800, ATR 72-600 |
+  | Airplane · General aviation | Cessna 172S Skyhawk, Cirrus SR22 |
+  | Airplane · Military | F-16C Fighting Falcon, A-10C Thunderbolt II |
+  | Rotorcraft | UH-60 Black Hawk |
+  | Powered-lift | V-22 Osprey |
+  | Glider | Schleicher ASK 21 |
+  | Lighter-than-air | Hot-air balloon (Cameron O-105) |
+  | Powered parachute | A two-seat cart under a ram-air canopy |
+  | Weight-shift-control | A trike under a flexwing |
+
+- **Flying them.** Select one, or sit someone in it, then:
+  - W and S work the throttle (a helicopter's collective, a glider's airbrakes, a balloon's burner and vent).
+    The throttle stays where you leave it.
+  - Q and E pitch it. Stability assist (`` ` ``) holds the attitude you let go at, and lowers the nose if the wing
+    stalls.
+  - A and D brake on the ground; on the Osprey they tilt the nacelles.
+  - F starts the engines; on the glider it starts a winch launch.
+  - The other pilot keys do what you'd expect: `[` flaps, `;` afterburner, `\` gun, Caps Lock flares, `'` eject,
+    `]` the SR22's whole-aircraft parachute, Insert autopilot, `,` lights.
+  - The readout shows speed, height, climb, angle of attack and g. It warns about a stall or overspeed.
+- **Flight model.** Each type flies by its real wing area, aspect ratio, weight, engine thrust or power,
+  never-exceed speed and g limit:
+  - Wings and tails lift, stall and drag. Flaps add lift.
+  - Jets lose thrust as the air thins; airliner turbofans also lose some with speed. Propellers trade thrust
+    for speed.
+  - Rotors lift by momentum theory: translational lift, ground effect, less lift climbing, retreating-blade
+    stall when fast, and autorotation with the engines off.
+  - Airliners hit wave drag near the speed of sound.
+  - The balloon floats on hot air: about 1 °C a second from its burner, slowly cooling.
+  - Hung wings fly at their trim angle to the air, so the throttle sets climb, not speed.
+- **Checked against the real aircraft:**
+  - Take-off: the Cessna lifts off at about 29 m/s after about 210 m. The F-16 on afterburner lifts off at
+    86 m/s after about 390 m.
+  - Hover: the Black Hawk hovers at about 62% collective and climbs 10 m/s at full.
+  - Gliding: the ASK 21 glides about 27 m for every metre it sinks.
+- **Destruction:**
+  - A landing harder than the gear is built for folds a leg. A gear hit far past that drives the strut into
+    the airframe.
+  - Crashes, bullets, blasts and fire wreck and tear the airframe into debris, and the fuel goes up.
+  - Pulling past 1.5 times the g limit tears the wings off. Holding well past the never-exceed speed makes
+    it flutter apart.
+  - Spinning props and rotors cut what they hit and break on anything solid. Losing the tail rotor sets the
+    helicopter wallowing.
+  - The balloon's envelope holes from bullets and blasts, and scorches past 125 °C.
+- **The World's airfield.** The ground east of the start is flat for 2.6 km, long enough to take off and land
+  an airliner.
+- The toybox shows a shelf's groups under headings.
+
+### Fixes
+
+- Vehicle wheels on aircraft roll freely past the physics engine's spin limit. Their rolling drag and brakes
+  are applied as forces, so small tyres no longer cap a plane at 19 m/s.
+- An aircraft's tyres no longer register a knock every step they roll. The impact reading on a fast-spinning
+  wheel used to add up and wreck a jet on its take-off run.
+
 ## 0.4.4 — 2026-11-16
 
 Engines that need fuel and tanks that feed a chosen stage, wires that snap, a second stage that steers,

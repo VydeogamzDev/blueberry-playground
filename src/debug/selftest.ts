@@ -303,13 +303,17 @@ export function makeSelfTest(game: Game, controls: Controls) {
       kit.reset();
       const w = game.physics.world;
       const ids = kit.items().filter((i) => !i.startsWith('tool-'));
-      const base = [w.bodies.len(), w.colliders.len(), w.impulseJoints.len(), game.renderer.scene.children.length];
-      for (let cycle = 0; cycle < 3; cycle++) {
+      const cycle = () => {
         for (let i = 0; i < 300; i++) kit.spawn(ids[i % ids.length], -30 + (i % 60), 1 + Math.floor(i / 60) * 2.2);
         kit.advance(0.6);
         game.clearAll();
         kit.advance(0.1);
-      }
+      };
+      // (once first: the sprite atlas grows a page for what it hasn't held before, an airliner's
+      // sprites among them, and keeps it to reuse: that's not a leak)
+      cycle();
+      const base = [w.bodies.len(), w.colliders.len(), w.impulseJoints.len(), game.renderer.scene.children.length];
+      for (let c = 0; c < 3; c++) cycle();
       const now = [w.bodies.len(), w.colliders.len(), w.impulseJoints.len(), game.renderer.scene.children.length];
       if (now.join() !== base.join()) return `leaked: ${base.join('/')} -> ${now.join('/')}`;
       if (game.physics.partByCollider.size) return 'collider map not empty';

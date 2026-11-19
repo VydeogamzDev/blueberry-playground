@@ -127,7 +127,8 @@ export class Part {
    * Its body's linear damping as made (the air's settling hold on it), and what it's
    * set to now: up high on the World it fades with the air (see systems/Altitude).
    */
-  readonly linDamp: number;
+  /** Its damping in still air (see systems/Altitude): an aircraft's riders' none while they ride (see Aircraft). */
+  linDamp: number;
   linDampNow: number;
   /** Self-collision group: parts with the same non-zero group never collide. */
   get group(): number {

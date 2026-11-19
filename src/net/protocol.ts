@@ -173,7 +173,7 @@ export type GuestOp =
   | { op: 'weightless' | 'noCollide'; ids: number[]; on: boolean }
   | { op: 'rotate'; ids: number[]; angle: number }
   /** The drive keys held for these vehicles (-1, 0 or 1: left/right on screen, a tank's barrel down/up, tilting back/forward in the air), renewed while held. */
-  | { op: 'drive'; ids: number[]; x: number; aim: number; r?: number }
+  | { op: 'drive'; ids: number[]; x: number; aim: number; r?: number; f?: number; b?: number }
   /** A key trigger's key pressed or let go (see entities/Flight). */
   | { op: 'key'; code: string; down: boolean }
   /** Flying a build (see systems/Piloting): its keys (A/D, W/S, Q/E: -1, 0 or 1), renewed while it's selected. */

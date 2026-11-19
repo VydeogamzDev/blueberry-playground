@@ -21,6 +21,7 @@ import type { ShapeMaterialId } from '../art/props';
 import type { ShapeForm } from '../entities/Shape';
 import { Car } from '../entities/Car';
 import { Tank } from '../entities/Tank';
+import { isAircraft, type Aircraft } from '../entities/Planes';
 import { TRIGGER_KEYS, pressKey } from '../entities/Flight';
 import { Firearm } from '../entities/Firearm';
 import { cleanOutline, segmentsCross, selfCrossing, signedArea, type Pt } from '../engine/geometry';
@@ -1599,6 +1600,16 @@ export class Controls {
     return out;
   }
 
+  /** The aircraft in the selection (see entities/Planes): flown by the drive, aim and pilot keys. */
+  private aircraft(): Aircraft[] {
+    return this.vehicles().filter(isAircraft);
+  }
+
+  /** Does the selection take the aim keys (W and S): a tank's gun, an aircraft's throttle? */
+  private aims(cars: Car[]): boolean {
+    return cars.some((c) => c instanceof Tank || isAircraft(c));
+  }
+
   /** What's selected to fly (see systems/Piloting), and when (and from what) it was worked out (see flown()). */
   private flying = { key: '', at: -Infinity, list: [] as Entity[] };
 
@@ -1631,7 +1642,9 @@ export class Controls {
   /** What the HUD shows of what's flown here (see systems/Piloting), or null when nothing is. */
   pilotHud(): PilotHud | null {
     const fly = this.grab ? [] : this.flown();
-    return fly.length ? this.game.piloting.hudOf(fly) : null;
+    if (fly.length) return this.game.piloting.hudOf(fly);
+    const air = this.grab ? undefined : this.aircraft()[0];
+    return air ? air.hud() : null;
   }
 
   /**
@@ -1645,11 +1658,13 @@ export class Controls {
     const x = this.grab ? 0 : this.axis('driveLeft', 'driveRight');
     const aim = this.grab ? 0 : this.axis('aimDown', 'aimUp');
     const turn = this.grab ? 0 : this.axis('turnRight', 'turnLeft');
-    const now = x || aim || turn ? this.vehicles() : [];
+    const fire = !this.grab && this.isHeld('pilotFire');
+    const boost = !this.grab && this.isHeld('boost');
+    const now = x || aim || turn || fire || boost ? this.vehicles() : [];
     for (const v of this.driven) if (!now.includes(v) && !v.destroyed) v.steer(0, 0, 0);
     this.driven.clear();
     for (const v of now) {
-      v.steer(x, aim, turn);
+      v.steer(x, aim, turn, fire, boost);
       this.driven.add(v);
     }
     // a build with engines, selected, is flown (told every step, keys or none: let go of, it's left as it is)
@@ -1663,7 +1678,20 @@ export class Controls {
   /** A pilot's order (see PilotCommand) to what's flown here: false if nothing's flown (or heard it). */
   private pilotOrder(cmd: PilotCommand): boolean {
     const fly = this.grab ? [] : this.flown();
-    if (!fly.length) return false;
+    if (!fly.length) {
+      // (an aircraft's own: see Aircraft.pilotCommand())
+      const air = this.grab ? [] : this.aircraft();
+      if (!air.length) return false;
+      if (this.net) {
+        this.net.send({ op: 'pilotCmd', ids: this.net.ids(air), cmd });
+        return true;
+      }
+      const heard = air.map((a) => a.pilotCommand(cmd)).some(Boolean);
+      if (cmd === 'assist') this.ui.toast(`Stability assist ${air[0].assist ? 'on' : 'off'}`);
+      else if (cmd === 'autopilot') this.ui.toast(`Autopilot ${air[0].autopilot ? 'on: holding its height' : 'off'}`);
+      else if (!heard) this.ui.toast(PILOT_DEAF[cmd]);
+      return heard;
+    }
     if (this.net) {
       this.net.send({ op: 'pilotCmd', ids: this.net.ids(fly), cmd });
       return true;
@@ -1685,7 +1713,7 @@ export class Controls {
     const cars = this.grab ? [] : this.vehicles();
     const flying = !this.grab && this.flown().length > 0;
     if (!cars.length && !flying) return out;
-    const tanks = cars.some((c) => c instanceof Tank);
+    const tanks = this.aims(cars);
     for (const a of ACTIONS) {
       if (!a.shares || !this.bindings.keys(a.id).includes(code)) continue;
       if (a.id === 'driveLeft' || a.id === 'driveRight' || a.id === 'turnLeft' || a.id === 'turnRight' || tanks || flying) out.add(a.shares);
@@ -2500,7 +2528,7 @@ export class Controls {
   drivable(): { drive: boolean; aim: boolean; turn: boolean } {
     const v = this.vehicles();
     const fly = this.flown().length > 0;
-    return { drive: v.length > 0 || fly, aim: fly || v.some((c) => c instanceof Tank), turn: fly || v.length > 0 };
+    return { drive: v.length > 0 || fly, aim: fly || this.aims(v), turn: fly || v.length > 0 };
   }
 
   /** The touch bar's Flip: the selection, or what's about to be placed. */
@@ -3231,7 +3259,8 @@ export class Controls {
     // with tanks, the aim keys' aim them; with Alt, time paused and something selected, the arrows nudge it instead)
     const speed = (900 / r.zoom) * dt * (this.isHeld('fast') ? 2.5 : 1);
     const cars = this.selection.size ? this.vehicles() : [];
-    const tanks = cars.some((c) => c instanceof Tank);
+    const tanks = this.aims(cars);
+    const air = cars.find(isAircraft);
     const nudging = this.game.paused && this.selection.size > 0 && (this.keys.has('AltLeft') || this.keys.has('AltRight'));
     let mx = 0;
     let my = 0;
@@ -3246,6 +3275,10 @@ export class Controls {
       r.camX += mx * speed;
       r.camY += my * speed;
       r.clampCamera();
+    } else if (air && !this.follow && (this.chase || Math.hypot(air.body.vx, air.body.vy) > 1)) {
+      // (an aircraft, moving, kept in view: or chased)
+      if (this.chase) this.chaseView(air.body, dt);
+      else this.keepInView([air], dt);
     } else if (cars.length && !this.follow && this.axis('driveLeft', 'driveRight')) this.keepInView(cars, dt);
     else if (!this.follow && this.selection.size) {
       // (what's flown, moving, kept in view as a driven car is)
@@ -3338,10 +3371,12 @@ export class Controls {
     const x = this.axis('driveLeft', 'driveRight');
     const aim = this.axis('aimDown', 'aimUp');
     const turn = this.axis('turnRight', 'turnLeft');
-    const cars = x || aim || turn ? this.vehicles() : [];
+    const fire = this.isHeld('pilotFire');
+    const boost = this.isHeld('boost');
+    const cars = x || aim || turn || fire || boost ? this.vehicles() : [];
     const stop = this.driveSent.filter((v) => !cars.includes(v));
     if (stop.length) net.send({ op: 'drive', ids: net.ids(stop), x: 0, aim: 0, r: 0 });
-    if (cars.length) net.send({ op: 'drive', ids: net.ids(cars), x, aim, r: turn });
+    if (cars.length) net.send({ op: 'drive', ids: net.ids(cars), x, aim, r: turn, ...(fire ? { f: 1 } : {}), ...(boost ? { b: 1 } : {}) });
     this.driveSent = cars;
     // (renewed while it's selected: deselected, the host lets it go soon after)
     const fly = this.grab ? [] : this.flown();
@@ -3541,6 +3576,10 @@ export class Controls {
     const drive = [this.bindings.label('driveLeft'), this.bindings.label('driveRight')].filter(Boolean).join(' ');
     if (cars.length && drive && (!this.hover || cars.includes(this.hover.entity as Car))) {
       const aim = [this.bindings.label('aimUp'), this.bindings.label('aimDown')].filter(Boolean).join(' ');
+      if (cars.some(isAircraft)) {
+        const turn = [this.bindings.label('turnLeft'), this.bindings.label('turnRight')].filter(Boolean).join(' ');
+        return `${aim}: throttle · ${turn}: pitch · ${drive}: brakes · ${this.bindings.label('activate') || 'F'}: engines`;
+      }
       const gun = aim && cars.some((c) => c instanceof Tank) ? ` · ${aim}: raise / lower the gun` : '';
       return `${drive}: drive ${cars.length > 1 ? 'the selected vehicles' : `the ${cars[0].label}`}${gun}`;
     }

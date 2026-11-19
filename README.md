@@ -16,6 +16,10 @@ It runs in a browser, as a desktop app on Windows and Mac, and on phones and tab
   dynamite, C4, an RPG, Molotovs, a flamethrower and fireworks.
 - **Vehicles**: cars, a truck and an SUV, plus four tanks (among them an M1 Abrams, a Leopard 2A7
   and a ZTZ-99A) you can drive and aim with the arrow keys.
+- **Aircraft**: one of each FAA category, modelled on real ones: a Boeing 737-800, an ATR 72, a
+  Cessna 172, a Cirrus SR22, an F-16, an A-10, a UH-60 Black Hawk, a V-22 Osprey, an ASK 21
+  glider, a hot-air balloon, a powered parachute and a weight-shift trike. They fly by the real
+  aircraft's numbers and come apart when they crash.
 - **Machines and electricity**: batteries, wires, switches, motors, pistons, thrusters, a jet
   engine, a tesla coil, turrets and detectors.
 - **Building**: rope, fuse cord, welds, springs, pins and hinges, and wires. Draw your own shapes

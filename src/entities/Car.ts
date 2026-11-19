@@ -4,7 +4,7 @@ import { lerpAngle, rotate, wrapAngle, type V2 } from '../engine/math';
 import { fromBase64 } from '../engine/base64';
 import { Sprite, type Region } from '../engine/Sprites';
 import { Entity } from '../world/Entity';
-import { MAT, softness } from '../world/Materials';
+import { MAT, softness, type PhysMaterial } from '../world/Materials';
 import { isGlass } from '../art/vehicles';
 import { Human } from './Human';
 import { toggleRun, type HandSwitched } from './Machines';
@@ -28,6 +28,9 @@ export interface CarConfig {
   axles: [number, number][];
   /** Wheel radius (sprite px) of its collider: a tracked hull draws its wheels smaller, inside the belt. */
   wheelR: number;
+  /** Each wheel's own radius (sprite px) and sprite, where they differ (an aircraft's nose wheel and mains). */
+  wheelRs?: number[];
+  wheelArts?: (() => PixelArt)[];
   /** Wheels at these axles drawn with another sprite (a tracked hull's sprocket and idler). */
   idler?: { art: () => PixelArt; axles: number[] };
   /** Road speed at the Normal setting (m/s). */
@@ -72,6 +75,13 @@ export interface CarConfig {
   tough?: number;
   /** Its shapes (by place in `shapes`) that come off in one piece when it's torn apart: a tank's turret. */
   wholeShapes?: number[];
+  /** What its body is made of (a car's, a tank's: metal). */
+  material?: PhysMaterial;
+  /**
+   * Its body's and wheels' damping (left out: the usual). An aircraft's none: its drag is
+   * its own (see Aircraft), and the usual 0.05 a second slowed a Cessna as hard as its engine pushed.
+   */
+  damping?: { linear: number; angular: number };
   /** Its fuel going up (see Explosions). */
   blast: { power: number; radius: number; damage: number };
   /**
@@ -302,7 +312,7 @@ export class Car extends Entity implements HandSwitched {
     }
   }
   /** Who sits in each seat (CarConfig.seats). */
-  private riders: (Rider | null)[];
+  protected riders: (Rider | null)[];
   /**
    * Others' parts kept from touching it (riders, what they hold, and those just
    * out who are still inside its outline), with their own collision groups to
@@ -317,7 +327,7 @@ export class Car extends Entity implements HandSwitched {
   private cruiseX = 0;
   private cruiseY = 0;
   /** Wheels the blast tore off their axles. */
-  private loose = new Set<number>();
+  protected loose = new Set<number>();
   /** Pieces blasts bit out of the body (see bite()): Repair puts them back. */
   private bitten: Debris[] = [];
   /** The blasts it has taken toward being torn apart (see dismantle()). */
@@ -335,12 +345,13 @@ export class Car extends Entity implements HandSwitched {
     this.usesPower = true;
     const art = cfg.body();
     // keep the wheels out of the floor
-    const below = (Math.max(...cfg.axles.map(([, ay]) => ay)) + 0.5 - art.h / 2 + cfg.wheelR) * PX;
-    y = Math.max(y, WORLD.floor + below + 0.02);
+    const below = (Math.max(...cfg.axles.map(([, ay], i) => ay + (cfg.wheelRs?.[i] ?? cfg.wheelR))) + 0.5 - art.h / 2) * PX;
+    if (cfg.axles.length) y = Math.max(y, WORLD.floor + below + 0.02);
     // continuous collision: at speed it would pass through a leg in a step
     this.body = this.addPart({
-      name: cfg.bodyName ?? 'Body', art, material: MAT.metal, x, y, angle: opts.angle ?? 0, density: cfg.density,
+      name: cfg.bodyName ?? 'Body', art, material: cfg.material ?? MAT.metal, x, y, angle: opts.angle ?? 0, density: cfg.density,
       textureKey: def.id + ':body', layer: 1, shapes: cfg.shapes, ccd: true,
+      linearDamping: cfg.damping?.linear, angularDamping: cfg.damping?.angular,
       // (its cabin or hull is an air-filled shell: it floats, or sinks, by its looks)
       hollow: true,
     });
@@ -348,11 +359,12 @@ export class Car extends Entity implements HandSwitched {
       const l = this.body.pixelToLocal(ax, ay);
       const w = this.body.localToWorld(l.x, l.y);
       const idler = cfg.idler?.axles.includes(i) ? cfg.idler : undefined;
+      const own = cfg.wheelArts?.[i];
       // (barely bouncy: rubber's own bounce launches a fast car off every bump)
       const wheel = this.addPart({
-        name: cfg.wheelName ?? 'Wheel', art: idler ? idler.art() : cfg.wheel(), material: MAT.rubber, x: w.x, y: w.y,
-        density: cfg.wheelDensity, restitution: 0.1, textureKey: def.id + (idler ? ':idler' : ':wheel'), layer: 2,
-        shapes: [{ kind: 'ball', r: cfg.wheelR }], angularDamping: 0.05, ccd: true,
+        name: cfg.wheelName ?? 'Wheel', art: own ? own() : idler ? idler.art() : cfg.wheel(), material: MAT.rubber, x: w.x, y: w.y,
+        density: cfg.wheelDensity, restitution: 0.1, textureKey: def.id + (own ? `:wheel${i}` : idler ? ':idler' : ':wheel'), layer: 2,
+        shapes: [{ kind: 'ball', r: cfg.wheelRs?.[i] ?? cfg.wheelR }], angularDamping: 0.05, ccd: true, linearDamping: cfg.damping?.linear,
       });
       const j = this.addJoint(RAPIER.JointData.revolute(l, { x: 0, y: 0 }), this.body, wheel) as RAPIER.RevoluteImpulseJoint;
       j.configureMotorModel(RAPIER.MotorModel.ForceBased);
@@ -380,7 +392,7 @@ export class Car extends Entity implements HandSwitched {
   }
 
   /** Drawing depth of the front layer: over every rider's band (see Z_SEATS). */
-  private get frontZ(): number {
+  protected get frontZ(): number {
     return this.zBase + Z_SEATS + this.cfg.seats.length * Z_RIDER + 0.0005;
   }
 
@@ -393,7 +405,7 @@ export class Car extends Entity implements HandSwitched {
     return !this.driving && !this.braking;
   }
 
-  private apply(): void {
+  protected apply(): void {
     const gas = this.handX ? Math.round(this.gas * 10) / 10 : 1;
     const sig = `${this.driving}:${this.dir}:${this.gear}:${this.braking || this.parkBrake}:${this.handX}:${gas}:${this.turningRound}:${this.wrecked}`;
     if (sig === this.applied) return;
@@ -631,7 +643,7 @@ export class Car extends Entity implements HandSwitched {
   }
 
   /** Takes `n` hp off the body: badly hurt it smokes, then burns; at nothing the fuel goes up. */
-  private harm(n: number): void {
+  protected harm(n: number): void {
     const b = this.body;
     if (this.wrecked || b.destroyed || n <= 0) return;
     b.hp = Math.max(0, b.hp - n);
@@ -763,7 +775,7 @@ export class Car extends Entity implements HandSwitched {
   }
 
   /** A wheel torn off its axle: it rolls away on its own, and knocks into the body like anything else. */
-  private shed(i: number): void {
+  protected shed(i: number): void {
     const j = this.axles[i];
     if (j?.isValid()) this.removeJoint(j);
     const w = this.wheels[i];
@@ -837,7 +849,7 @@ export class Car extends Entity implements HandSwitched {
    * door (as best they can), 'free' leaves them where they are (dragged out,
    * cut loose, or the car's gone), 'thrown' sends them on at `v`.
    */
-  private release(i: number, how: 'out' | 'free' | 'thrown', v?: V2): void {
+  protected release(i: number, how: 'out' | 'free' | 'thrown', v?: V2): void {
     const r = this.riders[i];
     if (!r) return;
     this.riders[i] = null;
@@ -1013,7 +1025,7 @@ export class Car extends Entity implements HandSwitched {
     }
   }
 
-  frame(): void {
+  frame(_dt = 0): void {
     const hl = this.cfg.headlight;
     if (!hl || !this.driving || this.body.destroyed) return;
     const b = this.body;
@@ -1044,7 +1056,8 @@ export class Car extends Entity implements HandSwitched {
    * `aim` raises (1) or lowers (-1) a tank's barrel. It holds a moment
    * (HAND_HOLD) unless it's renewed.
    */
-  steer(x: number, aim = 0, turn = 0): void {
+  // (`fire` and `boost`, the pilot's guns and afterburners, are an aircraft's: see entities/Planes)
+  steer(x: number, aim = 0, turn = 0, fire = false, boost = false): void {
     this.handX = Math.sign(x);
     this.handAim = Math.sign(aim);
     this.handTurn = Math.sign(turn);

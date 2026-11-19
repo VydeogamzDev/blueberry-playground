@@ -310,6 +310,8 @@ export interface PilotHud {
   /** A car's: its engine's revs and gear (see entities/Vehicles2). */
   rpm?: number;
   gear?: number;
+  /** A few words of what's set (an aircraft's flaps, its afterburner, a balloon's heat: see entities/Planes). */
+  note?: string;
   /** On the World: its true height (m), and the air there: density (kg/m³) and temperature (°C). */
   alt?: number;
   air?: number;
@@ -700,6 +702,9 @@ export class Piloting {
    * heard it. The next stage fires every part of the lowest stage number not yet fired.
    */
   command(sel: readonly Entity[], cmd: PilotCommand): boolean {
+    // (an aircraft's its own: see entities/Planes; a guest's order to one comes here)
+    const air = sel.filter((e): e is Entity & { pilotCommand(c: PilotCommand): boolean } => (e as { aircraft?: boolean }).aircraft === true);
+    if (air.length) return air.map((a) => a.pilotCommand(cmd)).some(Boolean);
     const c = this.craftOf(sel);
     if (!c) return false;
     if (cmd === 'assist') {
