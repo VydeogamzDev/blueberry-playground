@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { PX, WORLD } from '../engine/constants';
 import { UNIT_QUAD } from '../engine/Renderer';
+import { deviceClass } from '../engine/Device';
 import { liquidSound, LIQUID_COLORS, Liquid, type LiquidCatcher } from './Liquids';
 import { DROP } from './Puddles';
 import type { Game } from '../world/Game';
@@ -44,7 +45,8 @@ const MASS = DENSITY * SPACING * SPACING;
 /** Drops (see Particles.liquid(), Puddles.DROP) to a particle: a flask's 270 or so make 20. */
 export const DROPS_PER = (SPACING / PX) ** 2 / DROP;
 /** The most there can be (fewer on a phone: it's the heaviest thing the game does with them), unless the player lifts the limit (see Fluid.infinite). */
-const MAX = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 1600 : 3200;
+// (a Chromebook, an iPad or a phone, or another touch screen, keeps less of it: see Device)
+const MAX = ({ weak: 900, low: 1600, touch: 1600, desktop: 3200 } as const)[deviceClass()];
 /** Where the player's choice of no limit is kept. */
 const INFINITE_KEY = 'blueberry-water-infinite';
 /** How fast it slows what moves in it (1/s, all of it under), and its turning. */

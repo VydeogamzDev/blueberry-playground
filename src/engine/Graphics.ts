@@ -1,4 +1,5 @@
 import { store } from './Store';
+import { deviceClass } from './Device';
 
 /**
  * The graphics and performance settings (Settings > Graphics): how much of the
@@ -24,11 +25,13 @@ export interface Graphics {
   step: 'auto' | 'long';
   /** Frames drawn a second at most: as many as the screen shows ('display'), a number, or as many as the computer can make ('unlimited'). */
   fps: FpsCap;
+  /** Auto quality (0.5.0): while the frames fall behind, less resolution and fewer effects till they keep up (see AutoQuality). */
+  auto: boolean;
 }
 
 export type FpsCap = 'display' | 'unlimited' | number;
 
-export type PresetName = 'potato' | 'medium' | 'high' | 'max';
+export type PresetName = 'potato' | 'low' | 'medium' | 'high' | 'max';
 
 /**
  * The presets, lightest first. High is the game as it has always been; Max is
@@ -36,16 +39,22 @@ export type PresetName = 'potato' | 'medium' | 'high' | 'max';
  * Their frame rate cap is only where a first game starts (a touch screen's Medium:
  * 60): choosing a preset keeps the cap the player has (see presetOf()). Medium
  * chosen to lighten a heavy scene used to hold the frames to 60 as well, unasked.
+ * Low (0.5.0) is where a Chromebook, an iPad or a phone starts (see Device): three
+ * quarters of the resolution, a few lights, half the effects, few cases lying about,
+ * auto quality taking the resolution lower when the graphics chip can't keep up. Auto
+ * quality is on in all of them (and a preset leaves it as it is).
  */
 export const PRESETS: Record<PresetName, Graphics> = {
-  potato: { resolution: 0.5, lights: 0, particles: 0.25, cases: 20, debris: 40, iterations: 4, step: 'long', fps: 30 },
-  medium: { resolution: 0.75, lights: 6, particles: 0.5, cases: 80, debris: 120, iterations: 5, step: 'auto', fps: 60 },
-  high: { resolution: 1, lights: 16, particles: 1, cases: 240, debris: 250, iterations: 6, step: 'auto', fps: 'display' },
-  max: { resolution: 1, lights: 16, particles: 1, cases: 400, debris: 500, iterations: 12, step: 'auto', fps: 'display' },
+  potato: { resolution: 0.5, lights: 0, particles: 0.25, cases: 20, debris: 40, iterations: 4, step: 'long', fps: 30, auto: true },
+  low: { resolution: 0.75, lights: 4, particles: 0.5, cases: 20, debris: 120, iterations: 5, step: 'auto', fps: 60, auto: true },
+  medium: { resolution: 0.75, lights: 8, particles: 0.5, cases: 80, debris: 120, iterations: 5, step: 'auto', fps: 60, auto: true },
+  high: { resolution: 1, lights: 16, particles: 1, cases: 240, debris: 250, iterations: 6, step: 'auto', fps: 'display', auto: true },
+  max: { resolution: 1, lights: 16, particles: 1, cases: 400, debris: 500, iterations: 12, step: 'auto', fps: 'display', auto: true },
 };
 
 export const PRESET_NAMES: { id: PresetName; label: string }[] = [
   { id: 'potato', label: 'Potato' },
+  { id: 'low', label: 'Low' },
   { id: 'medium', label: 'Medium' },
   { id: 'high', label: 'High' },
   { id: 'max', label: 'Max' },
@@ -75,7 +84,7 @@ const OLD_ITERATIONS = 'blueberry-iterations';
 export function presetOf(g: Graphics): PresetName | null {
   for (const { id } of PRESET_NAMES) {
     const p = PRESETS[id];
-    if ((Object.keys(p) as (keyof Graphics)[]).every((k) => k === 'fps' || p[k] === g[k])) return id;
+    if ((Object.keys(p) as (keyof Graphics)[]).every((k) => k === 'fps' || k === 'auto' || p[k] === g[k])) return id;
   }
   return null;
 }
@@ -88,11 +97,16 @@ function nearest(list: number[], v: unknown, fallback: number): number {
 
 /**
  * The settings kept in the browser, or the defaults (with the iterations set
- * before presets, if any): High's, or on a touch screen (a phone, a tablet)
- * Medium's, kinder to its battery, and to a screen refreshing 120 times a second.
+ * before presets, if any): High's; on a Chromebook, an iPad or a phone Low's, on a
+ * weak one Potato's, and on another touch screen Medium's, kinder to its battery and
+ * to a screen refreshing 120 times a second (see Device).
  */
+export function firstPreset(): PresetName {
+  return ({ weak: 'potato', low: 'low', touch: 'medium', desktop: 'high' } as const)[deviceClass()];
+}
+
 export function loadGraphics(): Graphics {
-  const g = { ...(globalThis.matchMedia?.('(pointer: coarse)').matches ? PRESETS.medium : PRESETS.high) };
+  const g = { ...PRESETS[firstPreset()] };
   try {
     const old = parseInt(store.getItem(OLD_ITERATIONS) ?? '');
     if (old >= GRAPHICS_RANGE.iterations.min && old <= GRAPHICS_RANGE.iterations.max) g.iterations = old;
@@ -108,6 +122,7 @@ export function loadGraphics(): Graphics {
     if (typeof s.iterations === 'number' && s.iterations >= R.iterations.min && s.iterations <= R.iterations.max) g.iterations = Math.round(s.iterations);
     if (s.step === 'auto' || s.step === 'long') g.step = s.step;
     if (R.fps.includes(s.fps as FpsCap)) g.fps = s.fps as FpsCap;
+    if (typeof s.auto === 'boolean') g.auto = s.auto;
   } catch {
     // (private browsing, or a store that isn't ours: the defaults it is)
   }

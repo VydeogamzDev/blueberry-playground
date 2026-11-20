@@ -41,8 +41,11 @@ import type { Entity } from './Entity';
 import type { Part } from './Part';
 import type { EntityConfig, ItemDef, SpawnOptions } from './types';
 import { rotate, type V2 } from '../engine/math';
+import { AutoQuality } from '../engine/AutoQuality';
 import { settle, restCheck, wakeSettled, resleepSettled, REST_CHECK } from '../systems/Settle';
 
+/** How far past its reach (m) a part may be and still be tested by hand while paused (see looseColliders()): a part moved since it was last drawn. */
+const LOOSE_MARGIN = 0.5;
 /** Seconds the short step must look affordable before a heavy scene goes back to it (see Game.pickStep()). */
 const BACK_AFTER = 2;
 
@@ -209,6 +212,8 @@ export class Game {
    * screen shows aren't all seen: it's how fast the game could go).
    */
   fpsCap = 0;
+  /** Less drawn while the frames fall behind (Settings > Graphics: Auto quality). */
+  readonly autoQuality = new AutoQuality();
   /** The screen's refresh (Hz): measured from the animation frames' spacing, unless set (see setDisplayHz()). */
   displayHz = 60;
   /**
@@ -596,15 +601,27 @@ export class Game {
    * things spawned this step (not in them yet), and while time is paused
    * everything (things moved by hand then stay where the queries last saw them
    * until the next step: a crate dragged while paused couldn't be picked up
-   * again where it was put, only where it had been).
+   * again where it was put, only where it had been). Only those of parts that
+   * might reach within `r` of (x, y), when given (by where each is drawn and how
+   * far its colliders reach: testing every one, the hover under the cursor took a
+   * millisecond and a half a frame among 25 people while paused, far more on a
+   * Chromebook).
    */
-  private looseColliders(): RAPIER.Collider[] {
+  private looseColliders(x?: number, y?: number, r = 0): RAPIER.Collider[] {
     if (!this.paused) return this.physics.fresh.filter((c) => c.isValid());
     this.physics.world.propagateModifiedBodyPositionsToColliders();
     const out: RAPIER.Collider[] = [];
+    const near = x !== undefined && y !== undefined;
     for (const e of this.entities) {
       if (e.destroyed) continue;
-      for (const p of e.parts) if (!p.destroyed) for (const c of p.colliders) out.push(c);
+      for (const p of e.parts) {
+        if (p.destroyed) continue;
+        if (near && p.reach > 0) {
+          const d = p.reach + r + LOOSE_MARGIN;
+          if (Math.abs(p.x - x) > d || Math.abs(p.y - y!) > d) continue;
+        }
+        for (const c of p.colliders) out.push(c);
+      }
     }
     return out;
   }
@@ -617,7 +634,7 @@ export class Game {
   pick(x: number, y: number, radius = 0, filter?: (p: Part) => boolean): Part | null {
     const world = this.physics.world;
     const all = this.paused;
-    const fresh = this.looseColliders();
+    const fresh = this.looseColliders(x, y, radius);
     let best: Part | null = null;
     let bestZ = -Infinity;
     const onPoint = (c: RAPIER.Collider): boolean => {
@@ -660,7 +677,7 @@ export class Game {
       if (p && !p.destroyed && (!filter || filter(p))) out.add(p);
     };
     const world = this.physics.world;
-    const fresh = this.looseColliders();
+    const fresh = this.looseColliders(x, y, radius);
     if (!this.paused) world.intersectionsWithPoint({ x, y }, (c) => (take(this.physics.partOf(c) ?? null), true));
     for (const c of fresh) if (c.containsPoint({ x, y })) take(this.physics.partOf(c) ?? null);
     if (!out.size && radius > 0) take(this.pick(x, y, radius, filter));
@@ -682,7 +699,7 @@ export class Game {
     };
     // (while paused, by hand: see looseColliders())
     if (this.paused) {
-      for (const c of this.looseColliders()) if (c.intersectsShape(box, { x: cx, y: cy }, 0)) add(c);
+      for (const c of this.looseColliders(cx, cy, Math.hypot(hx, hy))) if (c.intersectsShape(box, { x: cx, y: cy }, 0)) add(c);
     } else this.physics.world.intersectionsWithShape({ x: cx, y: cy }, 0, box, add);
     return [...out];
   }
@@ -877,6 +894,10 @@ export class Game {
     const alpha = this.paused ? 1 : Math.min(1, Math.max(-0.5, this.acc / dt));
     this.renderFrame(realDt, alpha);
     this.frameMs = this.frameMs * 0.9 + (performance.now() - t0) * 0.1;
+    // (aimed at the cap, or the screen's rate, no higher than 60: a 120 Hz iPad drawing 60 keeps
+    // up; a screen's rate not yet measured, or that can't be, taken as 60)
+    const hz = this.displayHz >= 24 ? this.displayHz : 60;
+    if (realDt > 0) this.autoQuality.update(realDt, this.fps, this.frameMs, Math.min(60, this.fpsCap > 0 && this.fpsCap < Infinity ? this.fpsCap : hz));
   }
 
   /**

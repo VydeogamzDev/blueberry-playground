@@ -384,3 +384,212 @@ export class BombBay extends Prop implements Commanded {
     if (typeof x.bombs === 'number' && Number.isFinite(x.bombs)) this.bombs = Math.max(0, Math.min(BAY.bombs, Math.round(x.bombs)));
   }
 }
+
+/** A rotary cannon's rounds, its rate at full spin (rounds a second), and how long it takes to spin up and down (s). */
+export const ROTARY_GUN = { rounds: 500, rate: 100, spinUp: 0.35, spinDown: 1.4, speed: 1050, damage: 70, energy: 9000, recoil: 6 };
+
+/**
+ * A rotary cannon (0.5.0: an M61 Vulcan's build, six barrels of 20 mm): held F, or the
+ * pilot's fire key built into a plane, spins its barrels up (a moment) and then it
+ * fires a hundred rounds a second, a stream of tracer, shoving back on what it's
+ * welded to. Let go and it spins down. Its menu loads it again.
+ */
+export class RotaryCannon extends Prop implements PilotWeapon {
+  rounds = ROTARY_GUN.rounds;
+  /** How fast its barrels turn (0 to 1), and how long to its next round (s). */
+  spin = 0;
+  private pilot = false;
+  private next = 0;
+  private turn = 0;
+  private shown = -1;
+  private readonly art: (turn: number) => PixelArt;
+  private readonly muzzle: [number, number];
+
+  constructor(game: Game, def: ItemDef, cfg: PropConfig, art: (turn: number) => PixelArt, muzzle: [number, number], x: number, y: number, opts: SpawnOptions) {
+    super(game, def, cfg, x, y, opts);
+    this.art = art;
+    this.muzzle = muzzle;
+    this.activatable = true;
+  }
+
+  pilotFire(on: boolean): void {
+    this.pilot = on;
+  }
+
+  /** (F held fires it: see setActiveHeld().) */
+  activate(): void {}
+
+  canRest(): boolean {
+    return this.spin <= 0;
+  }
+
+  preStep(dt: number): void {
+    super.preStep(dt);
+    const g = this.game;
+    const want = (this.activeHeld || this.pilot) && this.works && !this.destroyed;
+    this.spin = want ? Math.min(1, this.spin + dt / ROTARY_GUN.spinUp) : Math.max(0, this.spin - dt / ROTARY_GUN.spinDown);
+    if (this.spin > 0) {
+      this.turn = (this.turn + this.spin * 30 * dt) % 3;
+      const k = Math.floor(this.turn);
+      if (k !== this.shown && !this.destroyed) {
+        this.shown = k;
+        this.main.setArt(this.art(k));
+      }
+      g.sound.hold(this, 'machine/motor_loop', 0.25 * this.spin, this.main.x, 0.8 + this.spin * 1.4);
+    }
+    if (!want || this.spin < 0.95 || g.net?.guest) {
+      this.next = 0;
+      return;
+    }
+    if (this.rounds <= 0) {
+      if (this.next <= 0) g.sound.play('gun/dryfire', { gain: 0.3, x: this.main.x });
+      this.next = 0.3;
+      return;
+    }
+    this.next -= dt;
+    const p = this.main;
+    let shot = false;
+    while (this.next <= 0 && this.rounds > 0) {
+      this.next += 1 / ROTARY_GUN.rate;
+      this.rounds--;
+      shot = true;
+      const m = p.pixelToWorld(this.muzzle[0], this.muzzle[1]);
+      const fwd = p.localDir(p.flip, 0);
+      const s = (Math.random() - 0.5) * 0.014;
+      const dx = fwd.x * Math.cos(s) - fwd.y * Math.sin(s);
+      const dy = fwd.x * Math.sin(s) + fwd.y * Math.cos(s);
+      const v = p.velocityAt(m.x, m.y);
+      const vx = dx * ROTARY_GUN.speed + v.x;
+      const vy = dy * ROTARY_GUN.speed + v.y;
+      const sp = Math.hypot(vx, vy);
+      g.projectiles.fire(m.x + fwd.x * 0.1, m.y + fwd.y * 0.1, vx / sp, vy / sp, sp, { energy: ROTARY_GUN.energy, damage: ROTARY_GUN.damage, push: 0.006, ignore: p.body, tracer: true });
+      p.body.applyImpulse({ x: -fwd.x * ROTARY_GUN.recoil, y: -fwd.y * ROTARY_GUN.recoil }, true);
+      g.particles.flash(m.x + fwd.x * 0.15, m.y + fwd.y * 0.15, 0.25);
+      if (Math.random() < 0.25) g.particles.smoke(m.x, m.y, 1, 0.25);
+    }
+    if (shot) {
+      const m = p.pixelToWorld(this.muzzle[0], this.muzzle[1]);
+      g.renderer.addLight(m.x, m.y, 2, 0.55, 0xffd890, 0.05);
+      g.sound.gunshot('minigun', m.x);
+      g.alarm(m.x, m.y, 30);
+    }
+  }
+
+  contextActions(): ContextAction[] {
+    return [
+      { label: `${this.rounds} of ${ROTARY_GUN.rounds} rounds`, disabled: true, action: () => {} },
+      { label: 'Fire: hold F (or the pilot’s fire key)', disabled: true, action: () => {} },
+      { label: 'Load it', action: () => (this.rounds = ROTARY_GUN.rounds) },
+    ];
+  }
+
+  protected serializeExtra(): Record<string, unknown> {
+    return { rounds: this.rounds };
+  }
+
+  protected restoreExtra(x: Record<string, unknown>): void {
+    if (typeof x.rounds === 'number' && Number.isFinite(x.rounds)) this.rounds = Math.max(0, Math.min(ROTARY_GUN.rounds, Math.round(x.rounds)));
+  }
+}
+
+/** The rockets each launcher (a pod, an aircraft) has fired in the last moment (see launchRocket()). */
+const recentRockets = new WeakMap<Entity, Missile[]>();
+
+/** A rocket pod's rockets, how fast held F ripples them off (a second), and how fast they leave the tube (m/s). */
+export const POD_ROCKETS = { rounds: 19, ripple: 8, launch: 30 };
+
+/**
+ * An unguided rocket pod (0.5.0: a LAU-61's build, nineteen 70 mm rockets): F, or the
+ * pilot's rockets key (9) built into a plane, fires one straight ahead (held F ripples
+ * them off); each flies on its motor for a second, falling a little, and goes off on
+ * what it hits. Its menu loads it again.
+ */
+export class RocketPod extends Prop implements Commanded {
+  rounds = POD_ROCKETS.rounds;
+  private gap = 0;
+  private shown = -1;
+  private readonly art: (rows: number) => PixelArt;
+  private readonly round: () => ItemDef;
+
+  constructor(game: Game, def: ItemDef, cfg: PropConfig, art: (rows: number) => PixelArt, round: () => ItemDef, x: number, y: number, opts: SpawnOptions) {
+    super(game, def, cfg, x, y, opts);
+    this.art = art;
+    this.round = round;
+    this.activatable = true;
+  }
+
+  pilotCommand(cmd: PilotCommand): boolean {
+    if (cmd !== 'rockets' || this.rounds <= 0) return false;
+    return !!this.fire();
+  }
+
+  activate(): void {
+    this.fire();
+  }
+
+  /** Fires the next rocket straight ahead (none left: it clicks). The rocket, or null. */
+  fire(): Missile | null {
+    const g = this.game;
+    const p = this.main;
+    if (this.destroyed || !this.works || g.net?.guest || this.gap > 0) return null;
+    if (this.rounds <= 0) {
+      g.sound.play('gun/dryfire', { gain: 0.4, x: p.x });
+      return null;
+    }
+    const row = (POD_ROCKETS.rounds - this.rounds) % 3;
+    const at = p.pixelToWorld(38, 5 + row * 3);
+    const own = [...buildOf(g, this)].flatMap((e) => e.parts.filter((q) => !q.destroyed));
+    const m = launchRocket(g, this, this.round(), at, p.localDir(p.flip, 0), this.flipped, this.zBase, own, p.velocityAt(at.x, at.y));
+    if (!m) return null;
+    this.rounds--;
+    this.gap = 1 / POD_ROCKETS.ripple;
+    return m;
+  }
+
+  preStep(dt: number): void {
+    super.preStep(dt);
+    if (this.gap > 0) this.gap -= dt;
+    if (this.activeHeld && this.gap <= 0 && this.rounds > 0) this.fire();
+    const rows = Math.min(3, this.rounds);
+    if (rows !== this.shown && !this.destroyed) {
+      this.shown = rows;
+      this.main.setArt(this.art(rows));
+    }
+  }
+
+  contextActions(): ContextAction[] {
+    return [
+      { label: `${this.rounds} of ${POD_ROCKETS.rounds} rockets`, disabled: true, action: () => {} },
+      { label: 'Fire a rocket', hint: 'F', action: () => this.activate() },
+      { label: 'Load it', action: () => (this.rounds = POD_ROCKETS.rounds) },
+    ];
+  }
+
+  protected serializeExtra(): Record<string, unknown> {
+    return { rounds: this.rounds };
+  }
+
+  protected restoreExtra(x: Record<string, unknown>): void {
+    if (typeof x.rounds === 'number' && Number.isFinite(x.rounds)) this.rounds = Math.max(0, Math.min(POD_ROCKETS.rounds, Math.round(x.rounds)));
+  }
+}
+
+/**
+ * Fires an unguided rocket (`round`) from `at` along `dir`, its tail in the tube, passing
+ * through `own` (what fired it), carried on at `carry`: a rocket pod's, a warbird's.
+ */
+export function launchRocket(g: Game, from: Entity, round: ItemDef, at: { x: number; y: number }, dir: { x: number; y: number }, flipped: boolean, zBase: number, own: import('../world/Part').Part[], carry: { x: number; y: number }): Missile | null {
+  const s = (Math.random() - 0.5) * 0.02;
+  const h = Math.atan2(dir.y, dir.x) + s;
+  const m = g.spawn(round, at.x, at.y, { flip: flipped, angle: flipped ? h - Math.PI : h });
+  if (!(m instanceof Missile)) return null;
+  m.zBase = zBase - 0.01;
+  for (const q of m.parts) q.updateZ();
+  // (rippled off one after another, they pass through each other: those still near the rail)
+  const before = (recentRockets.get(from) ?? []).filter((r) => !r.destroyed && r.age < 1);
+  recentRockets.set(from, [...before, m]);
+  m.launch([...own, ...before.map((r) => r.main)], h, POD_ROCKETS.launch, false, { kind: 'none' }, carry);
+  g.sound.play('gun/launcher', { gain: 0.5, x: at.x, rate: 1.5, vary: 0.08 });
+  g.particles.smoke(at.x, at.y, 2, 0.2);
+  return m;
+}

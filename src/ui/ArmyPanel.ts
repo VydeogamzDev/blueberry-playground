@@ -80,7 +80,7 @@ const KITS: Record<Exclude<Loadout, 'dogs' | 'gun'>, (string | null)[]> = {
 };
 
 /** The tanks a side can bring, those the catalog has (the M113 too, once it's in). */
-const TANK_IDS = ['tank', 'tank-abrams', 'tank-ztz99a', 'tank-leopard', 'm113'];
+const TANK_IDS = ['tank', 'tank-abrams', 'tank-ztz99a', 'tank-leopard', 'tank-t90a', 'm113'];
 
 /**
  * Lining a battle up: how far apart soldiers stand in a rank (m: people, and dogs,

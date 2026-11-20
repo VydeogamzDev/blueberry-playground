@@ -691,6 +691,7 @@ const PILOT_DEAF: Record<PilotCommand, string> = {
   autopilot: '',
   bombs: 'No bomb bay in what you fly',
   flares: 'No flares left in what you fly',
+  rockets: 'No rockets left in what you fly',
 };
 
 export class Controls {
@@ -3225,6 +3226,7 @@ export class Controls {
       case 'autopilot':
       case 'bombs':
       case 'flares':
+      case 'rockets':
         this.pilotOrder(id);
         break;
       case 'chaseCam':

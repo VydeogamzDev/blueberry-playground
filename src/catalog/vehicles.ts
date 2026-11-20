@@ -208,6 +208,11 @@ const LEOPARD = tankModel(V.LEOPARD2A7, {
   kg: 2550, speed: 6, torque: 640, pitch: 0.5,
   gun: { speed: 58, reload: 2, recoil: 1250, limits: [-9, 20] },
 });
+// (0.5.0) the T-90A: lighter than the Western tanks, its autoloader quick, its gun's depression shallow
+const T90A = tankModel(V.T90A, {
+  kg: 2100, speed: 6.5, torque: 700, pitch: 0.6,
+  gun: { speed: 47, reload: 1.3, recoil: 1150, limits: [-6, 14] },
+});
 
 /** The vehicle as it stands, wheels on (and its barrel, drawn first), for the toybox. */
 function standing(cfg: CarConfig, under?: { art: () => PixelArt; x: number; y: number }): () => PixelArt {
@@ -279,4 +284,6 @@ export function registerVehicles(): void {
     ZTZ99A, ['type 99', 'type 99a', 'ztz', 'china', 'chinese', 'autoloader', '125mm']);
   tank('tank-leopard', 'Leopard 2A7', 'Germany\'s Leopard 2A7, in NATO three-tone camouflage: a tall, slab-sided turret with a flat face, and the long L/55 120 mm gun fires the fastest, flattest shell.',
     LEOPARD, ['leopard', 'leo', '2a7', 'germany', 'german', 'l55', '120mm']);
+  tank('tank-t90a', 'T-90A', 'Russia’s T-90A, in plain green: low and short, with reactive armour standing out over its gun in a wedge, the Shtora’s red infra-red dazzlers either side of it, and two fuel drums on its back. Its 125 mm gun’s autoloader is quick, but the low turret lets it dip only 6°.',
+    T90A, ['t-90', 't90', 't-90a', 'russia', 'russian', 'shtora', 'kontakt', 'autoloader', '125mm']);
 }

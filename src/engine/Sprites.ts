@@ -207,6 +207,11 @@ class Page {
  */
 export class Sprites {
   private pages: Page[] = [];
+
+  /** How many atlas pages there are (each a mesh in the scene, kept once made: see alloc()). */
+  get pageCount(): number {
+    return this.pages.length;
+  }
   private uploads = new Map<Region, Uint8Array>();
 
   constructor(private readonly gl: THREE.WebGLRenderer, private readonly scene: THREE.Scene) {}

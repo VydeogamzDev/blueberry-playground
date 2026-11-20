@@ -29,8 +29,28 @@ export interface MissileSpec {
    * target, the higher the further off that is, and dives on it from close in.
    */
   loft: boolean;
+  /**
+   * A ballistic missile's climb (0.5.0): it flies at a point this many metres over
+   * its target for each metre it is off it across (past LOFT_FROM), up to the
+   * second number (m), so it goes up high and comes down on it steeply.
+   */
+  arc?: [number, number];
+  /** A proximity fuse: within this (m) of what it's after, it goes off (an aircraft needn't be struck). */
+  prox?: number;
+  /** An unguided rocket: it falls under its motor too, its nose into the way it's going. */
+  unguided?: boolean;
   /** What goes off when it hits (see WARHEADS). */
   warhead: Warhead;
+}
+
+/**
+ * Something that guides missiles by its own lock (a radar: see entities/Radar):
+ * where what it has locked on is now, and that, or null while it has no lock.
+ */
+export interface MissileGuidance {
+  readonly destroyed: boolean;
+  lockPoint(): V2 | null;
+  lockEntity(): Entity | null;
 }
 
 /**
@@ -43,6 +63,7 @@ export interface MissileSpec {
 export type Guide =
   | { kind: 'cursor'; by: number; off?: V2 }
   | { kind: 'target'; entity: Entity | null; part: Part | null; local: V2; at: V2 }
+  | { kind: 'radar'; radar: MissileGuidance | null }
   | { kind: 'none' };
 
 /** The way it leaves the tube: thrown out a few metres a second with its motor not yet lit, which lights once it's clear (a soft launch). */
@@ -108,7 +129,14 @@ export const WARHEADS: Record<MissileVersion, Warhead> = {
   standard: WARHEAD,
   cruise: { power: 240, radius: 3.4 * Math.cbrt(2), damage: 480, shrapnel: 8, jet: 1800 },
   strike: { power: 60, radius: 3.4 / Math.cbrt(2), damage: 120, shrapnel: 2, jet: 450 },
+  ballistic: WARHEAD,
+  icbm: { power: 360, radius: 3.4 * Math.cbrt(3), damage: 720, shrapnel: 12, jet: 2700 },
 };
+
+/** How many missiles one launch of a version sends out: a Strike's five, an ICBM's three, else one. */
+export function volleyOf(v: MissileVersion): number {
+  return v === 'strike' ? STRIKE_COUNT : v === 'icbm' ? ICBM_COUNT : 1;
+}
 /** What a missile's look ahead sees: anything solid. */
 const SIGHT = groups(GROUP.DEBRIS, GROUP.STATIC | GROUP.DYNAMIC);
 
@@ -178,6 +206,10 @@ export class Missile extends Entity {
   private spent = false;
   /** Where it was launched from (see CLEAR); where its tail was a step ago (the trail is laid along the way from there). */
   private start: V2 | null = null;
+  /** What fired it (its first part) and where it left from on it: it's clear once that far from it, moving or not. */
+  launcher: Entity | null = null;
+  private fromPart: Part | null = null;
+  private fromOff: V2 = { x: 0, y: 0 };
   /** Clear of what it came out of (and its side), it touches all but its salvo again. */
   private cleared = false;
   /** How far on (m, across) it goes through its own side it was fired past (see launch()). */
@@ -211,8 +243,7 @@ export class Missile extends Entity {
     const q = this.game.physics.partOf(c);
     if (!q) return true;
     if (q.entity === this || this.main.noCollide?.has(q)) return false;
-    const g = this.guide;
-    return g.kind !== 'target' || q.entity !== g.entity;
+    return q.entity !== this.quarry();
   };
 
   constructor(game: Game, def: ItemDef, kind: MissileKind, version: MissileVersion, spec: MissileSpec, art: PixelArt, shapes: ShapeSpec[], density: number, x: number, y: number, opts: SpawnOptions) {
@@ -246,7 +277,20 @@ export class Missile extends Entity {
     this.guide = guide;
     this.cold = cold;
     this.setPhase('eject');
+    // (a rocket's motor is lit in the tube: it leaves under thrust, not dropping out first)
+    if (this.spec.unguided && !cold) this.ignite();
     this.start = { x: p.x, y: p.y };
+    this.fromPart = own[0] ?? null;
+    this.launcher = this.fromPart?.entity ?? null;
+    if (this.fromPart) this.fromOff = { x: p.x - this.fromPart.x, y: p.y - this.fromPart.y };
+  }
+
+  /** How far it's got from where it was fired (from the launcher as that moves on: an aircraft's rail). */
+  private outFrom(): number {
+    const p = this.main;
+    const f = this.fromPart;
+    if (f && !f.destroyed) return Math.hypot(p.x - f.x - this.fromOff.x, p.y - f.y - this.fromOff.y);
+    return this.start ? Math.hypot(p.x - this.start.x, p.y - this.start.y) : Infinity;
   }
 
   canRest(): boolean {
@@ -269,8 +313,8 @@ export class Missile extends Entity {
   private setPhase(phase: Phase): void {
     this.phase = phase;
     this.t = 0;
-    // under its motor the wings hold it up (it flies where it's steered); otherwise it falls
-    this.main.body.setGravityScale(phase === 'boost' ? 0 : 1, true);
+    // under its motor the wings hold it up (it flies where it's steered); otherwise it falls (an unguided rocket always)
+    this.main.body.setGravityScale(phase === 'boost' && !this.spec.unguided ? 0 : 1, true);
   }
 
   preStep(dt: number): void {
@@ -285,13 +329,20 @@ export class Missile extends Entity {
     }
     // clear of what fired it (and past its own side), it can come down on it like on anything else (but its salvo)
     const passing = !!this.start && this.age < PASS_MOST && Math.abs(p.x - this.start.x) < this.passD;
-    if (!this.cleared && !passing && (!this.start || this.age > 2 || Math.hypot(p.x - this.start.x, p.y - this.start.y) > CLEAR)) {
+    if (!this.cleared && !passing && (!this.start || this.age > 2 || this.outFrom() > CLEAR)) {
       this.cleared = true;
       p.setNoCollide(this.salvo?.others(this) ?? null);
     }
     if (this.heatSeek && this.phase !== 'eject' && (this.seekT -= dt) <= 0) {
       this.seekT = SEEK_EVERY;
       this.seekHeat();
+    }
+    if (this.spec.prox && this.cleared && this.phase !== 'eject') {
+      const hit = this.near(this.spec.prox);
+      if (hit) {
+        this.detonate(hit);
+        return;
+      }
     }
     switch (this.phase) {
       case 'eject':
@@ -367,6 +418,17 @@ export class Missile extends Entity {
   private fly(dt: number): void {
     const p = this.main;
     const s = this.spec;
+    if (s.unguided) {
+      // (a rocket: its fins turn its nose into the way it's going, and its motor drives it on along that)
+      const v = p.body.linvel();
+      const sp = Math.hypot(v.x, v.y);
+      const h = sp > 3 ? Math.atan2(v.y, v.x) : this.heading();
+      this.setHeading(h);
+      const along = Math.min(s.cruise, sp + s.accel * dt);
+      if (sp > 3) p.body.setLinvel({ x: (v.x / sp) * along, y: (v.y / sp) * along }, true);
+      else p.body.setLinvel({ x: Math.cos(h) * along, y: Math.sin(h) * along }, true);
+      return;
+    }
     const want = this.aim(dt);
     let h = this.heading();
     if (want) h += clamp(wrapAngle(Math.atan2(want.y, want.x) - h), -s.turn * dt, s.turn * dt);
@@ -411,20 +473,70 @@ export class Missile extends Entity {
     if (g.kind === 'cursor') {
       const c = this.game.cursorOf(g.by);
       if (!c) return null;
-      const dx = c.x + (g.off?.x ?? 0) - p.x;
-      const dy = c.y + (g.off?.y ?? 0) - p.y;
+      const cx = c.x + (g.off?.x ?? 0);
+      const cy = c.y + (g.off?.y ?? 0);
+      const dx = cx - p.x;
+      const dy = cy + this.climb(cx) - p.y;
       const d = Math.hypot(dx, dy);
       return d < CURSOR_NEAR ? null : { x: dx / d, y: dy / d };
     }
-    if (g.kind !== 'target') return null;
-    const at = this.targetPoint(g);
-    let ty = at.y;
-    if (this.spec.loft) ty += clamp((Math.abs(at.x - p.x) - LOFT_FROM) * LOFT, 0, LOFT_MAX);
+    let at: V2 | null = null;
+    if (g.kind === 'target') at = this.targetPoint(g);
+    else if (g.kind === 'radar') at = g.radar && !g.radar.destroyed ? g.radar.lockPoint() : null;
+    // (a radar's missile with its lock gone flies on as it was going)
+    if (!at) return null;
     const dx = at.x - p.x;
-    const dy = ty - p.y;
+    const dy = at.y + this.climb(at.x) - p.y;
     const d = Math.hypot(dx, dy);
     if (d < 0.05) return null;
     return this.avoid({ x: dx / d, y: dy / d }, d, dt);
+  }
+
+  /**
+   * How high over a point `x` across it flies at it (m): a Spike's top attack, a
+   * ballistic missile's climb (see MissileSpec.arc); none for a heat seeker, which
+   * goes straight for the heat.
+   */
+  private climb(x: number): number {
+    const s = this.spec;
+    const [k, most] = s.arc ?? (s.loft ? [LOFT, LOFT_MAX] : [0, 0]);
+    if (!k || this.heatSeek) return 0;
+    return clamp((Math.abs(x - this.main.x) - LOFT_FROM) * k, 0, most);
+  }
+
+  /** What it's after now (a target's, a radar's lock), or null. */
+  private quarry(): Entity | null {
+    const g = this.guide;
+    if (g.kind === 'target') return g.entity && !g.entity.destroyed ? g.entity : null;
+    if (g.kind === 'radar') return g.radar && !g.radar.destroyed ? g.radar.lockEntity() : null;
+    return null;
+  }
+
+  /**
+   * The part of what it's after within `r` m of it (its proximity fuse: measured to the
+   * part's skin, looking ahead along its way a step), or null.
+   */
+  private near(r: number): Part | null {
+    const e = this.quarry();
+    if (!e || e === this) return null;
+    const p = this.main;
+    const v = p.body.linvel();
+    const dt = this.game.stepDt;
+    const at = { x: p.x, y: p.y };
+    const ahead = { x: p.x + v.x * dt, y: p.y + v.y * dt };
+    for (const q of e.parts) {
+      if (q.destroyed) continue;
+      // (a cheap reject first: too far off for any of its colliders)
+      const reach = r + Math.hypot(q.w, q.h) * PX * 0.5 + Math.hypot(v.x, v.y) * dt;
+      if ((q.x - p.x) ** 2 + (q.y - p.y) ** 2 > reach * reach) continue;
+      for (const c of q.colliders) {
+        for (const pt of [at, ahead]) {
+          const pr = c.projectPoint(pt, true);
+          if (pr && (pr.isInside || Math.hypot(pr.point.x - pt.x, pr.point.y - pt.y) < r)) return q;
+        }
+      }
+    }
+    return null;
   }
 
   /**
@@ -650,7 +762,8 @@ export class Missile extends Entity {
     if (typeof x.burn === 'number') this.burn = clamp(x.burn, 0, this.spec.burn);
     const at = x.at as number[] | undefined;
     const off = x.off as number[] | undefined;
-    if (x.guide === 'cursor') {
+    if (x.guide === 'radar') this.guide = { kind: 'radar', radar: null };
+    else if (x.guide === 'cursor') {
       this.guide = { kind: 'cursor', by: typeof x.by === 'number' ? x.by : 1 };
       if (Array.isArray(off) && off.length === 2 && off.every(Number.isFinite)) this.guide.off = { x: off[0], y: off[1] };
     } else if (x.guide === 'target' && Array.isArray(at) && at.every(Number.isFinite)) this.guide = { kind: 'target', entity: null, part: null, local: { x: 0, y: 0 }, at: { x: at[0], y: at[1] } };
@@ -667,6 +780,8 @@ export class Missile extends Entity {
     }
     const mates = (this.salvo?.missiles ?? []).filter((m) => m !== this && !m.destroyed).map(ref).filter((k) => k >= 0);
     if (mates.length) out.salvo = mates;
+    const radar = g.kind === 'radar' && g.radar instanceof Entity && !g.radar.destroyed ? ref(g.radar) : -1;
+    if (radar >= 0) out.radar = radar;
     return Object.keys(out).length ? out : undefined;
   }
 
@@ -682,6 +797,10 @@ export class Missile extends Entity {
       this.main.setNoCollide(s.others(this));
     }
     const g = this.guide;
+    if (g.kind === 'radar' && typeof links.radar === 'number') {
+      const r = get(links.radar);
+      if (r && !r.destroyed && typeof (r as Partial<MissileGuidance>).lockPoint === 'function') g.radar = r as unknown as MissileGuidance;
+    }
     const e = typeof links.target === 'number' ? get(links.target) : undefined;
     if (g.kind !== 'target' || !e || e.destroyed) return;
     g.entity = e;
@@ -716,8 +835,9 @@ export class Salvo {
   }
 }
 
-/** How many missiles a Strike sends out at one launch. */
+/** How many missiles a Strike sends out at one launch, and an ICBM. */
 export const STRIKE_COUNT = 5;
+export const ICBM_COUNT = 3;
 /**
  * A Strike's missiles leave fanned out STRIKE_FAN rad apart, each STRIKE_PACE
  * (a share of the launch's speed) faster than the one before; the mouse-guided
@@ -757,7 +877,7 @@ export interface Volley {
  * included. Returns those fired.
  */
 export function launchVolley(game: Game, v: Volley): Missile[] {
-  const n = v.version === 'strike' ? STRIKE_COUNT : 1;
+  const n = volleyOf(v.version);
   const heading = Math.atan2(v.dir.y, v.dir.x);
   // (its tail just inside the tube or the cell: it slides out from behind it)
   const back = (MISSILES[v.version].w / 2 - v.inset) * PX;
@@ -791,12 +911,12 @@ function spread(g: Guide, i: number, n: number): Guide {
 }
 
 /** The versions (see MissileVersion) as their menus show them. */
-const VERSIONS: [MissileVersion, string][] = [['standard', 'Standard'], ['cruise', 'Cruise'], ['strike', 'Strike (5)']];
+const VERSIONS: [MissileVersion, string][] = [['standard', 'Standard'], ['cruise', 'Cruise'], ['strike', 'Strike (5)'], ['ballistic', 'Ballistic'], ['icbm', 'ICBM (3)']];
 
 /** The version a config (a launcher's, an M113's) asks for. */
 export function versionOf(config: EntityConfig | undefined): MissileVersion {
   const v = config?.missile;
-  return v === 'cruise' || v === 'strike' ? v : 'standard';
+  return v === 'cruise' || v === 'strike' || v === 'ballistic' || v === 'icbm' ? v : 'standard';
 }
 
 /** The menu's entries for which missile is fired: "Missile: Standard", "Cruise", "Strike (5)", the one in use ticked. */
@@ -906,6 +1026,7 @@ export abstract class GuidedLauncher extends Prop {
       own: this.parts, carry: p.velocityAt(at.x, at.y), past,
     });
     if (!fired.length) return false;
+    this.onFired(fired);
     this.loaded = false;
     this.reload = RELOAD;
     this.shots++;
@@ -942,6 +1063,9 @@ export abstract class GuidedLauncher extends Prop {
     game.alarm(at.x, at.y, 25);
     return true;
   }
+
+  /** What it does to the missiles it just fired (a heat seeker's launcher sets them seeking). */
+  protected onFired(_fired: Missile[]): void {}
 
   /** Normal or vertical launch: it's made again the other way, its foot where it stands. */
   setVertical(on: boolean): void {
@@ -994,6 +1118,31 @@ export abstract class GuidedLauncher extends Prop {
 export class MouseLauncher extends GuidedLauncher {
   activate(): void {
     this.fire(cursorGuide(this.game));
+  }
+
+  contextActions(): ContextAction[] {
+    return [{ label: this.loaded ? 'Fire' : 'Reloading…', hint: 'F', disabled: !this.loaded, action: () => this.activate() }, ...this.launchActions()];
+  }
+}
+
+/**
+ * The heat seeker's launcher (0.5.0): Use fires its missile along the tube (or up
+ * out of a vertical cell), and it goes after the hottest thing ahead of it (see
+ * Missile.seekHeat()): an engine, a jet's flame, something burning; a flare pulls
+ * it off. It won't go after what fired it, nor anything built into that.
+ */
+export class HeatLauncher extends GuidedLauncher {
+  activate(): void {
+    this.fire({ kind: 'none' });
+  }
+
+  protected onFired(fired: Missile[]): void {
+    const own = new Set(this.game.connections.assemblyOf([this]));
+    for (const e of [...own]) for (const a of e.attachedEntities()) own.add(a);
+    for (const m of fired) {
+      m.heatSeek = true;
+      m.ignore = own;
+    }
   }
 
   contextActions(): ContextAction[] {
@@ -1105,8 +1254,9 @@ export class SpikeLauncher extends GuidedLauncher {
    * something that isn't a target, or isn't firing a Strike.
    */
   private alsoTracked(lock: Sighted): Sighted[] {
-    if (this.version !== 'strike' || !lock.entity || !(lock.entity instanceof Car || isLiving(lock.entity))) return [];
-    return this.tracked.filter((s) => s.entity && s.entity !== lock.entity && (s.entity instanceof Car || isLiving(s.entity))).slice(0, STRIKE_COUNT - 1);
+    const n = volleyOf(this.version);
+    if (n < 2 || !lock.entity || !(lock.entity instanceof Car || isLiving(lock.entity))) return [];
+    return this.tracked.filter((s) => s.entity && s.entity !== lock.entity && (s.entity instanceof Car || isLiving(s.entity))).slice(0, n - 1);
   }
 
   preStep(dt: number): void {

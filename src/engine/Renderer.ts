@@ -418,6 +418,11 @@ export class Renderer {
     window.addEventListener('resize', () => this.resize());
   }
 
+  /** The share of the screen's resolution drawn now (see setResolution()). */
+  get resolutionDrawn(): number {
+    return this.resolution;
+  }
+
   /** Draws this share of the screen's resolution from now on. */
   setResolution(r: number): void {
     if (r === this.resolution) return;

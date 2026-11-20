@@ -865,3 +865,84 @@ export const LEOPARD2A7: TankDesign = {
   },
   barrel: { len: 166, evacuator: [66, 84], joints: [28, 46, 102, 122, 142], sensor: true },
 };
+
+/** The T-90A's Russian green. */
+const RUS_GREEN = ramp('#4c5a33');
+
+/**
+ * Russia's T-90A (0.5.0): a short, low hull on six big road wheels (the drive
+ * sprocket at the back, the idler at the front), rubber skirts with reactive
+ * armour on their front panels and the glacis, two fuel drums on the back, and a
+ * low welded turret, Kontakt-5's reactive armour standing out over the gun in a
+ * wedge. Beside the gun the Shtora's two infra-red dazzlers (the "red eyes"); on
+ * the roof the commander's cupola with its remote 12.7 mm Kord, the gunner's
+ * sight, and a stowage box on the turret's back. Plain green.
+ */
+export const T90A: TankDesign = {
+  w: 198, h: 70, r: 12, wheel: 21,
+  axles: [[15, 48], [40, 57], [64, 57], [88, 57], [112, 57], [136, 57], [160, 57], [183, 50]],
+  hull: [[1, 31], [3, 29], [148, 29], [196, 41], [196, 45], [186, 49], [1, 41]],
+  skirt: [[26, 33], [164, 33], [182, 38], [182, 40], [175, 47], [28, 47], [26, 45]],
+  turret: [[66, 13], [70, 10], [126, 10], [156, 19], [155, 23], [140, 29], [100, 29], [96, 26], [66, 26]],
+  body: [
+    [[1, 31], [3, 29], [148, 29], [196, 41], [196, 45], [186, 49], [28, 47], [1, 41]],
+    [[54, 11], [126, 10], [156, 19], [155, 23], [140, 29], [54, 29]],
+  ],
+  paint: RUS_GREEN,
+  trunnion: [144, 17], hatch: [98, 17], engine: [14, 34], fuel: [56, 38], lamp: [192, 42], cabin: [66, 0, 80, 14], band: [67, 20, 127, 23],
+  fit: (a, P) => {
+    // the stowage box on the turret's back, the fuel drums on the hull's back
+    a.roundRect(54, 12, 13, 14, 1, P[2]);
+    a.ellipse(3, 17, 12, 12, P[1]);
+    a.ellipse(15, 19, 11, 11, P[1]);
+    // the commander's cupola and its remote Kord, the gunner's sight, the Shtora boxes either side of the gun
+    a.rect(90, 7, 16, 3, P[2]);
+    a.roundRect(95, 3, 9, 5, 1, P[2]);
+    a.hline(104, 120, 5, GUNMETAL[2]);
+    a.roundRect(116, 6, 11, 5, 1, P[2]);
+    a.roundRect(134, 13, 8, 6, 1, P[1]);
+    // the wind sensor's mast, the smoke grenade launchers
+    a.vline(72, 4, 10, GUNMETAL[2]);
+    a.roundRect(78, 11, 12, 5, 1, P[1]);
+  },
+  details: (a, P) => {
+    // the box's lid, the drums' bands
+    a.hline(55, 66, 15, P[1]);
+    a.vline(9, 18, 28, P[0]);
+    a.vline(20, 20, 29, P[0]);
+    // the roof's edge, the turret's foot, Kontakt-5 bricks along the wedge's face, in the light
+    a.hline(71, 125, 11, P[3]);
+    a.hline(100, 139, 28, P[1]);
+    a.line(127, 11, 155, 19, P[3]);
+    for (let k = 0; k < 4; k++) {
+      const x = 130 + k * 7;
+      const y = 12 + Math.round(k * 2);
+      a.line(x, y, x - 2, y + 6, P[1]);
+    }
+    a.line(128, 17, 152, 23, P[1]);
+    // the Shtora's red eyes, the sights' glass, the launchers' tubes
+    a.rect(140, 15, 2, 2, LED_RED);
+    a.set(141, 15, 0xff9a8a);
+    a.rect(125, 7, 1, 3, GUNMETAL[0]);
+    a.rect(101, 4, 1, 2, GUNMETAL[0]);
+    for (let x = 79; x < 89; x += 3) a.set(x, 13, GUNMETAL[0]);
+    // the deck's edge, the skirt: its rubber panels, reactive bricks on the front ones; bricks across the glacis
+    a.hline(4, 147, 30, P[3]);
+    a.hline(27, 164, 33, P[3]);
+    a.hline(29, 175, 46, P[1]);
+    for (const x of [56, 86, 116]) a.vline(x, 34, 45, P[1]);
+    for (let x = 140; x <= 176; x += 6) a.vline(x, 34, 45, P[0]);
+    a.hline(140, 178, 39, P[1]);
+    for (let x = 152; x < 194; x += 6) {
+      const y = 29 + Math.round(((x - 148) * 12) / 48);
+      a.line(x, y + 1, x + 1, y + 4, P[1]);
+    }
+    // the driver's periscope, the lamps, the tail light, the exhaust on the hull's back
+    a.set(170, 31, GUNMETAL[0]).set(171, 31, GUNMETAL[0]);
+    a.rect(190, 41, 3, 2, LAMP);
+    a.set(191, 41, 0xfffbe0);
+    a.rect(1, 32, 2, 3, LED_RED);
+    for (let y = 34; y < 40; y += 2) a.hline(2, 5, y, GUNMETAL[0]);
+  },
+  barrel: { len: 162, evacuator: [64, 82], joints: [26, 44, 100, 120, 140], sensor: false },
+};

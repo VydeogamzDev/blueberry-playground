@@ -124,7 +124,8 @@ function specOf(f: A.Airframe, s: Omit<FlightSpec, 'cg'> & { cg?: Pt }): FlightS
     cg: pt(s.cg ?? f.cg),
     wing: surf(s.wing), tail: surf(s.tail), tips: surf(s.tips), power: pw,
     rotor: s.rotor ? { ...s.rotor, at: pt(s.rotor.at), tail: s.rotor.tail ? { ...s.rotor.tail, at: pt(s.rotor.tail.at) } : undefined } : undefined,
-    gun: s.gun ? { ...s.gun, at: pt(s.gun.at) } : undefined,
+    gun: s.gun ? { ...s.gun, at: pt(s.gun.at), muzzles: s.gun.muzzles?.map(pt) } : undefined,
+    bombs: s.bombs?.map(pt), rockets: s.rockets?.map(pt),
     lights: s.lights ? Object.fromEntries(Object.entries(s.lights).map(([k, v]) => [k, pt(v as Pt)])) : undefined,
   };
 }
@@ -293,6 +294,58 @@ const TRIKE_SPEC = specOf(A.TRIKE, {
   vne: 40, gLimit: 4, gear: 3, breakup: 10, pitchRate: 0, brake: 2.5, roll: 0.25,
 });
 
+// ---- the warbirds (0.5.0): laid out level and sat down on their tailwheels (see A.sitDown()), so
+// their wing's and tail's incidence and their thrust line are the real ones' plus the angle they sit at
+
+const DEG = Math.PI / 180;
+const sat = (td: A.Taildragger) => (x: number, y: number): Pt => td.pose(x, y);
+
+const p51 = sat(A.P51D);
+const T51 = A.P51D.theta / DEG;
+const P51D_SPEC = specOf(A.P51D.f, {
+  kind: 'plane', trueKg: 4400, ky: 1.6, gameKg: 520,
+  wing: { at: p51(5.85, 1.45), area: 21.83, ar: 5.83, incidence: 1 + T51, cl0: 0.2, clMax: 1.5, flapCl: 0.6, flapCd: 0.07, cd0: 0.006 },
+  tail: { at: p51(0.7, 2.17), area: 3.9, ar: 4.5, incidence: -1.5 + T51, cl0: 0, clMax: 1.0, elevator: 25, tau: 0.5, downwash: true },
+  cd0: 0.017, e: 0.75, mcrit: 0.7, wave: 2,
+  power: { kind: 'prop', at: [p51(9.6, 2.05)], thrust: 21000, power: 1.11e6, spool: 1.2, idle: 0.12, tilt: T51, props: [{ at: p51(9.55, 2.05), r: 1.7 }] },
+  vne: 225, gLimit: 8, gear: 3.5, breakup: 14, pitchRate: 18, brake: 3, roll: 0.25,
+  gun: { at: p51(7.0, 1.5), rate: 80, speed: 870, damage: 45, energy: 6500, recoil: 25, rounds: 1840 },
+  bombs: [p51(6.2, 1.0)],
+  rockets: Array.from({ length: 8 }, (_, i) => p51(6.95 - i * 0.17, 1.2)),
+  lights: { nav: p51(5.9, 1.5), beacon: p51(0.45, 3.7), landing: p51(6.8, 1.3) },
+});
+
+const fw = sat(A.FW190);
+const TFW = A.FW190.theta / DEG;
+const FW190_SPEC = specOf(A.FW190.f, {
+  kind: 'plane', trueKg: 4400, ky: 1.5, gameKg: 520,
+  wing: { at: fw(5.8, 1.45), area: 18.3, ar: 6.02, incidence: 2 + TFW, cl0: 0.2, clMax: 1.45, flapCl: 0.6, flapCd: 0.07, cd0: 0.007 },
+  tail: { at: fw(0.7, 2.14), area: 2.95, ar: 4, incidence: -1 + TFW, cl0: 0, clMax: 1.0, elevator: 25, tau: 0.5, downwash: true },
+  cd0: 0.022, e: 0.75, mcrit: 0.68, wave: 2,
+  power: { kind: 'prop', at: [fw(8.75, 2.0)], thrust: 22500, power: 1.25e6, spool: 1.2, idle: 0.12, tilt: TFW, props: [{ at: fw(8.7, 2.0), r: 1.65 }] },
+  vne: 236, gLimit: 7.5, gear: 3.5, breakup: 14, pitchRate: 18, brake: 3, roll: 0.25,
+  gun: { at: fw(7.8, 2.6), muzzles: [fw(7.8, 2.6), fw(6.9, 1.45), fw(7.8, 2.55), fw(6.9, 1.5)], rate: 48, speed: 800, damage: 60, energy: 8000, recoil: 30, rounds: 1200 },
+  bombs: [fw(6.2, 0.95), fw(5.5, 0.95)],
+  rockets: [fw(6.5, 1.2), fw(6.15, 1.2), fw(5.8, 1.2), fw(5.45, 1.2)],
+  lights: { nav: fw(5.9, 1.5), beacon: fw(0.45, 3.45), landing: fw(6.7, 1.3) },
+});
+
+const yak = sat(A.YAK9K);
+const TYK = A.YAK9K.theta / DEG;
+const YAK9K_SPEC = specOf(A.YAK9K.f, {
+  kind: 'plane', trueKg: 3030, ky: 1.4, gameKg: 420,
+  wing: { at: yak(5.4, 1.4), area: 17.15, ar: 5.53, incidence: 1 + TYK, cl0: 0.2, clMax: 1.45, flapCl: 0.6, flapCd: 0.07, cd0: 0.007 },
+  tail: { at: yak(0.65, 2.08), area: 2.9, ar: 4, incidence: -1.5 + TYK, cl0: 0, clMax: 1.0, elevator: 25, tau: 0.5, downwash: true },
+  cd0: 0.024, e: 0.75, mcrit: 0.68, wave: 2,
+  power: { kind: 'prop', at: [yak(8.3, 1.9)], thrust: 17000, power: 0.88e6, spool: 1.2, idle: 0.12, tilt: TYK, props: [{ at: yak(8.25, 1.9), r: 1.5 }] },
+  vne: 195, gLimit: 7, gear: 3.2, breakup: 13, pitchRate: 20, brake: 3, roll: 0.25,
+  // (the NS-45 fires explosive shells, as a tank's gun does, its recoil shoving the light fighter back)
+  gun: { at: yak(...A.YAK9K_MUZZLE), rate: 4.3, speed: 70, damage: 0, energy: 0, recoil: 1200, rounds: 29, shell: 'tank-shell' },
+  bombs: [yak(5.6, 0.95)],
+  rockets: [yak(6.1, 1.15), yak(5.5, 1.15)],
+  lights: { nav: yak(5.6, 1.45), beacon: yak(0.4, 3.2), landing: yak(6.3, 1.25) },
+});
+
 // ---------------------------------------------------------------- the toybox
 
 const blades = (k: string) => A.bladesArt(k);
@@ -351,6 +404,33 @@ export function registerAircraft(): void {
     A.A10, standing(A.A10, a10),
     (game, def, x, y, opts) => new Aircraft(game, def, a10Cfg, A10_SPEC, x, y, opts),
     ['a10', 'a-10', 'warthog', 'thunderbolt', 'gau-8', 'attack', 'jet', 'military', 'gun', 'eject', 'plane', 'airplane']);
+
+  const WAR = 'Airplane · Warbirds';
+  const WB_KEYS = `Hold \\ for its guns, 0 drops a bomb and 9 fires a rocket (they hang under it till they go). A taildragger: it sits tail down, and lifts its tail as it gathers speed. ${KEYS}`;
+
+  const p51d = lazyArt(A.p51dArt);
+  const p51Cfg = configOf(A.P51D.f, p51d, P51D_SPEC, { blast: { power: 120, radius: 5, damage: 200 }, noBelts: true });
+  aircraft('p-51d', 'P-51D Mustang', WAR,
+    `The American long-range fighter of 1944: a 1,490 hp Packard Merlin, a laminar-flow wing, the bubble canopy, near 700 km/h up high. Six .50-calibre machine guns (1,840 rounds), a bomb and eight rockets. ${WB_KEYS}`,
+    A.P51D.f, standing(A.P51D.f, p51d),
+    (game, def, x, y, opts) => new PropPlane(game, def, p51Cfg, P51D_SPEC, props, x, y, opts),
+    ['p-51', 'p51', 'mustang', 'merlin', 'ww2', 'wwii', 'warbird', 'fighter', 'propeller', 'military', 'usa', 'american', 'gun', 'bomb', 'rocket', 'plane', 'airplane']);
+
+  const fw190 = lazyArt(A.fw190Art);
+  const fwCfg = configOf(A.FW190.f, fw190, FW190_SPEC, { blast: { power: 120, radius: 5, damage: 200 }, noBelts: true });
+  aircraft('fw-190', 'Focke-Wulf Fw 190 A-8', WAR,
+    `The German fighter: a 1,700 hp BMW 801 radial under a big round cowling, wide-set gear and a short, heavy wing. Four machine guns and cannon firing in turn from the cowling and the wing roots, two bombs and four rockets. ${WB_KEYS}`,
+    A.FW190.f, standing(A.FW190.f, fw190),
+    (game, def, x, y, opts) => new PropPlane(game, def, fwCfg, FW190_SPEC, props, x, y, opts),
+    ['fw 190', 'fw190', 'focke-wulf', 'focke wulf', 'wurger', 'bmw 801', 'ww2', 'wwii', 'warbird', 'fighter', 'propeller', 'military', 'germany', 'german', 'gun', 'bomb', 'rocket', 'plane', 'airplane']);
+
+  const yak9 = lazyArt(A.yak9kArt);
+  const yakCfg = configOf(A.YAK9K.f, yak9, YAK9K_SPEC, { blast: { power: 110, radius: 5, damage: 190 }, noBelts: true });
+  aircraft('yak-9k', 'Yakovlev Yak-9K', WAR,
+    `The Soviet tank-busting fighter: a light Yak-9 with a 45 mm NS-45 cannon firing through its propeller hub, 29 explosive shells, as a tank fires (its recoil shoves the plane back). A 1,180 hp Klimov V-12, a bomb and two rockets. ${WB_KEYS}`,
+    A.YAK9K.f, standing(A.YAK9K.f, yak9),
+    (game, def, x, y, opts) => new PropPlane(game, def, yakCfg, YAK9K_SPEC, props, x, y, opts),
+    ['yak-9', 'yak9', 'yak-9k', 'yakovlev', 'ns-45', 'cannon', 'ww2', 'wwii', 'warbird', 'fighter', 'propeller', 'military', 'soviet', 'russian', 'ussr', 'gun', 'bomb', 'rocket', 'plane', 'airplane']);
 
   const uh60 = lazyArt(A.uh60Art);
   const uh60Cfg = configOf(A.UH60, uh60, UH60_SPEC, { blast: { power: 170, radius: 7, damage: 260 } });

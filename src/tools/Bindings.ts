@@ -13,7 +13,7 @@ export type ActionId =
   | 'menu' | 'toybox' | 'toggleUi' | 'help' | 'layout'
   | 'panLeft' | 'panRight' | 'panUp' | 'panDown' | 'zoomIn' | 'zoomOut' | 'recenter'
   | 'driveLeft' | 'driveRight' | 'aimUp' | 'aimDown' | 'turnLeft' | 'turnRight'
-  | 'stage' | 'assist' | 'gear' | 'chutes' | 'eject' | 'pilotFire' | 'boost' | 'chaseCam' | 'lights' | 'horn' | 'autopilot' | 'bombs' | 'flares'
+  | 'stage' | 'assist' | 'gear' | 'chutes' | 'eject' | 'pilotFire' | 'boost' | 'chaseCam' | 'lights' | 'horn' | 'autopilot' | 'bombs' | 'flares' | 'rockets'
   | 'com' | 'rewind' | 'layerFront' | 'layerBack' | 'gridSize' | 'angleStep';
 
 export interface ActionSpec {
@@ -103,6 +103,7 @@ export const ACTIONS: ActionSpec[] = [
   { id: 'autopilot', label: 'Autopilot on or off for what you fly (holds its height and heading)', group: 'Vehicles', keys: ['Insert'] },
   { id: 'bombs', label: 'Drop a bomb from the bomb bays of what you fly', group: 'Vehicles', keys: ['Digit0'] },
   { id: 'flares', label: 'Fire flares from what you fly (heat-seeking missiles chase them instead)', group: 'Vehicles', keys: ['CapsLock'] },
+  { id: 'rockets', label: 'Fire a rocket from the rocket pods of what you fly', group: 'Vehicles', keys: ['Digit9'] },
   { id: 'chaseCam', label: 'Chase camera on or off (follows what you fly, zooming out with speed)', group: 'Camera', keys: ['End'] },
   // building (not People Playground's keys: it has no layers, grids or checkpoints to reach)
   { id: 'com', label: 'Hold: connection ends go at the centre of mass', group: 'Building', keys: ['KeyM'] },

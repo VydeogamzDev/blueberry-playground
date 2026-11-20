@@ -7,6 +7,10 @@ import { Human } from './Human';
 import { Parachute, wearOn } from './Rocketry';
 import { PK } from '../systems/Particles';
 import { getItem } from '../catalog/items';
+import { launchRocket } from './Combat';
+import { Shell } from './Tank';
+import { aerialBombArt } from '../art/vehicles2';
+import { missileArt } from '../art/missiles';
 import { MAT } from '../world/Materials';
 import { isGlass } from '../art/vehicles';
 import type { PixelArt } from '../art/PixelArt';
@@ -54,6 +58,8 @@ export interface Surface {
 /** What pushes it. */
 export interface Powerplant {
   kind: 'jet' | 'prop' | 'turboprop' | 'rotor';
+  /** The thrust line's angle up off the body's x (deg): a taildragger's, drawn sitting tail down (see art/aircraft sitDown()). */
+  tilt?: number;
   /** Where each engine pushes (art px), along the body (a rotor's: see FlightSpec.rotor). */
   at: [number, number][];
   /** All of them together at a standstill on the ground (N), and the shafts' power (W: props, rotors). */
@@ -107,7 +113,15 @@ export interface FlightSpec {
   /** On its wheels: the brakes' and the rolling's deceleration (m/s²). */
   brake: number;
   roll: number;
-  gun?: { at: [number, number]; rate: number; speed: number; damage: number; energy: number; recoil: number; rounds: number };
+  /**
+   * Its gun (or guns: `muzzles` fire in turn, `rate` all of them together): bullets, or
+   * explosive shells (`shell`: the item fired, as a tank fires its own, at `speed` m/s on top
+   * of the aircraft's own).
+   */
+  gun?: { at: [number, number]; rate: number; speed: number; damage: number; energy: number; recoil: number; rounds: number; shell?: string; muzzles?: [number, number][] };
+  /** Bombs under it (0.5.0: art px of each, dropped in turn on the bombs key) and rockets on rails (fired in turn on the rockets key). */
+  bombs?: [number, number][];
+  rockets?: [number, number][];
   flares?: number;
   eject?: boolean;
   caps?: boolean;
@@ -308,6 +322,11 @@ export class Aircraft extends Car {
   /** Bullets left in its gun, flares, its parachute (CAPS) pulled, its pilot ejected. */
   rounds = 0;
   flaresLeft = 0;
+  /** Bombs and rockets left (0.5.0), and the gun of several to fire next. */
+  bombsLeft = 0;
+  rocketsLeft = 0;
+  private muzzle = 0;
+  private stores: Decal[] | null = null;
   capsUsed = false;
   ejected = false;
   lights = true;
@@ -341,6 +360,8 @@ export class Aircraft extends Car {
     this.ownFlight = true;
     this.rounds = spec.gun?.rounds ?? 0;
     this.flaresLeft = spec.flares ?? 0;
+    this.bombsLeft = spec.bombs?.length ?? 0;
+    this.rocketsLeft = spec.rockets?.length ?? 0;
     this.hold = this.body.body.rotation();
     this.trimMass();
     this.apply();
@@ -828,7 +849,8 @@ export class Aircraft extends Car {
     const pw = s.power;
     if (!pw || this.N <= 0.001) return;
     const b = this.body;
-    const fwd = b.localDir(b.flip, 0);
+    const tilt = (pw.tilt ?? 0) * DEG;
+    const fwd = b.localDir(b.flip * Math.cos(tilt), Math.sin(tilt));
     if (pw.kind === 'rotor') {
       this.rotorLift(rho, sigma, c);
       return;
@@ -994,6 +1016,8 @@ export class Aircraft extends Car {
         const q = g.physics.partOf(o);
         if (!q) return true;
         if (q.entity === this || q.destroyed) return false;
+        // (what it fired itself, its rockets and shells, passes out through its own disc)
+        if (q.noCollide?.has(this.body) || (q.entity as { launcher?: unknown }).launcher === this) return false;
         return !this.riders.some((r) => r && r.who === q.entity);
       });
       if (!hit) continue;
@@ -1051,11 +1075,17 @@ export class Aircraft extends Car {
     if (g.net?.guest) return;
     this.gunT -= dt;
     const b = this.body;
+    const shell = gun.shell ? getItem(gun.shell) : undefined;
+    const tilt = (this.spec.power?.tilt ?? 0) * DEG;
+    let shot = false;
     while (this.gunT <= 0 && this.rounds > 0) {
       this.gunT += 1 / gun.rate;
       this.rounds--;
-      const m = b.pixelToWorld(gun.at[0], gun.at[1]);
-      const fwd = b.localDir(b.flip, 0);
+      shot = true;
+      const at = gun.muzzles?.length ? gun.muzzles[this.muzzle++ % gun.muzzles.length] : gun.at;
+      const m = b.pixelToWorld(at[0], at[1]);
+      // (along the thrust line: a taildragger's guns are bored along its fuselage, not its sitting art)
+      const fwd = b.localDir(b.flip * Math.cos(tilt), Math.sin(tilt));
       const spread = (Math.random() - 0.5) * 0.012;
       const dx = fwd.x * Math.cos(spread) - fwd.y * Math.sin(spread);
       const dy = fwd.x * Math.sin(spread) + fwd.y * Math.cos(spread);
@@ -1063,7 +1093,11 @@ export class Aircraft extends Car {
       const vx = dx * gun.speed + v.x;
       const vy = dy * gun.speed + v.y;
       const sp = Math.hypot(vx, vy);
-      g.projectiles.fire(m.x + fwd.x * 0.3, m.y + fwd.y * 0.3, vx / sp, vy / sp, sp, { energy: gun.energy, damage: gun.damage, push: 0.006, ignore: b.body, tracer: true });
+      if (shell) {
+        // (an explosive shell, as a tank's: thrown on from the muzzle, passing through the aircraft)
+        const e = g.spawn(shell, m.x + fwd.x * 0.3, m.y + fwd.y * 0.3, { flip: b.flip < 0, angle: Math.atan2(dy, dx) - (b.flip < 0 ? Math.PI : 0) });
+        if (e instanceof Shell) e.launch(this, vx, vy);
+      } else g.projectiles.fire(m.x + fwd.x * 0.3, m.y + fwd.y * 0.3, vx / sp, vy / sp, sp, { energy: gun.energy, damage: gun.damage, push: 0.006, ignore: b.body, tracer: true });
       // (the gun shoves back on the aircraft: an A-10's slows it)
       const k = this.kM;
       b.body.applyImpulse({ x: -fwd.x * gun.recoil * k, y: -fwd.y * gun.recoil * k }, true);
@@ -1072,8 +1106,46 @@ export class Aircraft extends Car {
       if (Math.random() < 0.3) g.particles.smoke(m.x, m.y, 1, 0.3);
       g.alarm(m.x, m.y, 30);
     }
-    if (this.rounds > 0) g.sound.gunshot('minigun', b.pixelToWorld(gun.at[0], gun.at[1]).x);
+    if (gun.shell ? shot : this.rounds > 0) g.sound.gunshot(gun.shell ? 'sniper' : 'minigun', b.pixelToWorld(gun.at[0], gun.at[1]).x);
     if (this.gunT < -1) this.gunT = 0;
+  }
+
+  /** Drops its next bomb (0.5.0): armed after a moment, it falls on as the aircraft was going. */
+  private dropBomb(): boolean {
+    const g = this.game;
+    const pylons = this.spec.bombs;
+    const def = getItem('aerial-bomb');
+    if (!pylons || !def || this.bombsLeft <= 0 || this.wrecked || g.net?.guest) return false;
+    const b = this.body;
+    const at = pylons[pylons.length - this.bombsLeft];
+    const p = b.pixelToWorld(at[0], at[1]);
+    const e = g.spawn(def, p.x, p.y - 0.1, { flip: b.flip < 0, angle: b.bodyAngle });
+    if (!e) return false;
+    this.bombsLeft--;
+    const v = b.body.linvel();
+    for (const q of e.parts) {
+      q.setNoCollide(this.parts);
+      q.body.setLinvel({ x: v.x, y: v.y - 0.5 }, true);
+    }
+    (e as { drop?(): void }).drop?.();
+    g.sound.play('machine/rope_snap', { gain: 0.3, x: p.x, rate: 0.7 });
+    return true;
+  }
+
+  /** Fires its next rocket off its rail (0.5.0), along the thrust line. */
+  private fireRocket(): boolean {
+    const g = this.game;
+    const rails = this.spec.rockets;
+    const def = getItem('rocket-70mm');
+    if (!rails || !def || this.rocketsLeft <= 0 || this.wrecked || g.net?.guest) return false;
+    const b = this.body;
+    const at = rails[rails.length - this.rocketsLeft];
+    const p = b.pixelToWorld(at[0], at[1]);
+    const tilt = (this.spec.power?.tilt ?? 0) * DEG;
+    const m = launchRocket(g, this, def, p, b.localDir(b.flip * Math.cos(tilt), Math.sin(tilt)), b.flip < 0, this.zBase, this.parts, b.body.linvel());
+    if (!m) return false;
+    this.rocketsLeft--;
+    return true;
   }
 
   /** A pair of flares out behind and below (heat seekers go for them). */
@@ -1250,6 +1322,10 @@ export class Aircraft extends Car {
         return this.eject();
       case 'flares':
         return this.flare();
+      case 'bombs':
+        return this.dropBomb();
+      case 'rockets':
+        return this.fireRocket();
       case 'lights':
         this.lights = !this.lights;
         return true;
@@ -1288,6 +1364,8 @@ export class Aircraft extends Car {
     if (this.winch) out.push('winch');
     if (this.autopilot) out.push(`autopilot ${Math.round(this.autopilot.alt)} m`);
     if (this.spec.gun) out.push(`${this.rounds} rounds`);
+    if (this.spec.bombs) out.push(`${this.bombsLeft} bombs`);
+    if (this.spec.rockets) out.push(`${this.rocketsLeft} rockets`);
     if (this.rotorGone) out.push(this.spec.rotor ? 'ROTOR GONE' : 'PROP GONE');
     if (this.tailGone) out.push('TAIL ROTOR GONE');
     if (this.stalled) out.push('STALL');
@@ -1365,6 +1443,29 @@ export class Aircraft extends Car {
       this.animT = 1;
       this.frameN = (this.frameN + 1) % 4;
     }
+    this.drawStores();
+  }
+
+  /** Its bombs and rockets still on it, drawn hanging under it (0.5.0). */
+  private drawStores(): void {
+    const bombs = this.spec.bombs ?? [];
+    const rockets = this.spec.rockets ?? [];
+    if (!bombs.length && !rockets.length) return;
+    const b = this.body;
+    const bomb = aerialBombArt();
+    const rocket = missileArt('rocket', 'strike');
+    this.stores ??= [...bombs.map(() => bomb), ...rockets.map(() => rocket)].map((a) => {
+      const d = new Decal(this.game, a, this.decalZ() + 0.0002);
+      this.decals.push(d);
+      return d;
+    });
+    const tilt = (this.spec.power?.tilt ?? 0) * DEG;
+    const show = (i: number, at: [number, number], art: PixelArt, on: boolean) => {
+      const p = b.pixelDrawn(at[0], at[1]);
+      this.stores![i].show(on && !this.wrecked ? art : null, p.x, p.y, b.sprite.a + tilt * b.flip, b.flip, b);
+    };
+    bombs.forEach((at, i) => show(i, at, bomb, i >= bombs.length - this.bombsLeft));
+    rockets.forEach((at, i) => show(bombs.length + i, at, rocket, i >= rockets.length - this.rocketsLeft));
   }
 
   /** Which of a blade's frames to show: still, turning, or the blur (see art/aircraft propArt()). */
@@ -1428,6 +1529,9 @@ export class Aircraft extends Car {
     acts.push({ label: 'Autopilot: hold this height (Insert)', checked: !!this.autopilot, action: () => this.pilotCommand('autopilot') });
     if (s.gun) acts.push({ label: `Rearm the gun (${this.rounds} of ${s.gun.rounds})`, action: () => (this.rounds = s.gun!.rounds) });
     if (s.flares) acts.push({ label: `Flares: ${this.flaresLeft} (Caps Lock)`, action: () => this.flare() });
+    if (s.bombs) acts.push({ label: `Drop a bomb: ${this.bombsLeft} of ${s.bombs.length} (0)`, disabled: !this.bombsLeft, action: () => this.dropBomb() });
+    if (s.rockets) acts.push({ label: `Fire a rocket: ${this.rocketsLeft} of ${s.rockets.length} (9)`, disabled: !this.rocketsLeft, action: () => this.fireRocket() });
+    if (s.bombs || s.rockets) acts.push({ label: 'Load the bombs and rockets again', action: () => { this.bombsLeft = s.bombs?.length ?? 0; this.rocketsLeft = s.rockets?.length ?? 0; } });
     if (s.eject && this.riders[0]) acts.push({ label: 'Eject the pilot (\')', danger: true, action: () => this.eject() });
     if (s.caps) acts.push({ label: this.capsUsed ? 'Parachute (CAPS) used' : 'Pull the parachute (CAPS: ])', danger: true, disabled: this.capsUsed, action: () => this.pullCaps() });
     if (this.capsUsed || this.ejected) acts.push({ label: 'Repack the parachute and seat', action: () => { this.capsUsed = false; this.ejected = false; } });
@@ -1444,6 +1548,8 @@ export class Aircraft extends Car {
     this.overT = this.flutterT = 0;
     this.rounds = this.spec.gun?.rounds ?? 0;
     this.flaresLeft = this.spec.flares ?? 0;
+    this.bombsLeft = this.spec.bombs?.length ?? 0;
+    this.rocketsLeft = this.spec.rockets?.length ?? 0;
   }
 
   protected serializeExtra(): Record<string, unknown> {
@@ -1457,6 +1563,8 @@ export class Aircraft extends Car {
     if (this.tailGone) x.tg = true;
     if (this.spec.gun) x.rd = this.rounds;
     if (this.spec.flares) x.fs = this.flaresLeft;
+    if (this.spec.bombs) x.bl = this.bombsLeft;
+    if (this.spec.rockets) x.rl = this.rocketsLeft;
     if (this.capsUsed) x.caps = true;
     if (this.ejected) x.ej = true;
     if (this.ab > 0.05) x.ab = Math.round(this.ab * 100) / 100;
@@ -1476,6 +1584,8 @@ export class Aircraft extends Car {
     this.ab = num(x.ab, 0);
     if (this.spec.gun && typeof x.rd === 'number') this.rounds = clamp(Math.round(x.rd), 0, this.spec.gun.rounds);
     if (this.spec.flares && typeof x.fs === 'number') this.flaresLeft = clamp(Math.round(x.fs), 0, this.spec.flares);
+    if (this.spec.bombs && typeof x.bl === 'number') this.bombsLeft = clamp(Math.round(x.bl), 0, this.spec.bombs.length);
+    if (this.spec.rockets && typeof x.rl === 'number') this.rocketsLeft = clamp(Math.round(x.rl), 0, this.spec.rockets.length);
     this.capsUsed = !!x.caps;
     this.ejected = !!x.ej;
   }

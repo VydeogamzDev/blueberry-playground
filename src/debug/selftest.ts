@@ -310,11 +310,13 @@ export function makeSelfTest(game: Game, controls: Controls) {
         kit.advance(0.1);
       };
       // (once first: the sprite atlas grows a page for what it hasn't held before, an airliner's
-      // sprites among them, and keeps it to reuse: that's not a leak)
+      // sprites among them, and keeps it to reuse: that's not a leak. Nor is one more page made
+      // later on, for the images of damaged parts, whose sizes vary run to run: the pages aren't counted)
       cycle();
-      const base = [w.bodies.len(), w.colliders.len(), w.impulseJoints.len(), game.renderer.scene.children.length];
+      const meshes = () => game.renderer.scene.children.length - game.renderer.sprites.pageCount;
+      const base = [w.bodies.len(), w.colliders.len(), w.impulseJoints.len(), meshes()];
       for (let c = 0; c < 3; c++) cycle();
-      const now = [w.bodies.len(), w.colliders.len(), w.impulseJoints.len(), game.renderer.scene.children.length];
+      const now = [w.bodies.len(), w.colliders.len(), w.impulseJoints.len(), meshes()];
       if (now.join() !== base.join()) return `leaked: ${base.join('/')} -> ${now.join('/')}`;
       if (game.physics.partByCollider.size) return 'collider map not empty';
       return true;

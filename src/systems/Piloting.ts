@@ -151,8 +151,8 @@ function isDecoupler(e: Entity): e is Entity & { fired: boolean; readonly decoup
 }
 
 /** A pilot's one-off orders (0.4.0): the next stage, stability assist, the landing gear, the parachutes, ejecting. */
-export type PilotCommand = 'stage' | 'assist' | 'gear' | 'chutes' | 'eject' | 'lights' | 'horn' | 'autopilot' | 'bombs' | 'flares';
-export const PILOT_COMMANDS: PilotCommand[] = ['stage', 'assist', 'gear', 'chutes', 'eject', 'lights', 'horn', 'autopilot', 'bombs', 'flares'];
+export type PilotCommand = 'stage' | 'assist' | 'gear' | 'chutes' | 'eject' | 'lights' | 'horn' | 'autopilot' | 'bombs' | 'flares' | 'rockets';
+export const PILOT_COMMANDS: PilotCommand[] = ['stage', 'assist', 'gear', 'chutes', 'eject', 'lights', 'horn', 'autopilot', 'bombs', 'flares', 'rockets'];
 
 /** Something a pilot's orders reach (see PilotCommand): legs and gear, parachutes, ejection seats. */
 export interface Commanded {

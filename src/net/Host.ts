@@ -15,7 +15,7 @@ import { clamp, type V2 } from '../engine/math';
 import { isFighter, isLiving, setFighting } from '../systems/Fighting';
 import { Car } from '../entities/Car';
 import { pressKey } from '../entities/Flight';
-import { heldSeekers, STRIKE_COUNT, type Sighted } from '../entities/Missiles';
+import { heldSeekers, volleyOf, type Sighted } from '../entities/Missiles';
 import { beginGrab, dragPaused, grabAlong, inWorld, Powers, releaseGrab, stepGrab, type Controls, type Grab, type PowerId, type ValueEditor } from '../tools/Controls';
 import { FxRecorder, refOf, type PartRef } from './Effects';
 import { Wire, type Lobby, type Link } from './Link';
@@ -590,7 +590,7 @@ export class NetHost {
       if (s.destroyed || !s.holder || !s.netId) continue;
       const one: NetSeeker = [s.netId, s.holder, Math.round(s.locking * 100) / 100, sight(s.sighted), sight(s.lock)];
       // (a Strike's other targets in the square are marked too: the nearest few, as many as it has missiles)
-      if (s.version === 'strike') one.push(s.tracked.slice(0, STRIKE_COUNT + 1).flatMap((t) => sight(t) ?? []));
+      if (volleyOf(s.version) > 1) one.push(s.tracked.slice(0, volleyOf(s.version) + 1).flatMap((t) => sight(t) ?? []));
       out.push(one);
     }
     const sig = JSON.stringify(out);

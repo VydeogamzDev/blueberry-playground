@@ -5,13 +5,15 @@ import { PixelArt } from '../art/PixelArt';
 import * as A from '../art/missiles';
 import { seeThrough, wreckOf } from '../art/vehicles';
 import { artRect, densityFor } from '../entities/Item';
-import { Missile, MouseLauncher, SpikeLauncher, WARHEADS, type MissileSpec } from '../entities/Missiles';
+import { HeatLauncher, Missile, MouseLauncher, SpikeLauncher, WARHEADS, type GuidedLauncher, type MissileSpec } from '../entities/Missiles';
+import { Radar, RadarLauncher } from '../entities/Radar';
 import { MissileCarrier } from '../entities/M113';
 import type { CarConfig, SeatSpec } from '../entities/Car';
 import type { CannonSpec } from '../entities/Tank';
 import type { PropConfig } from '../entities/Prop';
 import type { ShapeSpec } from '../world/Part';
-import type { ItemDef } from '../world/types';
+import type { ItemDef, SpawnOptions } from '../world/types';
+import type { Game } from '../world/Game';
 
 // The guided missiles (not in the toybox: their launchers fire them), the
 // mouse-guided launcher and the Spike LR-II's, with the weapons; and the M113
@@ -42,6 +44,11 @@ function polyArea(pts: Pt[]): number {
 const SPECS: Record<A.MissileKind, MissileSpec> = {
   guided: { cruise: 24, accel: 40, turn: 4.6, burn: 8, loft: false, warhead: WARHEADS.standard },
   spike: { cruise: 30, accel: 45, turn: 4.6, burn: 8, loft: true, warhead: WARHEADS.standard },
+  // (0.5.0) the heat seeker's (as the pod's: quick off the rail, fast, a short burn) and the radar-guided SAM's
+  // (faster still, with a proximity fuse, to bring down aircraft); an unguided rocket's (see registerRockets)
+  heat: { cruise: 110, accel: 220, turn: 5.5, burn: 4, loft: false, prox: 1.8, warhead: { ...WARHEADS.standard, power: 90, damage: 200, jet: 500 } },
+  radar: { cruise: 150, accel: 320, turn: 6, burn: 6, loft: false, prox: 2.4, warhead: { ...WARHEADS.standard, power: 110, damage: 230, jet: 600 } },
+  rocket: { cruise: 320, accel: 1100, turn: 0, burn: 1.1, loft: false, unguided: true, warhead: { power: 80, radius: 2.6, damage: 170, shrapnel: 3, jet: 350 } },
 };
 
 /**
@@ -52,13 +59,23 @@ const SPECS: Record<A.MissileKind, MissileSpec> = {
  */
 function specOf(kind: A.MissileKind, version: A.MissileVersion): MissileSpec {
   const s = SPECS[kind];
-  if (version === 'cruise') return { ...s, burn: s.burn * 4, warhead: WARHEADS.cruise };
-  if (version === 'strike') return { ...s, cruise: s.cruise + 2, accel: s.accel * 1.2, turn: s.turn * 1.15, burn: s.burn * 0.6, warhead: WARHEADS.strike };
+  // (a kind's own warhead, scaled as the standard one is to the version's)
+  const w = (v: A.MissileVersion) => {
+    const k = WARHEADS[v].power / WARHEADS.standard.power;
+    if (s.warhead === WARHEADS.standard) return WARHEADS[v];
+    return { ...s.warhead, power: s.warhead.power * k, damage: s.warhead.damage * k, jet: s.warhead.jet * k, radius: s.warhead.radius * Math.cbrt(k), shrapnel: Math.round((s.warhead.shrapnel ?? 0) * k) };
+  };
+  if (version === 'cruise') return { ...s, burn: s.burn * 4, warhead: w('cruise') };
+  if (version === 'strike') return { ...s, cruise: s.cruise + 2, accel: s.accel * 1.2, turn: s.turn * 1.15, burn: s.burn * 0.6, warhead: w('strike') };
+  // (0.5.0) a ballistic missile twice as fast, climbing high over its target to come down on it; an ICBM's three
+  // three times as fast and each three times the warhead, higher still, its motor burning longer to get up there
+  if (version === 'ballistic') return { ...s, cruise: s.cruise * 2, accel: s.accel * 2, arc: [0.7, 300], warhead: w('ballistic') };
+  if (version === 'icbm') return { ...s, cruise: s.cruise * 3, accel: s.accel * 3, burn: s.burn * 2, arc: [1, 800], warhead: w('icbm') };
   return s;
 }
 
 /** Each version's weight (kg). */
-const MISSILE_KG: Record<A.MissileVersion, number> = { standard: 3, cruise: 5, strike: 1 };
+const MISSILE_KG: Record<A.MissileVersion, number> = { standard: 3, cruise: 5, strike: 1, ballistic: 4, icbm: 6 };
 
 /** A missile of `kind` and `version` (not in the toybox). */
 function missile(id: string, name: string, kind: A.MissileKind, version: A.MissileVersion): ItemDef {
@@ -80,6 +97,8 @@ function missiles(kind: A.MissileKind, name: string): Record<A.MissileVersion, I
     standard: missile(`missile-${kind}`, `${name} Missile`, kind, 'standard'),
     cruise: missile(`missile-${kind}-cruise`, `${name} Cruise Missile`, kind, 'cruise'),
     strike: missile(`missile-${kind}-strike`, `${name} Strike Missile`, kind, 'strike'),
+    ballistic: missile(`missile-${kind}-ballistic`, `${name} Ballistic Missile`, kind, 'ballistic'),
+    icbm: missile(`missile-${kind}-icbm`, `${name} ICBM`, kind, 'icbm'),
   };
 }
 
@@ -99,7 +118,9 @@ function launcherCfg(kind: A.MissileKind, vertical: boolean): PropConfig {
 }
 
 /** A guided launcher's item: normal or vertical by its config (see GuidedLauncher.setVertical()), firing `rounds` by version. */
-function launcher(id: string, name: string, kind: A.MissileKind, rounds: Record<A.MissileVersion, ItemDef>, make: typeof MouseLauncher | typeof SpikeLauncher, description: string, tags: string[]): void {
+type LauncherClass = new (game: Game, def: ItemDef, cfg: PropConfig, kind: A.MissileKind, rounds: Record<A.MissileVersion, ItemDef>, x: number, y: number, opts: SpawnOptions) => GuidedLauncher;
+
+function launcher(id: string, name: string, kind: A.MissileKind, rounds: Record<A.MissileVersion, ItemDef>, make: LauncherClass, description: string, tags: string[]): void {
   const normal = launcherCfg(kind, false);
   const vertical = launcherCfg(kind, true);
   const def: ItemDef = register({
@@ -190,7 +211,8 @@ function m113(rounds: Record<A.MissileVersion, ItemDef>): void {
 
 /** What every launcher's menu says of its missiles (see A.MissileVersion). */
 const VERSIONS_TOLD = 'Its menu picks the missile: the standard one; a cruise missile, its motor burning four times as long and its warhead twice as big; ' +
-  'or a Strike, five small missiles at one launch that never hit each other. Burnt out, a missile still steers as it falls.';
+  'a Strike, five small missiles at one launch that never hit each other; a ballistic missile, twice as fast, that climbs high and comes down on its target; ' +
+  'or an ICBM, three missiles at once that never hit each other, each three times as fast with three times the warhead. Burnt out, a missile still steers as it falls.';
 
 export function registerMissiles(): void {
   const guided = missiles('guided', 'Guided');
@@ -206,4 +228,30 @@ export function registerMissiles(): void {
     'Let go before it locks and nothing fires. Vertical launch is in its menu. ' + VERSIONS_TOLD + ' A Strike\'s five go after the locked target and the others in the square, marked by small squares.',
     ['missile', 'launcher', 'atgm', 'spike', 'fire and forget', 'seeker', 'lock', 'anti-tank', 'mortar', 'vls', 'israel', 'cruise', 'strike', 'salvo']);
   m113(guided);
+  launcher('heat-launcher', 'Heat-Seeking Missile Launcher', 'heat', missiles('heat', 'Heat-Seeking'), HeatLauncher,
+    'A launcher for the heat-seeking missile (the pods’ air-to-air missile, on the ground). Activate (F) to fire: the grey missile leaves along the tube and goes after the hottest thing ahead of it, ' +
+    'an engine, a jet’s flame (on afterburner, more), something burning, and goes off near it. A flare in its eye pulls it off; it won’t go after what fired it. Turn it to aim (drag it and press A or D). ' +
+    'Vertical launch is in its menu. ' + VERSIONS_TOLD,
+    ['missile', 'launcher', 'heat', 'seeker', 'infrared', 'stinger', 'sidewinder', 'sam', 'anti-air', 'aa', 'manpads', 'vls', 'cruise', 'strike', 'ballistic', 'icbm']);
+  launcher('radar-launcher', 'Radar-Guided Missile Launcher', 'radar', missiles('radar', 'Radar-Guided'), RadarLauncher,
+    'A surface-to-air missile launcher guided by a radar. Link a Radar to it (wire them together with the Wire tool, or build both into one thing), lock the radar on a target, then activate this (F): ' +
+    'the fast pale missile flies to wherever the radar’s lock is, following it as the radar tracks it, and goes off near it, so it brings down aircraft. With no lock it flies straight on. ' +
+    'Vertical launch is in its menu. ' + VERSIONS_TOLD,
+    ['missile', 'launcher', 'radar', 'sam', 'patriot', 's-300', 'surface to air', 'anti-air', 'aa', 'guided', 'vls', 'cruise', 'strike', 'ballistic', 'icbm']);
+  const radar = lazyArt(() => A.radarArt(0));
+  const rShapes = [artRect(A.RADAR.w, A.RADAR.h, 3, 39, 54, 33, 0.5), artRect(A.RADAR.w, A.RADAR.h, 27, 20, 6, 15, 0.3), artRect(A.RADAR.w, A.RADAR.h, 8, 1, 44, 18, 0.3)];
+  const rCfg: PropConfig = { art: radar, material: MAT.metal, shapes: rShapes, density: densityFor(900, rShapes), ownTexture: true, angularDamping: 0.3 };
+  const rDef: ItemDef = register({
+    id: 'radar', name: 'Radar', category: 'Weapons',
+    description: 'A search and tracking radar on its shelter. Select it and hold F: green brackets flash round the cursor and pick out the vehicle or aircraft nearest their middle; keep it there a second and the radar locks on. ' +
+      'Let go of F and the lock holds: a green box tracks the target, with its range, height and speed beside it, until it’s gone, out of range or hidden behind the ground too long. ' +
+      'Wire it to a Radar-Guided Missile Launcher (or build both into one thing) and that launcher’s missiles fly to the lock.',
+    tags: ['radar', 'lock', 'track', 'telemetry', 'sam', 'anti-air', 'aa', 'patriot', 'sensor', 'guidance'],
+    preview: previewOf(radar),
+    halfHeight: (A.RADAR.h * PX) / 2,
+    create: (game, x, y, opts) => new Radar(game, rDef, rCfg, A.radarArt, x, y, opts),
+  });
 }
+
+/** An unguided rocket's flight (see entities/Combat RocketPod). */
+export const ROCKET_SPEC: MissileSpec = SPECS.rocket;

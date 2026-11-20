@@ -4,6 +4,71 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.5.0 — 2026-11-19
+
+Ballistic missiles and ICBMs, a heat-seeker launcher, a radar that locks on and guides missiles, a T-90A, a
+rotary cannon, rocket pods and three Second World War fighters. It also runs better on Chromebooks and
+iPads in the browser.
+
+### New
+
+- **Two new missile versions**, in every launcher's menu (Missile:):
+  - **Ballistic**: the standard warhead at twice the speed, lobbed high on an arc to come down on its target.
+  - **ICBM (3)**: three missiles at once, each with three times the warhead and three times the speed, on a
+    higher arc. They never collide with each other. On the Spike LR-II they share out the targets it tracks.
+- **Heat-seeker launcher.** Fires straight up its tube and the missile turns for the hottest thing it sees:
+  engines, flames, thrusters, flares. It goes off beside its target (a proximity fuse) rather than having
+  to hit it.
+- **Radar and radar-guided launcher.**
+  - Select the radar, hold F on something and the box's corners flash green while it locks (about a
+    second). Let go once it's locked.
+  - Locked, a green box sits round the target, as the Spike LR-II's does, with a readout: range, height,
+    climb and speed. A target out of sight is held in memory for 2.5 s, then lost. Range: 6 km.
+  - Wire a radar-guided launcher to the radar (or build them together) and it fires on the radar's lock.
+    Its missile follows the radar's track to the end and goes off near the target.
+- **T-90A**, the Russian main battle tank: Kontakt-5 armour bricks, Shtora's red eyes, fuel drums on the
+  back and a 125 mm gun. Armies can bring it.
+- **Rotary cannon.** Hold F (or the pilot's gun key in a build) and it spins up for a third of a second,
+  then fires 100 rounds a second from 500.
+- **Rocket pod.** Nineteen unguided rockets: F fires one, holding F ripples them off, 9 fires one from a
+  piloted build. The rockets light in the tube and fly straight and fast, dropping a little.
+- **Warbirds**, a new group on the Aircraft shelf. Each sits on its tailwheel and lifts its tail as it gathers
+  speed:
+
+  | Aircraft | Guns | Bombs | Rockets |
+  |---|---|---|---|
+  | P-51D Mustang | six .50-calibre machine guns, 1,840 rounds | 1 | 8 |
+  | Focke-Wulf Fw 190 A-8 | four machine guns and cannon, firing in turn, 1,200 rounds | 2 | 4 |
+  | Yakovlev Yak-9K | a 45 mm NS-45 cannon firing tank shells through the propeller hub, 29 rounds | 1 | 2 |
+
+  `\` fires the guns, 0 drops a bomb, 9 fires a rocket. Bombs and rockets hang under the wings until
+  they go.
+
+### Low-end devices (Chromebooks, iPads, phones)
+
+- **The game picks its starting settings from the device.** Chromebooks, iPads, phones and computers with
+  four cores or 4 GB of memory or less start on the new **Low** preset: 75% resolution, four lights, half
+  the effects, few spent cases, 60 fps. Very weak ones (two cores or 2 GB) start on Potato. Other touch screens
+  start on Medium, as before. A setting you've already chosen is kept.
+- **Auto quality** (Settings > Graphics, on by default). When the frames fall well behind:
+  - if drawing is what's slow, it lowers the resolution a step at a time;
+  - if the game's own work is what's slow, it halves the effects and allows at most four lights.
+
+  It gives them back once the frames have kept up for a while, and waits longer if it gave them back too
+  soon. Show stats says when it's lowered something.
+- The water keeps fewer particles on a Chromebook, iPad or phone (1,600), and fewer still on a very weak one.
+- With time paused, finding what's under the cursor tested every collider in the scene, every frame. It now
+  tests only those nearby: 1.5 ms a frame among 25 people became 0.01 ms.
+- The stats line no longer rewrites the page every frame when nothing has changed.
+
+### Fixes
+
+- A propeller cut up the plane's own rockets as they passed through its disc.
+- A missile fired from a moving aircraft counted itself clear of its launcher once it was 2.5 m from where
+  it was fired, even with the aircraft still beside it. It now measures the distance from the launcher.
+- The Medium preset's 6 lights wasn't one of the choices, so Medium read as Custom after a reload. It now
+  has 8.
+
 ## 0.4.5 — 2026-11-19
 
 Prebuilt aircraft: a new Aircraft shelf with one of each of the FAA's seven aircraft categories, and under

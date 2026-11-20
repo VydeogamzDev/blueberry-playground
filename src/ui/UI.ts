@@ -21,6 +21,7 @@ import { PixelArt } from '../art/PixelArt';
 import { FIXED_DT, GRAVITY } from '../engine/constants';
 import { clamp } from '../engine/math';
 import { GRAPHICS_RANGE, PRESETS, PRESET_NAMES, fpsLimit, loadGraphics, presetOf, saveGraphics, type FpsCap, type Graphics } from '../engine/Graphics';
+import { RES_STEPS } from '../engine/AutoQuality';
 import { DetailView } from './DetailView';
 import { EditOverlay } from './EditOverlay';
 import { XRay } from './XRay';
@@ -1314,8 +1315,8 @@ export class UI implements UIBridge {
       const btn = el('button', 'set-preset', label);
       btn.dataset.preset = id;
       btn.onclick = () => {
-        // (the frame rate cap is the player's: a preset leaves it, see PRESETS)
-        Object.assign(gfx, PRESETS[id], { fps: gfx.fps });
+        // (the frame rate cap and auto quality are the player's: a preset leaves them, see PRESETS)
+        Object.assign(gfx, PRESETS[id], { fps: gfx.fps, auto: gfx.auto });
         this.graphicsChanged();
       };
       presets.appendChild(btn);
@@ -1344,6 +1345,11 @@ export class UI implements UIBridge {
     restart.onclick = () => desktop?.restart();
     const restartRow = row('The app restarts for this cap', restart);
     restartRow.hidden = true;
+    const autoBox = check(gfx.auto, (v) => {
+      gfx.auto = v;
+      this.graphicsChanged();
+    });
+    row('Auto quality', autoBox, 'While the frames fall behind (a big scene, a Chromebook or tablet), draws at a lower resolution and with fewer effects until they keep up, then gives them back');
     row('Lights', sel.lights, 'Muzzle flashes, fire and lamps that light up what’s round them');
     row('Effects', sel.particles, 'How much smoke, sparks, flames and dust (blood and liquids are always all there)');
     row('Spent cases', sel.cases, 'Cases thrown out by guns that lie about');
@@ -1397,6 +1403,7 @@ export class UI implements UIBridge {
     // what the panel shows, after a preset or a change
     this.showGraphics = () => {
       for (const k of ['resolution', 'lights', 'particles', 'cases', 'step', 'fps'] as const) sel[k].value = String(gfx[k]);
+      autoBox.checked = gfx.auto;
       if (desktop) void desktop.frameCap(gfx.fps).then((r) => (restartRow.hidden = !r));
       const p = presetOf(gfx);
       for (const btn of presetBtns) btn.classList.toggle('on', btn.dataset.preset === p);
@@ -1603,14 +1610,30 @@ export class UI implements UIBridge {
 
   private applyGraphics(): void {
     const g = this.gfx;
-    this.game.renderer.setResolution(g.resolution);
-    this.game.renderer.maxLights = g.lights;
-    this.game.particles.detail = g.particles;
+    // (less while auto quality holds them down: see AutoQuality)
+    const aq = this.game.autoQuality;
+    aq.enabled = g.auto && aq.allowed;
+    aq.onChange = () => this.applyGraphics();
+    this.game.renderer.setResolution(this.drawnResolution(aq.res));
+    aq.canDrop = () => this.drawnResolution(aq.res + 1) < this.drawnResolution(aq.res) - 0.01;
+    this.game.renderer.maxLights = aq.fx ? Math.min(4, g.lights) : g.lights;
+    this.game.particles.detail = aq.fx ? Math.max(0.25, g.particles / 2) : g.particles;
     this.game.casings.cap = g.cases;
     this.game.debrisCap = g.debris;
     this.game.longSteps = g.step === 'long';
     this.game.fpsCap = fpsLimit(g.fps);
     this.syncIterations();
+  }
+
+  /**
+   * The resolution drawn `steps` down RES_STEPS from the one set, no lower than
+   * about six of the screen's pixels to every ten of the page's (nor than the one set).
+   */
+  private drawnResolution(steps: number): number {
+    const g = this.gfx.resolution;
+    const k = RES_STEPS[Math.min(steps, RES_STEPS.length - 1)];
+    const floor = Math.min(g, 0.6 / Math.min(window.devicePixelRatio || 1, 2));
+    return Math.max(floor, Math.round(g * k * 100) / 100);
   }
 
   private buildMultiplayer(): void {
@@ -2185,12 +2208,16 @@ export class UI implements UIBridge {
         g.stepDt > FIXED_DT ? 'longer physics steps' : '',
         !g.paused && g.simRate < g.timeScale * 0.9 ? `running at ${Math.round((g.simRate / g.timeScale) * 100)}% speed` : '',
       ].filter(Boolean).join(', ');
-      this.status.textContent =
+      // (what auto quality has taken down for now: see AutoQuality)
+      const aq = g.autoQuality;
+      const eased = aq.res || aq.fx ? ` · auto quality: ${[aq.res ? `${Math.round(g.renderer.resolutionDrawn * 100)}% resolution` : '', aq.fx ? 'fewer effects' : ''].filter(Boolean).join(', ')}` : '';
+      const text =
         `${g.fps.toFixed(0)} fps · step ${g.stepMs.toFixed(2)} ms · ${g.entities.length} objects · ${parts} bodies · ${g.particles.count} particles` +
         (g.paused ? ' · PAUSED' : '') + (g.timeScale !== 1 ? ` · ${g.timeScale}×` : '') +
-        (heavy ? ` · heavy scene: ${heavy}` : '') +
+        (heavy ? ` · heavy scene: ${heavy}` : '') + eased +
         (net !== 'off' ? ` · ${net === 'host' ? 'hosting' : 'joined'} ${this.session.code} (${this.session.players.length} playing)` : '');
-    } else this.status.textContent = '';
+      if (this.status.textContent !== text) this.status.textContent = text;
+    } else if (this.status.textContent) this.status.textContent = '';
     const hist = this.controls.history;
     this.btnUndo.disabled = !hist.canUndo;
     this.btnRedo.disabled = !hist.canRedo;

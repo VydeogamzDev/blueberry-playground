@@ -3575,3 +3575,16 @@ body.touch.driving .tut-card {
 .race-line.hidden {
   display: none;
 }
+
+/* A radar's lock readout beside the green box on its target (entities/Radar). */
+.radar-tag {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  white-space: pre;
+  font: 11px/1.25 ui-monospace, Consolas, monospace;
+  color: #6dff7a;
+  text-shadow: 0 0 2px #000, 1px 1px 0 #000;
+  z-index: 5;
+}

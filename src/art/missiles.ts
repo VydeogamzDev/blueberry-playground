@@ -1,5 +1,5 @@
 import { PixelArt } from './PixelArt';
-import { finish, ramp, type Ramp, GLASS, GUNMETAL, KHAKI, LAMP, LED_RED, RUBBER, STEEL, STEEL_LT, YELLOW } from './palette';
+import { finish, ramp, type Ramp, GLASS, GUNMETAL, KHAKI, LAMP, LED_GREEN, LED_RED, RUBBER, STEEL, STEEL_LT, YELLOW } from './palette';
 import { beltAround, tankSprocketArt, tankWheelArt } from './vehicles';
 
 // The guided missiles, their launchers (squat tubes on a bipod and baseplate,
@@ -18,13 +18,33 @@ const SAND = KHAKI;
 /** The M113's olive drab. */
 const M113_DRAB = ramp('#5c6440');
 
-export type MissileKind = 'guided' | 'spike';
+/** The heat seeker's grey, the radar-guided missile's pale blue-grey, an unguided rocket's olive (see paintOf()). */
+const HEAT_GREY = ramp('#9ca1a3', 0.85);
+const RADAR_GREY = ramp('#c6cdd0', 0.75);
+const ROCKET_OLIVE = ramp('#6f7656');
+/** The heat seeker's launcher: grey; the radar-guided one's: a darker blue-grey. */
+const HEAT_DRAB = ramp('#666c68');
+const RADAR_DRAB = ramp('#5a6670');
+
+export type MissileKind = 'guided' | 'spike' | 'heat' | 'radar' | 'rocket';
 /**
  * Which missile a launcher fires (picked in its menu): the standard one; the
  * cruise missile, its motor burning four times as long and twice its warhead;
- * or a Strike, five small missiles at one launch.
+ * a Strike, five small missiles at one launch; a ballistic missile, twice as
+ * fast, climbing high and coming down on its target; or an ICBM's three, each
+ * three times the warhead and three times as fast (0.5.0).
  */
-export type MissileVersion = 'standard' | 'cruise' | 'strike';
+export type MissileVersion = 'standard' | 'cruise' | 'strike' | 'ballistic' | 'icbm';
+
+/** A kind's missile paint. */
+function paintOf(kind: MissileKind): Ramp {
+  return kind === 'spike' ? SPIKE_WHITE : kind === 'heat' ? HEAT_GREY : kind === 'radar' ? RADAR_GREY : kind === 'rocket' ? ROCKET_OLIVE : DARK_GREEN;
+}
+
+/** A kind's launcher paint. */
+function launcherPaint(kind: MissileKind): Ramp {
+  return kind === 'spike' ? SAND : kind === 'heat' ? HEAT_DRAB : kind === 'radar' ? RADAR_DRAB : DRAB;
+}
 
 // ------------------------------------------------------------------ the missiles
 
@@ -35,6 +55,8 @@ export const MISSILES: Record<MissileVersion, typeof MISSILE> = {
   standard: MISSILE,
   cruise: { w: 30, h: 8, body: 4 },
   strike: { w: 14, h: 7, body: 3 },
+  ballistic: { w: 26, h: 7, body: 4 },
+  icbm: { w: 30, h: 8, body: 4 },
 };
 
 const missiles = new Map<string, PixelArt>();
@@ -56,7 +78,9 @@ export function missileArt(kind: MissileKind, version: MissileVersion = 'standar
 }
 
 function drawMissile(kind: MissileKind, version: MissileVersion): PixelArt {
-  const P = kind === 'spike' ? SPIKE_WHITE : DARK_GREEN;
+  if (kind === 'rocket') return drawRocket();
+  if (version === 'ballistic' || version === 'icbm') return drawBallistic(kind, version);
+  const P = paintOf(kind);
   const { w, h, body } = MISSILES[version];
   const a = new PixelArt(w, h);
   // (the body's top and bottom rows, and where its nose begins)
@@ -75,19 +99,24 @@ function drawMissile(kind: MissileKind, version: MissileVersion): PixelArt {
   a.rect(1, top, nose - 1, body, P[2]);
   a.rect(0, top + 1, 1, body - 2, GUNMETAL[1]);
   if (version === 'cruise') a.rect(5, bot, 5, 1, P[1]);
-  if (kind === 'spike') {
+  const dome = kind === 'spike' || kind === 'heat';
+  if (dome) {
     // the seeker's dome, rounded off
     a.rect(nose, top, 3, body, P[2]);
     a.rect(nose + 3, top + 1, 2, body - 2, GLASS[1]);
+  } else if (kind === 'radar') {
+    // the radome, an ogive to a point
+    a.poly([[nose, top], [nose + 2, top], [w, top + body / 2], [nose + 2, bot], [nose, bot]], P[2]);
   } else {
     a.rect(nose, top, 2, body, P[2]);
     a.rect(nose + 2, top + 1, 3, body - 2, P[1]);
   }
   finish(a, { shadow: false });
-  const band = nose - (kind === 'spike' ? 3 : 2);
+  const band = nose - (dome ? 3 : 2);
   const mark = small ? LED_RED : YELLOW[2];
   a.set(band, top + 1, mark).set(band, bot - 2, small ? LED_RED : YELLOW[1]);
-  if (kind === 'spike') a.set(w - 1, top + 1, GLASS[3]).set(w - 2, top + 1, GLASS[2]);
+  if (dome) a.set(w - 1, top + 1, GLASS[3]).set(w - 2, top + 1, GLASS[2]);
+  else if (kind === 'radar') a.set(nose + 1, top + 1, P[3]).set(nose + 1, bot - 1, P[1]);
   else a.set(w - 1, top + 1, P[3]);
   if (version === 'cruise') {
     // the fuel tank's seam, and the scoop's mouth
@@ -97,6 +126,60 @@ function drawMissile(kind: MissileKind, version: MissileVersion): PixelArt {
   a.set(0, top + 1, GUNMETAL[0]).set(0, bot - 2, GUNMETAL[0]);
   return a;
 }
+
+/**
+ * A ballistic missile (or an ICBM's) pointing right: a long cone of a nose, the
+ * body in one piece (the ICBM's in three stages, their seams dark), four small
+ * fins round the tail (two show) and the motor's nozzle; its kind's seeker (a
+ * dome, a radome) at the tip, a warning band behind the nose.
+ */
+function drawBallistic(kind: MissileKind, version: MissileVersion): PixelArt {
+  const P = paintOf(kind);
+  const { w, h, body } = MISSILES[version];
+  const a = new PixelArt(w, h);
+  const top = Math.floor((h - body) / 2);
+  const bot = top + body;
+  const cone = version === 'icbm' ? 8 : 7;
+  const nose = w - cone;
+  for (const [y0, y1] of [[top, 0], [bot, h]] as const) a.poly([[1, y0], [4, y0], [2.5, y1], [1, y1]], P[1]);
+  a.rect(1, top, nose - 1, body, P[2]);
+  a.rect(0, top + 1, 1, body - 2, GUNMETAL[1]);
+  a.poly([[nose, top], [w - 2, top + body / 2 - 0.6], [w, top + body / 2], [w - 2, top + body / 2 + 0.6], [nose, bot]], version === 'icbm' ? WHITE_CONE[2] : P[2]);
+  finish(a, { shadow: false });
+  if (version === 'icbm') {
+    // the stages' seams, and each stage's band
+    for (const x of [8, 16]) a.vline(x, top, bot - 1, GUNMETAL[1]);
+    a.set(12, top + 1, YELLOW[2]).set(20, top + 1, YELLOW[2]);
+  }
+  a.vline(nose - 2, top, bot - 1, kind === 'radar' ? 0x3a78c8 : kind === 'heat' ? LED_RED : YELLOW[2]);
+  if (kind === 'spike' || kind === 'heat') a.set(w - 1, top + body / 2 - 1, GLASS[3]);
+  a.set(0, top + 1, GUNMETAL[0]).set(0, bot - 2, GUNMETAL[0]);
+  return a;
+}
+
+/**
+ * An unguided rocket pointing right (a Hydra 70's build, at the Strike's size): a
+ * thin olive motor, its folding fins out at the tail, a high-explosive warhead
+ * (olive, a yellow band) to a point.
+ */
+function drawRocket(): PixelArt {
+  const P = ROCKET_OLIVE;
+  const { w, h } = MISSILES.strike;
+  const a = new PixelArt(w, h);
+  const top = 2;
+  const body = 3;
+  const bot = top + body;
+  for (const [y0, y1] of [[top, 0], [bot, h]] as const) a.poly([[0, y0], [3, y0], [1.5, y1], [0, y1]], GUNMETAL[2]);
+  a.rect(0, top, 9, body, P[2]);
+  a.poly([[9, top], [11, top], [w, top + body / 2], [11, bot], [9, bot]], P[1]);
+  finish(a, { shadow: false });
+  a.vline(9, top, bot - 1, YELLOW[2]);
+  a.set(0, top + 1, GUNMETAL[0]);
+  return a;
+}
+
+/** An ICBM's re-entry vehicle: a white cone. */
+const WHITE_CONE = ramp('#e8e8e2', 0.6);
 
 // ------------------------------------------------------------------ the launchers
 
@@ -126,7 +209,7 @@ export function launcherArt(kind: MissileKind, loaded: boolean): PixelArt {
 }
 
 function drawLauncher(kind: MissileKind, loaded: boolean): PixelArt {
-  const P = kind === 'spike' ? SAND : DRAB;
+  const P = launcherPaint(kind);
   const { w, h, breech: A, muzzle: B, half } = MORTAR;
   const a = new PixelArt(w, h);
   const len = Math.hypot(B[0] - A[0], B[1] - A[1]);
@@ -156,6 +239,15 @@ function drawLauncher(kind: MissileKind, loaded: boolean): PixelArt {
     const c0 = along(0.18, half + 0.5);
     const c1 = along(0.5, half + 0.5);
     a.poly([c0, c1, [c1[0] + nx * 5, c1[1] + ny * 5], [c0[0] + nx * 5, c0[1] + ny * 5]], GUNMETAL[2]);
+  } else if (kind === 'radar') {
+    // the datalink's antenna mast behind the tube, its dish
+    a.vline(1, 8, 19, GUNMETAL[2]);
+    a.ellipse(0, 6, 4, 3, GUNMETAL[3]);
+  } else if (kind === 'heat') {
+    // the seeker's cooling bottle and the IFF antenna's grid on the tube's top
+    const c0 = along(0.3, half + 0.5);
+    const c1 = along(0.45, half + 0.5);
+    a.poly([c0, c1, [c1[0] + nx * 3, c1[1] + ny * 3], [c0[0] + nx * 3, c0[1] + ny * 3]], GUNMETAL[2]);
   } else {
     // the gunner's control box with its stick, behind the baseplate
     a.rect(0, 15, 4, 4, GUNMETAL[2]);
@@ -167,9 +259,9 @@ function drawLauncher(kind: MissileKind, loaded: boolean): PixelArt {
   const my = Math.floor(m[1] - uy * 0.8);
   if (loaded) {
     // the missile's nose in the muzzle, in its own paint
-    const M = kind === 'spike' ? SPIKE_WHITE : DARK_GREEN;
+    const M = paintOf(kind);
     a.set(mx, my, M[3]).set(mx - 1, my + 1, M[2]).set(mx, my + 1, M[2]).set(mx - 1, my, M[3]);
-    if (kind === 'spike') a.set(mx, my, GLASS[1]);
+    if (kind === 'spike' || kind === 'heat') a.set(mx, my, GLASS[1]);
   } else a.set(mx, my, GUNMETAL[0]).set(mx - 1, my + 1, GUNMETAL[0]).set(mx, my + 1, GUNMETAL[0]).set(mx - 1, my, GUNMETAL[0]);
   for (let k = 0.08; k < 0.86; k += 0.11) {
     const [x, y] = along(k, -half + 0.5);
@@ -181,6 +273,11 @@ function drawLauncher(kind: MissileKind, loaded: boolean): PixelArt {
     a.paint(Math.floor(lx), Math.floor(ly), GLASS[3]);
     const [sx, sy] = along(0.2, half + 3);
     a.paint(Math.floor(sx), Math.floor(sy), 0x9fe08a);
+  } else if (kind === 'radar') {
+    a.set(1, 7, LED_GREEN);
+  } else if (kind === 'heat') {
+    const [lx, ly] = along(0.38, half + 3);
+    a.paint(Math.floor(lx), Math.floor(ly), LED_RED);
   } else {
     // the control stick, and the guidance wire's spool
     a.vline(2, 13, 14, STEEL[1]);
@@ -208,7 +305,7 @@ export function vlsArt(kind: MissileKind, open = -1): PixelArt {
 }
 
 function drawVls(kind: MissileKind, open: number): PixelArt {
-  const P = kind === 'spike' ? SAND : DRAB;
+  const P = launcherPaint(kind);
   const { w, h, top, cells } = VLS;
   const a = new PixelArt(w, h);
   a.rect(0, top, w, h - top, P[2]);
@@ -346,4 +443,64 @@ export function m113WheelArt(): PixelArt {
 
 export function m113SprocketArt(): PixelArt {
   return tankSprocketArt(M113.wheel + 1, M113.paint);
+}
+
+// ------------------------------------------------------------------ the radar
+
+/**
+ * The radar (0.5.0), facing right: a shelter on two levelling jacks (its screens'
+ * green glow in the side window), the mast on its roof, and the antenna on top: a
+ * flat array seen edge on as it turns (`frame` 0 to RADAR.frames - 1 round half a
+ * turn: 0 square on to the right), its face lit, its back a lattice of struts.
+ */
+export const RADAR = { w: 60, h: 72, frames: 8, mast: [30, 22] as [number, number] };
+
+export function radarArt(frame: number): PixelArt {
+  const key = `radar:${frame}`;
+  let a = launchers.get(key);
+  if (!a) launchers.set(key, (a = drawRadar(frame)));
+  return a;
+}
+
+function drawRadar(frame: number): PixelArt {
+  const P = RADAR_DRAB;
+  const { w, h } = RADAR;
+  const a = new PixelArt(w, h);
+  // the jacks, the shelter and its roof rail, the turntable and mast
+  a.rect(1, 63, 8, 9, GUNMETAL[2]);
+  a.rect(51, 63, 8, 9, GUNMETAL[2]);
+  a.roundRect(3, 42, 54, 22, 2, P[2]);
+  a.rect(6, 39, 48, 3, P[1]);
+  a.roundRect(22, 34, 16, 6, 1, GUNMETAL[2]);
+  a.rect(27, 20, 6, 15, GUNMETAL[2]);
+  // the antenna, as much of its 48 px as shows turned this far
+  const t = (frame / RADAR.frames) * Math.PI;
+  const c = Math.cos(t);
+  const ww = Math.max(3, Math.round(Math.abs(c) * 48));
+  const x0 = Math.round(30 - ww / 2);
+  a.rect(x0, 1, ww, 18, c >= 0 ? RADAR_GREY[2] : GUNMETAL[2]);
+  a.rect(26, 17, 8, 5, GUNMETAL[1]);
+  finish(a);
+  if (c >= 0 && ww > 6) {
+    // the array's face: rows of elements
+    for (let y = 3; y < 18; y += 2) for (let x = x0 + 2; x < x0 + ww - 2; x += 2) a.set(x, y, RADAR_GREY[1]);
+    a.hline(x0 + 1, x0 + ww - 2, 1, RADAR_GREY[3]);
+  } else if (ww > 6) {
+    // its back: the struts
+    a.line(x0 + 1, 2, x0 + ww - 2, 17, GUNMETAL[1]);
+    a.line(x0 + 1, 17, x0 + ww - 2, 2, GUNMETAL[1]);
+    a.vline(30, 2, 17, GUNMETAL[1]);
+  }
+  // the shelter's window with the screens' glow, its door and steps, vents, the warning stripe
+  a.rect(34, 46, 18, 8, GUNMETAL[0]);
+  a.hline(36, 49, 48, 0x6dff7a).hline(36, 44, 50, 0x3fae4c).hline(36, 47, 52, 0x3fae4c);
+  a.set(46, 50, 0x6dff7a);
+  a.vline(12, 44, 61, P[1]);
+  a.vline(26, 44, 61, P[1]);
+  a.set(23, 53, P[3]);
+  for (let y = 46; y < 52; y += 2) a.hline(5, 9, y, GUNMETAL[0]);
+  for (let x = 4; x < 56; x++) a.set(x, 61, (x >> 1) % 2 ? YELLOW[2] : GUNMETAL[1]);
+  a.set(54, 44, LED_GREEN);
+  a.hline(6, 53, 40, P[3]);
+  return a;
 }

@@ -966,3 +966,313 @@ export function upright(src: PixelArt): PixelArt {
   }
   return a;
 }
+
+// ---------------------------------------------------------------- the warbirds (0.5.0)
+
+/**
+ * A taildragger laid out level, as it flies (x from its tail, y up, the fuselage's datum
+ * along x), with its main wheels' and tailwheel's centres where they hang in flight.
+ */
+export interface LevelFrame {
+  pieces: Pt[][];
+  whole: number[];
+  main: { x: number; y: number; r: number; rim?: Ramp; hub?: number };
+  tail: { x: number; y: number; r: number; rim?: Ramp; hub?: number };
+  seats: Pt[];
+  recline?: number[];
+  cabin: [number, number, number, number];
+  cg: Pt;
+  engine: Pt;
+  fuel: Pt;
+}
+
+/** A taildragger set down on its wheels: as it stands (an Airframe), the angle it sits at (rad, nose up), and its level layout's points as it stands. */
+export interface Taildragger {
+  f: Airframe;
+  theta: number;
+  pose: (x: number, y: number) => Pt;
+}
+
+/**
+ * Sets a level layout down on its main wheels and its tailwheel: turned nose up about the
+ * main wheels' centre until the tailwheel's on the ground too, then moved so its tail
+ * is at x = 0 and its wheels stand on y = 0.
+ */
+export function sitDown(L: LevelFrame): Taildragger {
+  const m = L.main;
+  const t = L.tail;
+  const dx = t.x - m.x;
+  const dy = t.y - m.y;
+  const R = Math.hypot(dx, dy);
+  const phi = Math.atan2(dy, dx);
+  const theta = Math.PI - Math.asin((t.r - m.r) / R) - phi;
+  const c = Math.cos(theta);
+  const s = Math.sin(theta);
+  const turn = (x: number, y: number): Pt => [m.x + (x - m.x) * c - (y - m.y) * s, m.r + (x - m.x) * s + (y - m.y) * c];
+  let x0 = Infinity;
+  for (const pc of L.pieces) for (const [x, y] of pc) x0 = Math.min(x0, turn(x, y)[0]);
+  const pose = (x: number, y: number): Pt => {
+    const [u, v] = turn(x, y);
+    return [u - x0, v];
+  };
+  const pieces = L.pieces.map((pc) => pc.map(([x, y]) => pose(x, y)));
+  let len = 0;
+  let top = 0;
+  for (const pc of pieces) for (const [x, y] of pc) {
+    len = Math.max(len, x);
+    top = Math.max(top, y);
+  }
+  const [c0x, c0y, c1x, c1y] = L.cabin;
+  const corners = [pose(c0x, c0y), pose(c1x, c0y), pose(c0x, c1y), pose(c1x, c1y)];
+  const f: Airframe = {
+    len: len + 0.05, top: top + 0.05, bottom: Math.min(m.r, t.r),
+    pieces, whole: L.whole,
+    wheels: [
+      { x: pose(m.x, m.y)[0], r: m.r, rim: m.rim, hub: m.hub },
+      { x: pose(t.x, t.y)[0], r: t.r, rim: t.rim, hub: t.hub },
+    ],
+    seats: L.seats.map(([x, y]) => pose(x, y)),
+    recline: L.recline?.map((r) => r + theta),
+    cabin: [Math.min(...corners.map((q) => q[0])), Math.min(...corners.map((q) => q[1])), Math.max(...corners.map((q) => q[0])), Math.max(...corners.map((q) => q[1]))],
+    cg: pose(...L.cg), engine: pose(...L.engine), fuel: pose(...L.fuel),
+  };
+  return { f, theta, pose };
+}
+
+/** A sheet that draws a level layout's points as the taildragger stands (see sitDown()). */
+class SitSheet extends Sheet {
+  constructor(private readonly td: Taildragger) {
+    super(td.f);
+  }
+
+  p(x: number, y: number): Pt {
+    const [u, v] = this.td.pose(x, y);
+    return super.p(u, v);
+  }
+}
+
+/** A national marking: a black cross on white (a Balkenkreuz), or a red star edged white, `r` m across its middle at (x, y). */
+function cross(s: Sheet, x: number, y: number, r: number): void {
+  s.poly([[x - r, y - r * 0.35], [x + r, y - r * 0.35], [x + r, y + r * 0.35], [x - r, y + r * 0.35]], WHITE[3]);
+  s.poly([[x - r * 0.35, y - r], [x + r * 0.35, y - r], [x + r * 0.35, y + r], [x - r * 0.35, y + r]], WHITE[3]);
+  const k = r * 0.72;
+  s.poly([[x - k, y - k * 0.22], [x + k, y - k * 0.22], [x + k, y + k * 0.22], [x - k, y + k * 0.22]], 0x16181a);
+  s.poly([[x - k * 0.22, y - k], [x + k * 0.22, y - k], [x + k * 0.22, y + k], [x - k * 0.22, y + k]], 0x16181a);
+}
+
+function star(s: Sheet, x: number, y: number, r: number): void {
+  const pts = (k: number): Pt[] => Array.from({ length: 10 }, (_, i) => {
+    const a = Math.PI / 2 + (i * Math.PI) / 5;
+    const rr = i % 2 ? k * 0.42 : k;
+    return [x + Math.cos(a) * rr, y + Math.sin(a) * rr] as Pt;
+  });
+  // (a five-pointed star isn't convex: drawn as its middle and five points)
+  const draw = (k: number, c: Color) => {
+    const p = pts(k);
+    s.poly(p.filter((_, i) => i % 2 === 1), c);
+    for (let i = 0; i < 10; i += 2) s.poly([p[i], p[(i + 1) % 10], p[(i + 9) % 10]], c);
+  };
+  draw(r, WHITE[3]);
+  draw(r * 0.78, 0xc0222a);
+}
+
+/** The American star and bar: a white star on a blue disc, white bars out either side edged blue. */
+function usStar(s: Sheet, x: number, y: number, r: number): void {
+  const B = 0x1f3a78;
+  s.poly([[x - r * 1.9, y - r * 0.42], [x + r * 1.9, y - r * 0.42], [x + r * 1.9, y + r * 0.42], [x - r * 1.9, y + r * 0.42]], B);
+  s.poly([[x - r * 1.8, y - r * 0.3], [x + r * 1.8, y - r * 0.3], [x + r * 1.8, y + r * 0.3], [x - r * 1.8, y + r * 0.3]], WHITE[3]);
+  s.poly(Array.from({ length: 12 }, (_, i): Pt => [x + Math.cos((i / 12) * Math.PI * 2) * r, y + Math.sin((i / 12) * Math.PI * 2) * r]), B);
+  const p = Array.from({ length: 10 }, (_, i): Pt => {
+    const a = Math.PI / 2 + (i * Math.PI) / 5;
+    const rr = i % 2 ? r * 0.36 : r * 0.88;
+    return [x + Math.cos(a) * rr, y + Math.sin(a) * rr];
+  });
+  s.poly(p.filter((_, i) => i % 2 === 1), WHITE[3]);
+  for (let i = 0; i < 10; i += 2) s.poly([p[i], p[(i + 1) % 10], p[(i + 9) % 10]], WHITE[3]);
+}
+
+/** Soft camouflage blotches along a fuselage's side from x0 to x1 (m), between y0 and y1, of `c` over the paint `under`. */
+function mottle(s: Sheet, x0: number, x1: number, y0: number, y1: number, c: Color, under: Color, seed: number): void {
+  let k = seed;
+  const rnd = () => ((k = (k * 16807) % 2147483647) / 2147483647);
+  for (let x = x0; x < x1; x += 0.25 + rnd() * 0.35) {
+    const y = y0 + rnd() * (y1 - y0);
+    const w = 0.12 + rnd() * 0.22;
+    const h = 0.08 + rnd() * 0.14;
+    s.over([[x - w, y], [x - w * 0.4, y + h], [x + w * 0.5, y + h * 0.8], [x + w, y - h * 0.2], [x + w * 0.3, y - h], [x - w * 0.6, y - h * 0.8]], c, (q) => q === under);
+  }
+}
+
+/** The warbirds' paint: the Mustang's bare metal and olive anti-glare panel; the Focke-Wulf's greys over pale blue; the Yak's green over pale blue. */
+const ALU = ramp('#b8bec4', 0.7);
+const OD = ramp('#4c5236');
+const RLM74 = ramp('#5e646a', 0.9);
+const RLM76 = ramp('#a7b8c4', 0.7);
+const SOV_GREEN = ramp('#5d6a3c');
+const SOV_BLUE = ramp('#9fb4c4', 0.7);
+const SOV_DARK = ramp('#3c4630');
+const RLM75 = ramp('#73787e', 0.9);
+
+/**
+ * The North American P-51D Mustang (as it flies: its datum level): 9.83 m long, a
+ * Packard Merlin under a long nose, the bubble canopy, the radiator's scoop under its
+ * belly, a low laminar-flow wing. Bare metal, the olive anti-glare panel ahead of the
+ * pilot, a yellow nose and invasion stripes on its belly.
+ */
+export const P51D_LEVEL: LevelFrame = {
+  pieces: [
+    [[6.6, 1.35], [9.25, 1.65], [9.83, 2.05], [9.25, 2.45], [6.6, 2.58]],
+    [[3.3, 1.3], [4.2, 1.0], [5.6, 1.02], [6.6, 1.35], [6.6, 2.58], [5.85, 3.12], [4.5, 2.68], [3.3, 2.56]],
+    [[3.3, 1.3], [3.3, 2.56], [1.0, 2.3], [0.12, 2.25], [0.2, 1.9], [1.0, 1.72]],
+    [[1.65, 2.32], [0.6, 3.78], [0.15, 3.72], [0.0, 2.2]],
+    [[4.6, 1.3], [7.05, 1.3], [7.05, 1.62], [4.6, 1.5]],
+    [[1.45, 2.08], [0.0, 2.1], [0.0, 2.25], [1.35, 2.25]],
+  ],
+  whole: [3, 4],
+  main: { x: 6.55, y: 0.345, r: 0.345, rim: STEEL_LT, hub: 11 },
+  tail: { x: 0.95, y: 1.5, r: 0.16, rim: STEEL_LT, hub: 5 },
+  seats: [[5.55, 2.12]],
+  recline: [0.3],
+  cabin: [4.6, 1.85, 6.6, 3.2],
+  cg: [5.95, 1.9], engine: [8.3, 2.0], fuel: [6.0, 1.4],
+};
+export const P51D = sitDown(P51D_LEVEL);
+
+export function p51dArt(): PixelArt {
+  const td = P51D;
+  const L = P51D_LEVEL;
+  const s = new SitSheet(td);
+  const P = ALU;
+  s.poly(L.pieces[2], P[2]).poly(L.pieces[1], P[2]).poly(L.pieces[0], P[2]);
+  s.poly(L.pieces[3], P[2]).poly(L.pieces[5], P[2]);
+  // the wing, the gear legs and their doors, the spinner
+  s.poly(L.pieces[4], P[1]);
+  leg(s, 6.6, 1.3, L.main.x, L.main.y, 0.12);
+  s.poly([[6.45, 1.28], [6.75, 1.28], [6.68, 0.75], [6.5, 0.75]], P[1]);
+  leg(s, 1.0, 1.75, L.tail.x, L.tail.y, 0.08);
+  spinner(s, 9.83, 2.05, 0.36, 0.6, P);
+  pane(s, [[6.6, 2.56], [5.95, 3.1], [5.2, 3.12], [4.55, 2.7]]);
+  finish(s.a);
+  // the yellow nose, the olive anti-glare panel, invasion stripes, the scoop's mouth, exhausts, panel lines
+  s.over([[9.0, 1.4], [9.9, 1.4], [9.9, 2.7], [9.0, 2.7]], YELLOW[2], (c) => c === P[2] || c === P[3] || c === P[1]);
+  s.over([[6.6, 2.35], [9.1, 2.3], [9.1, 2.6], [6.6, 2.6]], OD[2], (c) => c === P[2] || c === P[3]);
+  for (let i = 0; i < 5; i++) s.over([[2.3 + i * 0.2, 1.0], [2.5 + i * 0.2, 1.0], [2.5 + i * 0.2, 1.95], [2.3 + i * 0.2, 1.95]], i % 2 ? 0x16181a : WHITE[3], (c) => c === P[2] || c === P[1] || c === P[0]);
+  s.poly([[5.6, 1.02], [5.65, 1.3], [5.5, 1.3]], GUNMETAL[0]);
+  for (let x = 7.4; x < 8.6; x += 0.2) s.seam(x, 2.2, x + 0.08, 2.15, GUNMETAL[0]);
+  s.seam(6.6, 1.4, 6.6, 2.5, P[1]);
+  s.seam(4.5, 2.62, 3.3, 2.5, P[1]);
+  s.seam(1.3, 3.6, 0.7, 2.3, P[1]);
+  usStar(s, 3.0, 1.95, 0.3);
+  s.set(0.45, 3.7, LED_RED).set(5.9, 1.48, LED_GREEN);
+  return s.a;
+}
+
+/**
+ * The Focke-Wulf Fw 190 A-8 (level): 9.0 m long, the BMW 801's big round cowling with
+ * its cooling fan in the spinner, a short canopy, a low wing on wide-set gear. Grey
+ * mottle over pale blue, a yellow panel under the cowling, black crosses edged white.
+ */
+export const FW190_LEVEL: LevelFrame = {
+  pieces: [
+    [[7.0, 1.36], [8.45, 1.3], [8.75, 1.55], [9.0, 2.0], [8.75, 2.45], [8.45, 2.7], [7.0, 2.64]],
+    [[3.9, 1.3], [7.0, 1.36], [7.0, 2.64], [6.4, 2.66], [5.85, 3.12], [4.8, 3.06], [3.9, 2.62]],
+    [[3.9, 1.3], [3.9, 2.62], [1.1, 2.25], [0.12, 2.2], [0.2, 1.85], [1.0, 1.72]],
+    [[1.5, 2.28], [0.6, 3.55], [0.15, 3.5], [0.0, 2.15]],
+    [[4.5, 1.3], [6.95, 1.32], [6.95, 1.62], [4.5, 1.48]],
+    [[1.4, 2.06], [0.0, 2.08], [0.0, 2.22], [1.3, 2.22]],
+  ],
+  whole: [3, 4],
+  main: { x: 6.5, y: 0.35, r: 0.35, rim: STEEL_LT, hub: 11 },
+  tail: { x: 0.8, y: 1.48, r: 0.18, rim: STEEL_LT, hub: 5 },
+  seats: [[5.35, 2.15]],
+  recline: [0.25],
+  cabin: [4.3, 1.85, 6.4, 3.2],
+  cg: [5.95, 1.95], engine: [7.8, 2.0], fuel: [5.0, 1.5],
+};
+export const FW190 = sitDown(FW190_LEVEL);
+
+export function fw190Art(): PixelArt {
+  const td = FW190;
+  const L = FW190_LEVEL;
+  const s = new SitSheet(td);
+  const P = RLM74;
+  s.poly(L.pieces[2], P[2]).poly(L.pieces[1], P[2]).poly(L.pieces[0], P[2]);
+  s.poly(L.pieces[3], P[2]).poly(L.pieces[5], P[2]);
+  s.poly(L.pieces[4], RLM76[1]);
+  leg(s, 6.55, 1.3, L.main.x, L.main.y, 0.13);
+  s.poly([[6.35, 1.28], [6.7, 1.28], [6.62, 0.7], [6.42, 0.7]], P[1]);
+  leg(s, 0.85, 1.75, L.tail.x, L.tail.y, 0.08);
+  spinner(s, 9.0, 2.0, 0.42, 0.45, P);
+  pane(s, [[6.4, 2.64], [5.9, 3.1], [4.85, 3.04], [4.0, 2.64]]);
+  finish(s.a);
+  // the pale blue underside, the yellow panel under the cowling, the cooling fan's blades in its mouth, exhausts
+  s.over([[0, 1.0], [9.2, 1.0], [9.2, 1.75], [0, 1.95]], RLM76[2], (c) => c === P[2] || c === P[1] || c === P[0]);
+  s.over([[7.1, 1.3], [8.4, 1.25], [8.4, 1.6], [7.1, 1.6]], YELLOW[2], (c) => c === RLM76[2] || c === P[2] || c === P[1]);
+  for (let y = 1.55; y < 2.5; y += 0.18) s.seam(8.5, y, 8.62, y + 0.08, GUNMETAL[0]);
+  for (let x = 7.2; x < 7.9; x += 0.16) s.seam(x, 1.7, x + 0.06, 1.65, GUNMETAL[0]);
+  // the mottle along the side, panel lines, the fuselage band
+  mottle(s, 0.8, 6.9, 1.95, 2.5, RLM75[2], P[2], 7);
+  s.over([[1.6, 1.0], [2.0, 1.0], [2.0, 2.6], [1.6, 2.6]], 0xc8b040, (c) => c === P[2] || c === RLM76[2] || c === P[1]);
+  s.seam(7.0, 1.4, 7.0, 2.6, P[1]);
+  s.seam(3.9, 2.58, 3.9, 1.35, P[1]);
+  cross(s, 3.0, 1.95, 0.3);
+  cross(s, 0.75, 2.85, 0.2);
+  s.set(0.45, 3.45, LED_RED).set(5.9, 1.48, LED_GREEN);
+  return s.a;
+}
+
+/**
+ * The Yakovlev Yak-9K (level): 8.5 m long, a slim Klimov V-12 under the nose and the
+ * 45 mm NS-45's long barrel firing through the spinner, muzzle brake and all; the
+ * canopy over a raised spine, the radiator's scoop under the wing. Green over pale
+ * blue, red stars edged white.
+ */
+export const YAK9K_LEVEL: LevelFrame = {
+  pieces: [
+    [[6.5, 1.36], [8.0, 1.6], [8.5, 1.9], [8.0, 2.2], [6.5, 2.36]],
+    [[3.6, 1.25], [4.2, 1.02], [5.2, 1.02], [6.5, 1.36], [6.5, 2.36], [6.1, 2.42], [5.5, 2.86], [4.6, 2.86], [3.6, 2.46]],
+    [[3.6, 1.25], [3.6, 2.46], [1.0, 2.15], [0.12, 2.1], [0.2, 1.8], [1.0, 1.66]],
+    [[1.4, 2.18], [0.55, 3.25], [0.15, 3.2], [0.0, 2.08]],
+    [[4.3, 1.25], [6.5, 1.28], [6.5, 1.56], [4.3, 1.42]],
+    [[1.3, 2.0], [0.0, 2.02], [0.0, 2.15], [1.2, 2.15]],
+  ],
+  whole: [3, 4],
+  main: { x: 6.25, y: 0.32, r: 0.32, rim: STEEL_LT, hub: 10 },
+  tail: { x: 0.8, y: 1.4, r: 0.15, rim: STEEL_LT, hub: 5 },
+  seats: [[5.0, 2.08]],
+  recline: [0.25],
+  cabin: [4.0, 1.75, 6.1, 3.0],
+  cg: [5.7, 1.85], engine: [7.4, 1.9], fuel: [5.3, 1.4],
+};
+export const YAK9K = sitDown(YAK9K_LEVEL);
+/** The NS-45's muzzle, level (m): out past the spinner. */
+export const YAK9K_MUZZLE: Pt = [8.95, 1.9];
+
+export function yak9kArt(): PixelArt {
+  const td = YAK9K;
+  const L = YAK9K_LEVEL;
+  const s = new SitSheet(td);
+  const P = SOV_GREEN;
+  s.poly(L.pieces[2], P[2]).poly(L.pieces[1], P[2]).poly(L.pieces[0], P[2]);
+  s.poly(L.pieces[3], P[2]).poly(L.pieces[5], P[2]);
+  s.poly(L.pieces[4], SOV_BLUE[1]);
+  leg(s, 6.3, 1.27, L.main.x, L.main.y, 0.11);
+  s.poly([[6.12, 1.25], [6.42, 1.25], [6.36, 0.7], [6.18, 0.7]], P[1]);
+  leg(s, 0.85, 1.7, L.tail.x, L.tail.y, 0.07);
+  // the cannon's barrel out through the spinner, and its muzzle brake
+  s.rect(8.3, 1.86, 8.85, 1.94, GUNMETAL[2]);
+  s.rect(8.78, 1.83, 8.95, 1.97, GUNMETAL[1]);
+  spinner(s, 8.5, 1.9, 0.3, 0.42, P);
+  pane(s, [[6.1, 2.4], [5.55, 2.84], [4.65, 2.84], [3.7, 2.46]]);
+  finish(s.a);
+  // pale blue underneath, the black-green blotches, exhausts, panel lines
+  s.over([[0, 0.9], [8.6, 0.9], [8.6, 1.66], [0, 1.85]], SOV_BLUE[2], (c) => c === P[2] || c === P[1] || c === P[0]);
+  mottle(s, 0.8, 7.7, 1.85, 2.3, SOV_DARK[2], P[2], 11);
+  for (let x = 6.8; x < 7.7; x += 0.18) s.seam(x, 2.08, x + 0.07, 2.03, GUNMETAL[0]);
+  s.seam(6.5, 1.42, 6.5, 2.3, P[1]);
+  s.seam(3.6, 2.42, 3.6, 1.3, P[1]);
+  star(s, 2.7, 1.9, 0.3);
+  star(s, 0.7, 2.75, 0.22);
+  s.set(0.4, 3.2, LED_RED).set(5.6, 1.45, LED_GREEN);
+  return s.a;
+}

@@ -13,12 +13,16 @@ It runs in a browser, as a desktop app on Windows and Mac, and on phones and tab
 - **Fighting**: set two people on each other, or put people, animals and tanks on teams and watch
   the armies fight.
 - **Weapons**: pistols to miniguns, swords and spears, a crossbow with six kinds of bolt, grenades,
-  dynamite, C4, an RPG, Molotovs, a flamethrower and fireworks.
-- **Vehicles**: cars, a truck and an SUV, plus four tanks (among them an M1 Abrams, a Leopard 2A7
+  dynamite, C4, an RPG, Molotovs, a flamethrower, fireworks, a rotary cannon and rocket pods.
+- **Missiles**: mouse-guided, Spike LR-II, heat-seeking and radar-guided launchers, each with standard,
+  cruise, strike, ballistic and ICBM missiles. A radar locks onto what you hold F on, shows its range,
+  height and speed, and steers the radar-guided launchers wired to it.
+- **Vehicles**: cars, a truck and an SUV, plus five tanks (among them an M1 Abrams, a Leopard 2A7, a T-90A
   and a ZTZ-99A) you can drive and aim with the arrow keys.
 - **Aircraft**: one of each FAA category, modelled on real ones: a Boeing 737-800, an ATR 72, a
   Cessna 172, a Cirrus SR22, an F-16, an A-10, a UH-60 Black Hawk, a V-22 Osprey, an ASK 21
-  glider, a hot-air balloon, a powered parachute and a weight-shift trike. They fly by the real
+  glider, a hot-air balloon, a powered parachute and a weight-shift trike, plus three warbirds (a
+  P-51D Mustang, an Fw 190 and a Yak-9K) with guns, bombs and rockets. They fly by the real
   aircraft's numbers and come apart when they crash.
 - **Machines and electricity**: batteries, wires, switches, motors, pistons, thrusters, a jet
   engine, a tesla coil, turrets and detectors.
@@ -38,7 +42,8 @@ Download the latest version from **[Releases](https://github.com/VydeogamzDev/bl
   install. It's the smoothest way to play, because the physics runs on several cores at once. It isn't
   signed, so if SmartScreen stops it, click **More info**, then **Run anyway**.
 - **Any computer:** `Blueberry-Playground-<version>.html`, the whole game in one page. Open it in a
-  desktop browser (it's tested in Chrome).
+  desktop browser (it's tested in Chrome). On a Chromebook it starts on the Low graphics preset, and
+  Auto quality (Settings > Graphics) lowers the resolution and effects whenever the frames fall behind.
 - **Mac (Apple silicon):** `Blueberry-Playground-<version>-mac.tar.xz`. It needs two Terminal commands
   before it opens (see [below](#building-from-source), or the release notes).
 

@@ -192,13 +192,13 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       if (Math.abs(t.elevation - lo) > 0.01) return `${down} held 2.5 s: the barrel stopped at ${t.elevation.toFixed(1)}° (the gun's limit: ${lo}°)`;
       return true;
     })],
-    ['extra: tanks: the Abrams, the ZTZ-99A and the Leopard 2A7 sit on their tracks, drive and fire; the Abrams pulls away fastest, the ZTZ-99A reloads fastest, the Leopard\'s shell is fastest', () => tidy(() => {
+    ['extra: tanks: the Abrams, the ZTZ-99A, the Leopard 2A7 and the T-90A sit on their tracks, drive and fire; the Abrams pulls away fastest, the ZTZ-99A reloads fastest, the Leopard\'s shell is fastest', () => tidy(() => {
       const right = key('driveRight');
       const got: Record<string, { pull: number; shots: number; muzzle: number }> = {};
       const ex = game.explosions;
       const explode = ex.explode;
       try {
-        for (const id of ['tank-abrams', 'tank-ztz99a', 'tank-leopard']) {
+        for (const id of ['tank-abrams', 'tank-ztz99a', 'tank-leopard', 'tank-t90a']) {
           kit.reset();
           const t = kit.spawn(id, -45, 0.8) as Tank;
           kit.advance(1);

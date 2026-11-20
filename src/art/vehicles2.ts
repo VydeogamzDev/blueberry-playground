@@ -466,3 +466,57 @@ export const startGateArt = cached<boolean>((lit) => {
   if (lit) a.hline(3, 36, 9, LED_GREEN);
   return a;
 });
+
+/**
+ * A rotary cannon (0.5.0: an M61 Vulcan's build), facing right: the drive and feed
+ * housing at the back with its mounting lug, six barrels in a cluster held by two
+ * clamps; `turn` (0 to 2) shows the cluster a third of a barrel further round.
+ */
+export const ROTARY = { w: 48, h: 12, muzzle: [47, 6] as [number, number] };
+export const rotaryArt = cached<number>((turn) => {
+  const a = new PixelArt(ROTARY.w, ROTARY.h);
+  a.rect(4, 0, 7, 2, GUNMETAL[1]);
+  a.roundRect(0, 2, 15, 9, 2, GUNMETAL[2]);
+  a.rect(15, 3, 30, 6, STEEL[2]);
+  a.rect(26, 2, 3, 8, GUNMETAL[2]);
+  a.rect(42, 2, 4, 8, GUNMETAL[2]);
+  a.rect(46, 4, 2, 4, GUNMETAL[1]);
+  finish(a);
+  // the barrels' rows, lit as they come round
+  for (let i = 0; i < 3; i++) {
+    const y = 4 + i * 2;
+    const lit = (i + turn) % 3 === 0;
+    a.hline(15, 25, y, lit ? STEEL_LT[3] : STEEL[1]);
+    a.hline(29, 41, y, lit ? STEEL_LT[3] : STEEL[1]);
+  }
+  a.set(47, 5, GUNMETAL[0]).set(47, 6, GUNMETAL[0]);
+  a.rect(3, 4, 3, 2, YELLOW[2]);
+  a.vline(12, 3, 9, GUNMETAL[0]);
+  return a;
+});
+
+/**
+ * An unguided rocket pod (0.5.0: a LAU-61's build), facing right: a long tube with a
+ * fairing at its nose and its tail, two lugs on top; `rows` (0 to 3) of its tubes'
+ * mouths show a rocket's nose.
+ */
+export const ROCKET_POD = { w: 40, h: 12, rounds: 19 };
+export const rocketPodArt = cached<number>((rows) => {
+  const a = new PixelArt(ROCKET_POD.w, ROCKET_POD.h);
+  a.rect(11, 0, 3, 2, GUNMETAL[1]);
+  a.rect(25, 0, 3, 2, GUNMETAL[1]);
+  a.roundRect(0, 2, 40, 10, 4, POD_GREY[2]);
+  finish(a);
+  a.hline(3, 36, 4, POD_GREY[3]);
+  a.vline(6, 3, 10, POD_GREY[1]);
+  a.vline(34, 3, 10, POD_GREY[1]);
+  for (let r = 0; r < 3; r++) {
+    const y = 4 + r * 3;
+    a.rect(37, y, 2, 2, r < rows ? OLIVE[2] : GUNMETAL[0]);
+    if (r < rows) a.set(38, y, YELLOW[2]);
+  }
+  a.rect(0, 5, 1, 4, GUNMETAL[0]);
+  return a;
+});
+
+const POD_GREY = ramp('#a3a8a8', 0.85);

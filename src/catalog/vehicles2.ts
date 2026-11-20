@@ -1,4 +1,4 @@
-import { register, lazyArt, previewOf } from './items';
+import { register, lazyArt, previewOf, getItem } from './items';
 import { ARMOUR, MAT, type PhysMaterial } from '../world/Materials';
 import { PX } from '../engine/constants';
 import * as V from '../art/vehicles2';
@@ -14,8 +14,9 @@ import { Grabber } from '../entities/Grabbers';
 import { RailWheel, RAIL_WHEEL_MAT, RAIL_WHEEL_R } from '../entities/Rails';
 import { CoasterCar, COASTER_WHEELS } from '../entities/Coaster';
 import { Fixture, FuelPump, PUMP, RaceGate } from '../entities/Places';
-import { AERIAL_BOMB, AerialBomb, BAY, BombBay, DISPENSER, Flare, FlareDispenser, HeatSeekerPod, POD } from '../entities/Combat';
-import { Missile, WARHEADS, type MissileSpec } from '../entities/Missiles';
+import { AERIAL_BOMB, AerialBomb, BAY, BombBay, DISPENSER, Flare, FlareDispenser, HeatSeekerPod, POD, POD_ROCKETS, ROTARY_GUN, RocketPod, RotaryCannon } from '../entities/Combat';
+import { ROCKET_SPEC } from './missiles';
+import { Missile } from '../entities/Missiles';
 import * as M from '../art/missiles';
 import { Prop, type PropConfig } from '../entities/Prop';
 import type { ShapeSpec } from '../world/Part';
@@ -155,21 +156,14 @@ export function registerBoats(): void {
     ['anchor', 'boat', 'ship', 'moor', 'hold', 'water']);
 }
 
-/** A heat seeker's flight: quick off the rail, fast, handy, a short burn; a smaller warhead than an anti-tank missile's. */
-const HEAT_SPEC: MissileSpec = { cruise: 110, accel: 220, turn: 5.5, burn: 4, loft: false, warhead: { ...WARHEADS.standard, power: 90, damage: 200, jet: 500 } };
-
 export function registerCombat(): void {
-  const mArt = lazyArt(() => M.missileArt('spike', 'standard'));
-  const size = M.MISSILES.standard;
-  const mShapes: ShapeSpec[] = [{ kind: 'box', w: size.w - 2, h: size.body, r: 0.8 }];
-  const round: ItemDef = register({
-    id: 'missile-heat', name: 'Heat-Seeking Missile', category: 'Weapons', description: 'A heat-seeking missile in flight.', tags: [], hidden: true,
-    preview: previewOf(mArt),
-    create: (game, x, y, opts) => new Missile(game, round, 'spike', 'standard', HEAT_SPEC, mArt(), mShapes, densityFor(3, mShapes), x, y, opts),
-  });
+  // (the heat-seeking missile is the heat seeker launcher's: see catalog/missiles)
+  const heat = getItem('missile-heat');
+  if (!heat) throw new Error('registerCombat: missile-heat (registerMissiles) not yet registered');
+  const round: ItemDef = heat;
   const pod = lazyArt(() => V.heatPodArt(POD.rounds));
   item('heat-seeker-pod', 'Heat-Seeker Pod',
-    `Two air-to-air missiles on a rail: weld it under a wing. The pilot’s fire key \ (or F) fires one forward, and it goes after the hottest thing ahead of it: a rocket’s or a jet’s flame (on afterburner, more), something on fire. A flare in its eye pulls it off. It loads the next in ${POD.reload} s.`,
+    `Two air-to-air missiles on a rail: weld it under a wing. The pilot’s fire key \\ (or F) fires one forward, and it goes after the hottest thing ahead of it: a rocket’s or a jet’s flame (on afterburner, more), something on fire. A flare in its eye pulls it off. It loads the next in ${POD.reload} s.`,
     pod, (game, def, x, y, opts) => new HeatSeekerPod(game, def, cfg(pod, MAT.metal, rects(32, 12, [[2, 0, 28, 11]]), 12), V.heatPodArt, () => round, x, y, opts),
     ['missile', 'heat', 'seeker', 'air', 'sidewinder', 'pod', 'jet', 'pilot', 'weapon'], 'Flight');
   const pellet = lazyArt(V.flarePelletArt);
@@ -193,6 +187,25 @@ export function registerCombat(): void {
     `Weld it into a plane’s belly: the pilot’s bombs key 0 (or F) opens its doors and drops a bomb; ${BAY.bombs} in it. Its menu loads it again.`,
     bay, (game, def, x, y, opts) => new BombBay(game, def, cfg(bay, MAT.metal, rects(30, 12, [[0, 0, 30, 10]]), 40), V.bombBayArt, () => bomb, x, y, opts),
     ['bomb', 'bay', 'bomber', 'drop', 'plane', 'pilot'], 'Flight');
+  // (0.5.0) the rotary cannon and the rocket pod, and the pod's rocket (not in the toybox)
+  const rArt = lazyArt(() => M.missileArt('rocket', 'strike'));
+  const rSize = M.MISSILES.strike;
+  const rShapes: ShapeSpec[] = [{ kind: 'box', w: rSize.w - 2, h: 3, r: 0.8 }];
+  const rocket: ItemDef = register({
+    id: 'rocket-70mm', name: '70 mm Rocket', category: 'Weapons', description: 'An unguided rocket in flight.', tags: [], hidden: true,
+    preview: previewOf(rArt),
+    create: (game, x, y, opts) => new Missile(game, rocket, 'rocket', 'strike', ROCKET_SPEC, rArt(), rShapes, densityFor(1.5, rShapes), x, y, opts),
+  });
+  const rot = lazyArt(() => V.rotaryArt(0));
+  item('rotary-cannon', 'Rotary Cannon',
+    `A six-barrelled 20 mm rotary cannon (an M61 Vulcan): hold F, or weld it to a plane and hold the pilot’s fire key \\, and its barrels spin up and it fires ${ROTARY_GUN.rate} rounds a second, a stream of tracer that shreds cars and shoves back on what it’s welded to. ${ROTARY_GUN.rounds} rounds; its menu loads it again.`,
+    rot, (game, def, x, y, opts) => new RotaryCannon(game, def, cfg(rot, MAT.metal, rects(V.ROTARY.w, V.ROTARY.h, [[0, 2, 15, 9], [15, 3, 33, 6]]), 110), V.rotaryArt, V.ROTARY.muzzle, x, y, opts),
+    ['rotary', 'cannon', 'gatling', 'vulcan', 'm61', 'minigun', 'gun', 'gau', '20mm', 'pilot', 'weapon'], 'Weapons');
+  const podArt = lazyArt(() => V.rocketPodArt(3));
+  item('rocket-pod', 'Rocket Pod',
+    `${POD_ROCKETS.rounds} unguided 70 mm rockets in a pod (a LAU-61): F fires one straight ahead (hold it to ripple them off), or weld it under a wing and press the pilot’s rockets key 9. Each flies on its motor for a second, dropping a little, and goes off on what it hits. Its menu loads it again.`,
+    podArt, (game, def, x, y, opts) => new RocketPod(game, def, cfg(podArt, MAT.metal, rects(V.ROCKET_POD.w, V.ROCKET_POD.h, [[0, 2, 40, 10]]), 60), V.rocketPodArt, () => rocket, x, y, opts),
+    ['rocket', 'pod', 'hydra', 'ffar', 'lau', 'unguided', 'salvo', 'pilot', 'weapon', 'jet', 'helicopter'], 'Weapons');
   const plate = lazyArt(() => V.armourArt(32, 8));
   item('armour-plate', 'Armour Plate',
     'A plate of hardened steel: weld it over what needs keeping safe. Rifle rounds stop in it (a sniper’s just), shrapnel bounces off, and it takes a blast that would tear sheet metal apart.',
