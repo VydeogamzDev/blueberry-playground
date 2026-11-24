@@ -495,7 +495,7 @@ export class Arrange {
     const ents = this.moving(list, true);
     const box = boxOf(ents);
     if (!box) return;
-    const snap = mirror(capture(this.game, ents), box.x1);
+    const snap = mirror(capture(this.game, ents), box.x1, true);
     if (c.net) return c.net.send({ op: 'place', snap, dx: 0, dy: 0, label: 'Duplicate mirrored' });
     c.history.record('Duplicate mirrored');
     const made = instantiate(this.game, snap);

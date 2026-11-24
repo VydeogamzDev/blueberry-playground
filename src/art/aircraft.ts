@@ -144,8 +144,21 @@ function door(s: Sheet, x0: number, y0: number, x1: number, y1: number, c: Color
   s.seam(x1 - 0.12, (y0 + y1) / 2, x1 - 0.12, (y0 + y1) / 2 + 0.1, c);
 }
 
+let legsIn = false;
+
+/** An aircraft's art drawn with its gear retracted: its legs left off (its wheels are parts of their own, hidden). */
+export function gearUp(art: () => PixelArt): PixelArt {
+  legsIn = true;
+  try {
+    return art();
+  } finally {
+    legsIn = false;
+  }
+}
+
 /** A landing-gear leg from the airframe at (x, yTop) down to its axle (x2, y2), `t` m thick. */
 function leg(s: Sheet, x: number, yTop: number, x2: number, y2: number, t: number, P: Ramp = STEEL): void {
+  if (legsIn) return;
   s.poly([[x - t / 2, yTop], [x + t / 2, yTop], [x2 + t / 2, y2], [x2 - t / 2, y2]], P[2]);
 }
 
@@ -461,6 +474,69 @@ export function f16Art(): PixelArt {
   s.line(15.06, 2.25, 15.45, 2.25, STEEL[1]);
   s.seam(1.0, 2.4, 0.9, 1.5, P[0]);
   s.set(2.4, 4.85, LED_RED).set(9.0, 2.95, LED_RED);
+  return s.a;
+}
+
+// ---------------------------------------------------------------- F-15EX Eagle II
+
+const EAGLE = ramp('#7d878f', 0.85);
+const EAGLE_DK = ramp('#5c656c', 0.9);
+
+/** The F-15EX (0.5.1): a big two-seat twin-engined fighter, its boxy intakes beside the cockpit, two fins, two nozzles. */
+export const F15EX: Airframe = {
+  len: 19.45, top: 5.65, bottom: 0.27,
+  pieces: [
+    [[16.5, 1.75], [18.0, 1.95], [19.0, 2.15], [19.45, 2.3], [19.0, 2.5], [18.0, 2.75], [16.5, 2.95]],
+    [[11.0, 1.2], [16.5, 1.75], [16.5, 2.95], [15.4, 3.2], [11.0, 3.0]],
+    [[3.0, 1.3], [11.0, 1.2], [11.0, 3.0], [3.0, 2.85]],
+    [[3.0, 1.3], [3.0, 2.85], [0.3, 2.75], [0.05, 2.6], [0.05, 1.5], [0.3, 1.4]],
+    // the fins (one over the other), the wing, the stabilator, the canopy
+    [[3.9, 2.8], [1.75, 5.65], [0.75, 5.65], [0.5, 2.7]],
+    [[11.0, 2.25], [9.0, 2.1], [4.6, 1.95], [4.5, 2.15], [8.4, 2.45]],
+    [[3.0, 1.9], [0.0, 1.95], [0.0, 2.12], [2.7, 2.12]],
+    [[12.0, 3.0], [12.8, 3.45], [13.9, 3.62], [15.0, 3.45], [15.7, 3.12]],
+  ],
+  whole: [4, 6],
+  wheels: [{ x: 7.9, r: 0.42, rim: STEEL_LT, hub: 13 }, { x: 14.6, r: 0.28, rim: STEEL_LT, hub: 9 }],
+  seats: [[14.35, 2.62], [12.8, 2.7]],
+  recline: [0.45, 0.45],
+  cabin: [11.8, 2.4, 15.8, 3.9],
+  cg: [8.4, 2.05], engine: [1.6, 2.0], fuel: [8.0, 2.0],
+};
+
+export function f15exArt(): PixelArt {
+  const f = F15EX;
+  const s = new Sheet(f);
+  const P = EAGLE;
+  // the far fin, a shade darker, behind the near one
+  s.poly([[4.3, 2.8], [2.15, 5.5], [1.25, 5.5], [0.95, 2.7]], EAGLE_DK[1]);
+  s.poly(f.pieces[1], P[2]).poly(f.pieces[2], P[2]).poly(f.pieces[3], P[2]).poly(f.pieces[0], RADOME[2]);
+  s.poly(f.pieces[4], P[2]);
+  // the boxy intake beside the cockpit and its dark mouth, the two nozzles one over the other
+  s.poly([[10.4, 1.25], [12.9, 1.45], [12.9, 2.55], [10.4, 2.6]], EAGLE_DK[2]);
+  s.poly([[12.9, 1.45], [12.6, 1.5], [12.6, 2.5], [12.9, 2.55]], GUNMETAL[0]);
+  s.poly([[1.0, 1.42], [0.05, 1.55], [0.05, 2.02], [1.0, 2.08]], NOZZLE[2]);
+  s.poly([[1.0, 2.12], [0.05, 2.18], [0.05, 2.62], [1.0, 2.72]], NOZZLE[1]);
+  // the wing, the stabilator, the gear legs (the nose leg under the cockpit, the mains under the wing)
+  s.poly(f.pieces[5], EAGLE_DK[2]);
+  s.poly(f.pieces[6], EAGLE_DK[2]);
+  leg(s, 7.9, 1.25, 7.9, 0.42, 0.16);
+  leg(s, 14.45, 1.55, 14.6, 0.28, 0.12);
+  pane(s, f.pieces[7]);
+  finish(s.a);
+  // panel lines, the canopy's frame between the seats, the gun's port at the wing root, the pitot,
+  // the speed brake on the back, the tail's lights
+  s.seam(16.5, 1.78, 16.5, 2.92, RADOME[0]);
+  s.seam(12.0, 3.02, 15.7, 3.12, GUNMETAL[1]);
+  s.seam(13.55, 3.0, 13.55, 3.58, GUNMETAL[1]);
+  s.seam(6.0, 1.3, 6.0, 2.85, P[1]);
+  s.seam(9.8, 1.25, 9.8, 2.95, P[1]);
+  s.seam(3.0, 1.35, 3.0, 2.8, P[1]);
+  s.seam(2.1, 5.55, 1.6, 2.9, P[1]);
+  s.rect(10.0, 2.28, 10.3, 2.38, GUNMETAL[0]);
+  s.seam(8.6, 2.98, 10.6, 3.0, P[0]);
+  s.line(19.45, 2.3, 19.44, 2.3, STEEL[1]);
+  s.set(1.75, 5.6, LED_RED).set(12.1, 3.1, LED_RED);
   return s.a;
 }
 

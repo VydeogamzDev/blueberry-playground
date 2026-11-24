@@ -832,11 +832,24 @@ export class Game {
     try {
       this.frameBody(now);
     } catch (e) {
-      if (!/unreachable|recursive use|memory access out of bounds/.test(String(e))) throw e;
-      this.halted = true;
-      if (this.onHalt) this.onHalt(e);
-      else console.error('The physics engine broke; the game has stopped (reload to go on).', e);
+      if (!this.panicked(e)) throw e;
     }
+  }
+
+  /**
+   * Was `e` the physics engine breaking (a panic in its WebAssembly)? Then the frames stop
+   * here, the player told (see onHalt). 0.5.1: one outside a frame (a key or a click acting on
+   * a body no longer in the world) left the engine's world half borrowed, and the next step
+   * died of 'recursive use of an object', which said nothing of what did it: main.ts sends
+   * every uncaught error here, so the first panic is the one reported.
+   */
+  panicked(e: unknown): boolean {
+    if (!/unreachable|recursive use|memory access out of bounds/.test(String(e))) return false;
+    if (this.halted) return true;
+    this.halted = true;
+    if (this.onHalt) this.onHalt(e);
+    else console.error('The physics engine broke; the game has stopped (reload to go on).', e);
+    return true;
   }
 
   private frameBody(now: number): void {

@@ -316,7 +316,7 @@ export class FirstAidKit extends Item {
   contextActions(): ContextAction[] {
     const acts: ContextAction[] = [];
     acts.push({ label: this.holder ? 'Use on themselves' : 'Use', hint: 'F', disabled: this.uses <= 0 || !!this.treating, action: () => this.activate() });
-    acts.push({ label: this.uses > 0 ? `${this.uses} use${this.uses > 1 ? 's' : ''} left` : 'Used up', action: () => {} });
+    acts.push({ label: this.uses > 0 ? `${this.uses} use${this.uses > 1 ? 's' : ''} left` : 'Used up', disabled: true, action: () => {} });
     if (this.holder) acts.push({ label: 'Drop', action: () => this.holder?.dropItem(this) });
     return acts;
   }

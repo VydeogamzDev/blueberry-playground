@@ -8,6 +8,7 @@ import type { Human } from '../../entities/Human';
 import type { Car } from '../../entities/Car';
 import type { GuidedLauncher, Missile, SpikeLauncher } from '../../entities/Missiles';
 import type { MissileCarrier } from '../../entities/M113';
+import type { Radar } from '../../entities/Radar';
 import type { Thruster } from '../../entities/Machines';
 import type { LineBatch } from '../../systems/Connections';
 import type { makeTestKit } from '../testkit';
@@ -309,6 +310,54 @@ function all({ game, controls, kit, human }: TestCtx): Test[] {
       if (!car.wrecked) return `the car isn't wrecked (hp ${car.body.hp.toFixed(0)})`;
       tick();
       if (!(await until(() => !gs.holder, 2000))) return 'let go, the guest still shows the seeker held';
+      return true;
+    })],
+    ['extra: netfix: (0.5.1) a guest’s launcher shows its next missile in once the host’s has; a radar a guest locks shows the lock and its readout on the guest’s screen', () => kit.still(async () => {
+      const g = await play();
+      kit.reset();
+      tick();
+      const L = kit.spawn('guided-launcher', -12, 0.4) as GuidedLauncher;
+      const radar = kit.spawn('radar', 0, 2.3) as Radar;
+      const car = kit.spawn('car', 20, 0.8) as Car;
+      kit.advance(0.5);
+      const gl = await theirs(g, L);
+      const gr = await theirs(g, radar);
+      const gcar = await theirs(g, car);
+      if (!gl || !gr || !gcar) return 'the guest never got the launcher, the radar and the car';
+      // fired and reloaded on the host: the guest's copy was left empty, its menu "Reloading…"
+      game.cursor = { x: 10, y: 8 };
+      L.activate();
+      // (the missile taken away: it would come down on the radar or the car)
+      const m = flying('missile-guided');
+      if (!m) return 'the launcher fired nothing';
+      game.remove(m);
+      kit.advance(0.1);
+      tick();
+      if (!(await until(() => !gl.loaded, 2000))) return 'fired, the guest’s launcher still shows a missile in';
+      for (let t = 0; t < 3.5; t += 0.1) {
+        kit.advance(0.1);
+        tick();
+      }
+      if (!L.loaded) return 'the host’s launcher never reloaded';
+      if (!(await until(() => gl.loaded, 2000))) return `reloaded on the host, the guest’s launcher still shows it empty (its menu: ${gl.contextActions()[0]?.label})`;
+      // the guest holds F on the radar with their cursor on the car
+      const you = g.ui.session.guest!.you;
+      const bad = await guestAt(g, car.body.x, car.body.y);
+      if (bad) return bad;
+      g.controls.activate([gr], true);
+      try {
+        if (!(await until(() => radar.activeHeld, 2000))) return 'the guest’s F never switched the host’s radar on';
+        for (let i = 0; i < 20 && !radar.lock; i++) kit.advance(0.1);
+        if (radar.lock !== car || radar.owner !== you) return `the host’s radar locked ${radar.lock?.def.id ?? 'nothing'} for player ${radar.owner}`;
+      } finally {
+        g.controls.releaseActivation();
+      }
+      kit.advance(0.1);
+      tick();
+      if (!(await until(() => gr.lock === gcar && gr.owner === you, 2000))) return `the guest’s radar shows a lock on ${gr.lock?.def.id ?? 'nothing'} for player ${gr.owner}`;
+      g.game.renderFrame(1 / 60, 1);
+      const tag = frame?.contentDocument?.querySelector('.radar-tag');
+      if (!/LOCK/.test(tag?.textContent ?? '')) return `no LOCK readout on the guest’s screen (${tag?.textContent ?? 'none'})`;
       return true;
     })],
     ['extra: netfix: a limb grown back on the host grows back for the guest (small at first), and a guest who joins later sees the whole body', () => kit.still(async () => {

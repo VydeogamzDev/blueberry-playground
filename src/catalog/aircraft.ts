@@ -72,6 +72,8 @@ interface Make {
   stand?: boolean;
   noBelts?: boolean;
   material?: CarConfig['material'];
+  /** Its gear retracts (0.5.1): the art drawn again without its legs. */
+  up?: () => PixelArt;
 }
 
 /** A vehicle config for an airframe: its colliders, wheels, seats, cabin and wreck from its design. */
@@ -105,7 +107,8 @@ function configOf(f: A.Airframe, body: () => PixelArt, spec: FlightSpec, o: Make
       return [a, b, c - a, d - b] as [number, number, number, number];
     })(),
     noBelts: o.noBelts,
-    front, frontOf: (a) => seeThrough(a), wreck, wreckFront: lazyArt(() => seeThrough(wreck())),
+    front, frontOf: (a) => seeThrough(a), wreck,
+    bodyUp: o.up ? lazyArt(() => A.gearUp(o.up!)) : undefined, wreckFront: lazyArt(() => seeThrough(wreck())),
     engine: g.p(...f.engine), fuel: g.p(...f.fuel),
     armour: o.armour ?? 1, blast: o.blast, tough: o.tough, wholeShapes: f.whole, trueKg: spec.trueKg + 150,
     material: o.material,
@@ -125,7 +128,7 @@ function specOf(f: A.Airframe, s: Omit<FlightSpec, 'cg'> & { cg?: Pt }): FlightS
     wing: surf(s.wing), tail: surf(s.tail), tips: surf(s.tips), power: pw,
     rotor: s.rotor ? { ...s.rotor, at: pt(s.rotor.at), tail: s.rotor.tail ? { ...s.rotor.tail, at: pt(s.rotor.tail.at) } : undefined } : undefined,
     gun: s.gun ? { ...s.gun, at: pt(s.gun.at), muzzles: s.gun.muzzles?.map(pt) } : undefined,
-    bombs: s.bombs?.map(pt), rockets: s.rockets?.map(pt),
+    bombs: s.bombs?.map(pt), rockets: s.rockets?.map(pt), missiles: s.missiles?.map(pt),
     lights: s.lights ? Object.fromEntries(Object.entries(s.lights).map(([k, v]) => [k, pt(v as Pt)])) : undefined,
   };
 }
@@ -173,7 +176,7 @@ function aircraft(
   return register(def);
 }
 
-const KEYS = 'Select it (or whoever’s at the controls) to fly it: W and S the throttle, Q and E pitch, A or D the brakes, F starts the engines. Drop people on it to board.';
+const KEYS = 'Select it (or whoever’s at the controls) to fly it: W and S the throttle, Q and E pitch, A or D the brakes, F starts the engines, [ the gear up or down, . the flaps, \' reloads. Drop people on it to board.';
 
 // ---------------------------------------------------------------- the numbers
 
@@ -183,7 +186,7 @@ const B738_SPEC = specOf(A.B738, {
   tail: { at: [3.3, 4.45], area: 32.8, ar: 6.2, incidence: -1.5, cl0: 0, clMax: 1.1, elevator: 25, tau: 0.45, downwash: true },
   cd0: 0.019, e: 0.78, mcrit: 0.76, wave: 3,
   power: { kind: 'jet', at: [[25.4, 1.45]], thrust: 234000, spool: 6, idle: 0.07, nozzle: [22.9, 1.45] },
-  vne: 175, gLimit: 2.5, gear: 3.6, breakup: 15, pitchRate: 5, brake: 3.5, roll: 0.15,
+  vne: 175, gLimit: 2.5, gear: 3.6, breakup: 15, pitchRate: 6, brake: 3.5, roll: 0.15,
   lights: { nav: [14.2, 4.0], beacon: [18.0, 5.25], strobe: [14.0, 6.4], landing: [24.2, 2.0] },
 });
 
@@ -193,7 +196,7 @@ const ATR_SPEC = specOf(A.ATR72, {
   tail: { at: [1.9, 7.5], area: 11.7, ar: 4.5, incidence: -1.5, cl0: 0, clMax: 1.0, elevator: 25, tau: 0.55, downwash: true },
   cd0: 0.024, e: 0.8, mcrit: 0.6, wave: 2,
   power: { kind: 'turboprop', at: [[18.9, 3.45]], thrust: 76000, power: 4.1e6, spool: 3, idle: 0.08, props: [{ at: [18.97, 3.45], r: 1.965 }] },
-  vne: 129, gLimit: 2.5, gear: 3.6, breakup: 14, pitchRate: 6, brake: 3.5, roll: 0.15,
+  vne: 129, gLimit: 2.5, gear: 3.6, breakup: 14, pitchRate: 7, brake: 3.5, roll: 0.15,
   lights: { nav: [15.0, 4.3], beacon: [15.5, 4.2], strobe: [1.0, 7.6], landing: [18.1, 3.05] },
 });
 
@@ -225,6 +228,10 @@ const F16_SPEC = specOf(A.F16, {
   power: { kind: 'jet', at: [[1.2, 1.9]], thrust: 76000, boost: 53000, spool: 4, idle: 0.08, nozzle: [-0.05, 1.9] },
   vne: 410, gLimit: 9, gear: 4.5, breakup: 16, pitchRate: 22, brake: 4, roll: 0.2,
   gun: { at: [10.4, 2.5], rate: 50, speed: 1050, damage: 70, energy: 9000, recoil: 100, rounds: 511 },
+  // (0.5.1: Mk 82s, rockets and AIM-9s under it)
+  bombs: [[7.4, 0.85], [5.1, 0.85]],
+  rockets: [[9.3, 0.98], [8.9, 0.98], [4.3, 1.02], [3.9, 1.02]],
+  missiles: [[8.0, 1.72], [5.0, 1.75]],
   flares: 30, eject: true,
   lights: { nav: [5.0, 2.1], beacon: [2.4, 4.85], strobe: [2.4, 4.85], landing: [6.1, 1.2] },
 });
@@ -239,8 +246,28 @@ const A10_SPEC = specOf(A.A10, {
   power: { kind: 'jet', at: [[6.5, 2.45]], thrust: 80600, spool: 6, idle: 0.08, nozzle: [4.1, 3.1] },
   vne: 230, gLimit: 7.3, gear: 4.5, breakup: 17, pitchRate: 18, brake: 4, roll: 0.2,
   gun: { at: [16.6, 1.5], rate: 50, speed: 1010, damage: 140, energy: 25000, recoil: 600, rounds: 1174 },
+  // (0.5.1: bombs, rocket pods and a pair of AIM-9s on its eleven pylons)
+  bombs: [[7.4, 0.75], [11.2, 0.75], [6.6, 0.75], [12.0, 0.75]],
+  rockets: [[5.9, 0.9], [5.5, 0.9], [5.1, 0.9], [12.7, 0.85], [13.1, 0.85], [13.5, 0.85]],
+  missiles: [[11.0, 0.55], [6.2, 0.55]],
   flares: 30, eject: true,
   lights: { nav: [9.3, 1.68], beacon: [1.3, 4.45], strobe: [1.3, 4.45], landing: [9.0, 1.0] },
+});
+
+// (0.5.1: its two F110-GE-129s' 76 kN each, 129 kN on afterburner; its wing a little behind its centre of gravity, as a stable Eagle's is)
+const F15EX_SPEC = specOf(A.F15EX, {
+  kind: 'plane', trueKg: 23000, ky: 3.4, gameKg: 2400,
+  wing: { at: [8.3, 2.1], area: 56.5, ar: 3.0, incidence: 0, cl0: 0.05, clMax: 1.5, flapCl: 0.2, flapCd: 0.03, cd0: 0.004 },
+  tail: { at: [1.4, 2.04], area: 10.3, ar: 2.6, incidence: 0, cl0: 0, clMax: 1.1, elevator: 25, tau: 1, downwash: true },
+  cd0: 0.019, e: 0.75, mcrit: 0.9, wave: 1.2,
+  power: { kind: 'jet', at: [[1.2, 2.05]], thrust: 152000, boost: 106000, spool: 4, idle: 0.08, nozzle: [0.0, 2.05] },
+  vne: 420, gLimit: 9, gear: 4.5, breakup: 17, pitchRate: 20, brake: 4, roll: 0.2,
+  gun: { at: [10.2, 2.33], rate: 50, speed: 1050, damage: 70, energy: 9000, recoil: 100, rounds: 940 },
+  bombs: [[10.2, 0.95], [9.4, 0.95], [6.4, 0.95], [5.6, 0.95]],
+  rockets: [[12.3, 1.08], [11.9, 1.08], [4.4, 1.12], [4.0, 1.12]],
+  missiles: [[9.6, 1.72], [7.2, 1.72], [5.0, 1.75], [11.6, 1.8]],
+  flares: 60, eject: true,
+  lights: { nav: [5.0, 2.15], beacon: [1.75, 5.6], strobe: [1.75, 5.6], landing: [7.9, 1.3] },
 });
 
 const UH60_SPEC = specOf(A.UH60, {
@@ -358,15 +385,15 @@ export function registerAircraft(): void {
   const MIL = 'Airplane · Military';
 
   const b738 = lazyArt(A.b738Art);
-  const b738Cfg = configOf(A.B738, b738, B738_SPEC, { blast: { power: 260, radius: 10, damage: 340 }, tough: 3000 });
+  const b738Cfg = configOf(A.B738, b738, B738_SPEC, { up: A.b738Art, blast: { power: 260, radius: 10, damage: 340 }, tough: 3000 });
   aircraft('boeing-737', 'Boeing 737-800', COM,
-    `The world’s workhorse airliner: 39.5 m long, 62 t as flown, two CFM56 turbofans of 117 kN each. It lifts off near 150 knots (77 m/s) with its flaps half down ([) and cruises at Mach 0.78 up where the air is thin; past 175 m/s low down it’s overspeed, and much past that it comes apart. Its gear takes a landing of 3.6 m/s down. ${KEYS}`,
+    `The world’s workhorse airliner: 39.5 m long, 62 t as flown, two CFM56 turbofans of 117 kN each. It lifts off near 150 knots (77 m/s) with its flaps half down (.) and cruises at Mach 0.78 up where the air is thin; past 175 m/s low down it’s overspeed, and much past that it comes apart. Its gear takes a landing of 3.6 m/s down. ${KEYS}`,
     A.B738, standing(A.B738, b738),
     (game, def, x, y, opts) => new Aircraft(game, def, b738Cfg, B738_SPEC, x, y, opts),
     ['boeing', '737', 'airliner', 'jet', 'passenger', 'commercial', 'plane', 'airplane']);
 
   const atr = lazyArt(A.atr72Art);
-  const atrCfg = configOf(A.ATR72, atr, ATR_SPEC, { blast: { power: 200, radius: 8, damage: 300 }, tough: 2400 });
+  const atrCfg = configOf(A.ATR72, atr, ATR_SPEC, { up: A.atr72Art, blast: { power: 200, radius: 8, damage: 300 }, tough: 2400 });
   aircraft('atr-72', 'ATR 72-600', COM,
     `A regional turboprop airliner: a high wing, a T-tail and two 2,750 hp PW127 engines turning six-bladed props. 20 t as flown; off the ground at about 60 m/s, and it cruises near 140 m/s. Mind the props: they cut. ${KEYS}`,
     A.ATR72, standing(A.ATR72, atr),
@@ -390,26 +417,34 @@ export function registerAircraft(): void {
     ['cirrus', 'sr22', 'caps', 'parachute', 'light', 'propeller', 'general aviation', 'plane', 'airplane']);
 
   const f16 = lazyArt(A.f16Art);
-  const f16Cfg = configOf(A.F16, f16, F16_SPEC, { blast: { power: 190, radius: 7, damage: 280 }, noBelts: true });
+  const f16Cfg = configOf(A.F16, f16, F16_SPEC, { up: A.f16Art, blast: { power: 190, radius: 7, damage: 280 }, noBelts: true });
   aircraft('f-16', 'F-16C Fighting Falcon', MIL,
-    `A single-engined fighter: 12 t, a 76 kN turbofan and 129 kN with its afterburner (hold ;), built for 9 g (it comes apart at half as much again). Hold \\ for its 20 mm M61 cannon, Caps Lock for flares, ' to eject. ${KEYS}`,
+    `A single-engined fighter: 12 t, a 76 kN turbofan and 129 kN with its afterburner (hold W at full throttle, or ;), built for 9 g (it comes apart at half as much again). Hold \\ for its 20 mm M61 cannon; 8 fires a heat-seeking missile, 0 drops a bomb, 9 fires a rocket, Caps Lock flares, / ejects. ${KEYS}`,
     A.F16, standing(A.F16, f16),
     (game, def, x, y, opts) => new Aircraft(game, def, f16Cfg, F16_SPEC, x, y, opts),
     ['f16', 'f-16', 'viper', 'falcon', 'fighter', 'jet', 'military', 'afterburner', 'gun', 'eject', 'plane', 'airplane']);
 
   const a10 = lazyArt(A.a10Art);
-  const a10Cfg = configOf(A.A10, a10, A10_SPEC, { blast: { power: 200, radius: 7, damage: 290 }, armour: 0.6, noBelts: true, tough: 2600 });
+  const a10Cfg = configOf(A.A10, a10, A10_SPEC, { up: A.a10Art, blast: { power: 200, radius: 7, damage: 290 }, armour: 0.6, noBelts: true, tough: 2600 });
   aircraft('a-10', 'A-10C Thunderbolt II', MIL,
-    `The “Warthog”: a straight-winged, armoured ground-attack jet built round the GAU-8 Avenger, a 30 mm cannon whose rounds go through a tank’s armour (hold \\: its recoil slows the plane). Two engines high on its back, twin fins, flares (Caps Lock), an ejection seat ('). ${KEYS}`,
+    `The “Warthog”: a straight-winged, armoured ground-attack jet built round the GAU-8 Avenger, a 30 mm cannon whose rounds go through a tank’s armour (hold \\: its recoil slows the plane). Two engines high on its back, twin fins; bombs (0), rockets (9) and heat seekers (8) under its wings, flares (Caps Lock), an ejection seat (/). ${KEYS}`,
     A.A10, standing(A.A10, a10),
     (game, def, x, y, opts) => new Aircraft(game, def, a10Cfg, A10_SPEC, x, y, opts),
     ['a10', 'a-10', 'warthog', 'thunderbolt', 'gau-8', 'attack', 'jet', 'military', 'gun', 'eject', 'plane', 'airplane']);
+
+  const f15 = lazyArt(A.f15exArt);
+  const f15Cfg = configOf(A.F15EX, f15, F15EX_SPEC, { up: A.f15exArt, blast: { power: 230, radius: 8, damage: 320 }, noBelts: true, tough: 2800 });
+  aircraft('f-15ex', 'F-15EX Eagle II', MIL,
+    `The newest Eagle: a 23 t two-seat twin-engined fighter, two F110 turbofans of 76 kN each, 129 kN on afterburner (hold W at full throttle, or ;), built for 9 g and twice the speed of sound up high. Hold \\ for its 20 mm M61 (940 rounds); 8 fires a heat-seeking missile, 0 drops a bomb, 9 fires a rocket, Caps Lock flares, / ejects. ${KEYS}`,
+    A.F15EX, standing(A.F15EX, f15),
+    (game, def, x, y, opts) => new Aircraft(game, def, f15Cfg, F15EX_SPEC, x, y, opts),
+    ['f15', 'f-15', 'f-15ex', 'f15ex', 'eagle', 'eagle ii', 'strike eagle', 'fighter', 'jet', 'military', 'afterburner', 'gun', 'missile', 'bomb', 'rocket', 'eject', 'plane', 'airplane']);
 
   const WAR = 'Airplane · Warbirds';
   const WB_KEYS = `Hold \\ for its guns, 0 drops a bomb and 9 fires a rocket (they hang under it till they go). A taildragger: it sits tail down, and lifts its tail as it gathers speed. ${KEYS}`;
 
   const p51d = lazyArt(A.p51dArt);
-  const p51Cfg = configOf(A.P51D.f, p51d, P51D_SPEC, { blast: { power: 120, radius: 5, damage: 200 }, noBelts: true });
+  const p51Cfg = configOf(A.P51D.f, p51d, P51D_SPEC, { up: A.p51dArt, blast: { power: 120, radius: 5, damage: 200 }, noBelts: true });
   aircraft('p-51d', 'P-51D Mustang', WAR,
     `The American long-range fighter of 1944: a 1,490 hp Packard Merlin, a laminar-flow wing, the bubble canopy, near 700 km/h up high. Six .50-calibre machine guns (1,840 rounds), a bomb and eight rockets. ${WB_KEYS}`,
     A.P51D.f, standing(A.P51D.f, p51d),
@@ -417,7 +452,7 @@ export function registerAircraft(): void {
     ['p-51', 'p51', 'mustang', 'merlin', 'ww2', 'wwii', 'warbird', 'fighter', 'propeller', 'military', 'usa', 'american', 'gun', 'bomb', 'rocket', 'plane', 'airplane']);
 
   const fw190 = lazyArt(A.fw190Art);
-  const fwCfg = configOf(A.FW190.f, fw190, FW190_SPEC, { blast: { power: 120, radius: 5, damage: 200 }, noBelts: true });
+  const fwCfg = configOf(A.FW190.f, fw190, FW190_SPEC, { up: A.fw190Art, blast: { power: 120, radius: 5, damage: 200 }, noBelts: true });
   aircraft('fw-190', 'Focke-Wulf Fw 190 A-8', WAR,
     `The German fighter: a 1,700 hp BMW 801 radial under a big round cowling, wide-set gear and a short, heavy wing. Four machine guns and cannon firing in turn from the cowling and the wing roots, two bombs and four rockets. ${WB_KEYS}`,
     A.FW190.f, standing(A.FW190.f, fw190),
@@ -425,7 +460,7 @@ export function registerAircraft(): void {
     ['fw 190', 'fw190', 'focke-wulf', 'focke wulf', 'wurger', 'bmw 801', 'ww2', 'wwii', 'warbird', 'fighter', 'propeller', 'military', 'germany', 'german', 'gun', 'bomb', 'rocket', 'plane', 'airplane']);
 
   const yak9 = lazyArt(A.yak9kArt);
-  const yakCfg = configOf(A.YAK9K.f, yak9, YAK9K_SPEC, { blast: { power: 110, radius: 5, damage: 190 }, noBelts: true });
+  const yakCfg = configOf(A.YAK9K.f, yak9, YAK9K_SPEC, { up: A.yak9kArt, blast: { power: 110, radius: 5, damage: 190 }, noBelts: true });
   aircraft('yak-9k', 'Yakovlev Yak-9K', WAR,
     `The Soviet tank-busting fighter: a light Yak-9 with a 45 mm NS-45 cannon firing through its propeller hub, 29 explosive shells, as a tank fires (its recoil shoves the plane back). A 1,180 hp Klimov V-12, a bomb and two rockets. ${WB_KEYS}`,
     A.YAK9K.f, standing(A.YAK9K.f, yak9),
@@ -447,7 +482,7 @@ export function registerAircraft(): void {
     ['uh-60', 'uh60', 'black hawk', 'blackhawk', 'helicopter', 'heli', 'chopper', 'rotor', 'rotorcraft', 'military']);
 
   const v22 = lazyArt(A.v22Art);
-  const v22Cfg = configOf(A.V22, v22, V22_SPEC, { blast: { power: 210, radius: 8, damage: 300 }, tough: 2400 });
+  const v22Cfg = configOf(A.V22, v22, V22_SPEC, { up: A.v22Art, blast: { power: 210, radius: 8, damage: 300 }, tough: 2400 });
   const pivot = grid(A.V22).p(...A.V22_ROTOR.pivot);
   aircraft('v-22', 'V-22 Osprey', 'Powered-lift',
     `A tiltrotor: two 6,150 hp engines on its wingtips turn rotors that point straight up to take off and hover as a helicopter does, then turn ahead (A, D) to fly as a plane on its wing, near twice as fast. Don’t turn them ahead on the ground: they’re too big to clear it. W and S are its collective, Q and E pitch it. ${KEYS}`,
@@ -462,7 +497,7 @@ export function registerAircraft(): void {
     ['v-22', 'v22', 'osprey', 'tiltrotor', 'tilt rotor', 'vtol', 'powered lift', 'military']);
 
   const ask = lazyArt(A.ask21Art);
-  const askCfg = configOf(A.ASK21, ask, ASK21_SPEC, { blast: { power: 20, radius: 2, damage: 40 }, material: { ...MAT.plastic, name: 'Glass fibre' } });
+  const askCfg = configOf(A.ASK21, ask, ASK21_SPEC, { up: A.ask21Art, blast: { power: 20, radius: 2, damage: 40 }, material: { ...MAT.plastic, name: 'Glass fibre' } });
   aircraft('ask-21', 'Schleicher ASK 21', 'Glider',
     `A two-seat glider: 17 m of wing for its 380 kg, gliding 34 m for each metre it sinks. F starts a winch launch (a cable to a winch 900 m ahead winds it up to a few hundred metres, and lets go); after that, find rising air. W and S work its airbrakes. Q and E pitch it.`,
     A.ASK21, standing(A.ASK21, ask),

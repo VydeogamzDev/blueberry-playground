@@ -575,6 +575,23 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       if (game.entities.length !== n + 1) return `Duplicate mirrored made ${game.entities.length - n}`;
       const m = game.entities[game.entities.length - 1];
       if (!(m.parts[0].x > b.parts[0].x)) return 'the mirrored copy is not beside it on the right';
+      // a box hung on a rope from overhead: its mirrored copy hangs from a hook of its own
+      // (it was tied to the original's, and swung over into it)
+      kit.reset();
+      const box = kit.spawn('metal-box', 0, 3);
+      kit.advance(0.2);
+      C.create('rope', box.parts[0], { x: box.parts[0].x, y: box.parts[0].y + 0.2 }, null, { x: box.parts[0].x, y: 5 });
+      kit.advance(2);
+      game.paused = true;
+      c.arrange.duplicateMirrored([box]);
+      game.paused = false;
+      const copy = game.entities.find((e) => e !== box && e.def.id === 'metal-box');
+      if (!copy) return 'no mirrored copy of the hung box';
+      const x0 = copy.parts[0].x;
+      const hook = C.list.find((k) => k.a.entity === copy && !k.b);
+      if (!hook || Math.abs(hook.lb.x - x0) > 0.05) return `the copy at x ${x0.toFixed(2)} hangs from a hook at x ${hook?.lb.x.toFixed(2)}`;
+      kit.advance(2);
+      if (Math.abs(copy.parts[0].x - x0) > 0.05 || Math.abs(box.parts[0].x) > 0.05) return `the hung boxes swung: the copy from ${x0.toFixed(2)} to ${copy.parts[0].x.toFixed(2)}, the original to ${box.parts[0].x.toFixed(2)}`;
       return true;
     }],
     ['extra: building2: a tall welded frame (two 12 m beams, three crossbeams) dragged 2 m sideways by one beam holds together (its welds bent past the twist they took, which didn’t grow with what they held)', () => {

@@ -107,6 +107,29 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       if (bay.destroyed || box.destroyed) return 'the bomb blew up its own plane';
       return true;
     }],
+    ['extra: combat: (0.5.1) a bomb welded on a car doesn’t arm as the car speeds up; cut free and falling fast, it does', () => {
+      kit.reset();
+      const car = kit.spawn('car', -25, 0.8) as Entity & { gear: string; on: boolean; body: { vx: number } };
+      const b = kit.spawn('aerial-bomb', -25, 2) as AerialBomb;
+      kit.advance(0.5);
+      const at = { x: b.main.x, y: b.main.y - 0.1 };
+      const w = C.create('weld', car.parts[0], at, b.parts[0], at);
+      car.gear = 'turbo';
+      car.on = true;
+      let top = 0;
+      game.advance(3, () => {
+        top = Math.max(top, car.body.vx);
+      });
+      if (top < 14) return `the car got up to only ${top.toFixed(1)} m/s`;
+      if (b.live) return `welded on a car going ${top.toFixed(1)} m/s, the bomb armed itself`;
+      // cut free high up, it falls fast and arms
+      if (w) C.remove(w);
+      car.on = false;
+      b.main.teleport(-45, 30, 0);
+      kit.advance(2);
+      if (!b.live) return 'cut free and falling, it never armed';
+      return true;
+    }],
     ['extra: combat: an armour plate stops a sniper round that would have hit what’s behind it', () => {
       kit.reset();
       const plate = kit.spawn('armour-plate', 2, 1, { angle: Math.PI / 2 });

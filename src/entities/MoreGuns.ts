@@ -72,6 +72,14 @@ const CLIP_RELOAD = 1.9;
  */
 export class BattleRifle extends Firearm {
   rounds = CLIP;
+
+  /** Loaded again at once (0.5.1: ' reloads everything in a build). */
+  rearm(): boolean {
+    if (this.rounds >= CLIP || this.destroyed) return false;
+    this.rounds = CLIP;
+    this.reload = 0;
+    return true;
+  }
   /** Seconds until the next clip is in. */
   reload = 0;
   private clipSound = false;
@@ -251,6 +259,14 @@ const CLOSE_AT = 0.85;
  * more put in.
  */
 export class DoubleBarrel extends Firearm {
+  /** Both barrels loaded at once (0.5.1: ' reloads everything in a build). */
+  rearm(): boolean {
+    if (this.loaded >= 2 || this.destroyed) return false;
+    this.loaded = 2;
+    this.reload = 0;
+    return true;
+  }
+
   /** Barrels loaded (0..2). */
   loaded = 2;
   /** Seconds of the reload left. */
@@ -371,6 +387,13 @@ const FLINT_RELOAD = 3.5;
  * seconds to load again.
  */
 export class Flintlock extends Firearm {
+  /** Loaded at once (0.5.1: ' reloads everything in a build): the reload's own end (its look, its sound) next step. */
+  rearm(): boolean {
+    if (this.loaded || this.destroyed) return false;
+    this.reload = Math.min(this.reload, 1e-3);
+    return true;
+  }
+
   loaded = true;
   reload = 0;
   /** Seconds until the shot, the flint having struck. */

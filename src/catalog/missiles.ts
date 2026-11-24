@@ -5,7 +5,7 @@ import { PixelArt } from '../art/PixelArt';
 import * as A from '../art/missiles';
 import { seeThrough, wreckOf } from '../art/vehicles';
 import { artRect, densityFor } from '../entities/Item';
-import { HeatLauncher, Missile, MouseLauncher, SpikeLauncher, WARHEADS, type GuidedLauncher, type MissileSpec } from '../entities/Missiles';
+import { HeatLauncher, LIFT, Missile, MouseLauncher, SpikeLauncher, WARHEADS, type GuidedLauncher, type MissileSpec } from '../entities/Missiles';
 import { Radar, RadarLauncher } from '../entities/Radar';
 import { MissileCarrier } from '../entities/M113';
 import type { CarConfig, SeatSpec } from '../entities/Car';
@@ -68,9 +68,12 @@ function specOf(kind: A.MissileKind, version: A.MissileVersion): MissileSpec {
   if (version === 'cruise') return { ...s, burn: s.burn * 4, warhead: w('cruise') };
   if (version === 'strike') return { ...s, cruise: s.cruise + 2, accel: s.accel * 1.2, turn: s.turn * 1.15, burn: s.burn * 0.6, warhead: w('strike') };
   // (0.5.0) a ballistic missile twice as fast, climbing high over its target to come down on it; an ICBM's three
-  // three times as fast and each three times the warhead, higher still, its motor burning longer to get up there
-  if (version === 'ballistic') return { ...s, cruise: s.cruise * 2, accel: s.accel * 2, arc: [0.7, 300], warhead: w('ballistic') };
-  if (version === 'icbm') return { ...s, cruise: s.cruise * 3, accel: s.accel * 3, burn: s.burn * 2, arc: [1, 800], warhead: w('icbm') };
+  // three times as fast and each three times the warhead, higher still, its motor burning longer to get up there.
+  // (0.5.1) Its fins turn it, and take out its slide, as much faster as it flies, so it turns as tight a circle as
+  // its kind's standard one: with the standard's a radar-guided Ballistic (300 m/s) swung round a 50 m circle (and
+  // slid wide of that), overshot a car 120 m off coming down on it and went off in the ground 23 m past it.
+  if (version === 'ballistic') return { ...s, cruise: s.cruise * 2, accel: s.accel * 2, turn: s.turn * 2, lift: LIFT * 2, arc: [0.7, 300], warhead: w('ballistic') };
+  if (version === 'icbm') return { ...s, cruise: s.cruise * 3, accel: s.accel * 3, turn: s.turn * 3, lift: LIFT * 3, burn: s.burn * 2, arc: [1, 800], warhead: w('icbm') };
   return s;
 }
 

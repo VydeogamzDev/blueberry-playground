@@ -86,7 +86,7 @@ export function registerVehicles2(): void {
     ['light', 'headlight', 'lamp', 'beam', 'car', 'night']);
   const horn = lazyArt(V.hornArt);
   item('horn', 'Horn',
-    'Honks: the pilot’s horn key /, F, a pulse or power reaching it.',
+    'Honks: the pilot’s horn key (set one in Settings › Keys), F, a pulse or power reaching it.',
     horn, (game, def, x, y, opts) => new Horn(game, def, cfg(horn, MAT.metal, rects(14, 8, [[0, 1, 14, 6]]), 1), x, y, opts),
     ['horn', 'honk', 'hooter', 'car', 'sound']);
   const gm = (on: boolean) => P.sensorArt(`g:${on ? 1 : 0}`);

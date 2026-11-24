@@ -228,7 +228,7 @@ export class Syringe extends Blade {
   contextActions(): ContextAction[] {
     const acts = super.contextActions();
     if (this.fill > 0 && !this.lodge && !this.pressed) acts.unshift({ label: this.holder ? 'Inject themselves' : 'Inject', hint: 'F', action: () => this.activate() });
-    acts.unshift({ label: this.fill > 0 ? `${Math.round(this.fill * 100)}% full` : 'Empty', action: () => {} });
+    acts.unshift({ label: this.fill > 0 ? `${Math.round(this.fill * 100)}% full` : 'Empty', disabled: true, action: () => {} });
     return acts;
   }
 

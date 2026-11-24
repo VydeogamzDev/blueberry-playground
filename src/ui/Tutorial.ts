@@ -3563,7 +3563,7 @@ export const DRIVE: TutorialStep[] = [
     id: 'd-lights',
     title: 'Lights',
     keyboard: true,
-    text: (t) => `${t.key('lights', '<kbd>,</kbd>')} switches its <b>Headlight</b> on (and off). The horn is ${t.key('horn', '<kbd>/</kbd>')}, with a <b>Horn</b> built in.`,
+    text: (t) => `${t.key('lights', '<kbd>,</kbd>')} switches its <b>Headlight</b> on (and off). With a <b>Horn</b> built in, ${t.key('horn', '') ? `${t.key('horn')} sounds it` : 'give the horn a key in Settings › Keys to sound it'}.`,
     done: (t) => {
       const h = t.ref('headlight') as (Entity & { on?: boolean }) | null;
       return !h || !!h.on;

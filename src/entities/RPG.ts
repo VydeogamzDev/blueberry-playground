@@ -63,6 +63,13 @@ function blastFor(damage: number): ExplosionOpts {
  * down a wire.
  */
 export class RocketLauncher extends Firearm {
+  /** Loaded at once (0.5.1: ' reloads everything in a build): the reload's own end (its look, its sound) next step. */
+  rearm(): boolean {
+    if (this.loaded || this.destroyed) return false;
+    this.reload = Math.min(this.reload, 1e-3);
+    return true;
+  }
+
   loaded = true;
   /** Seconds until the next rocket is in. */
   reload = 0;
@@ -213,14 +220,28 @@ export class RocketLauncher extends Firearm {
     return ed;
   }
 
-  protected serializeExtra(): Record<string, unknown> | undefined {
-    const base = super.serializeExtra();
+  /**
+   * (Never nothing, loaded or not: a host tells its guests only of an extra that's
+   * there, and a guest's copy told it was reloading stayed empty, its menu
+   * "Reloading…", once the host's had its next rocket in.)
+   */
+  protected serializeExtra(): Record<string, unknown> {
+    const base = super.serializeExtra() ?? {};
     return this.loaded ? base : { ...base, reload: this.reload };
   }
 
   protected restoreExtra(x: Record<string, unknown>): void {
     super.restoreExtra(x);
-    if (typeof x.reload !== 'number') return;
+    if (typeof x.reload !== 'number') {
+      // (a guest's copy: the host's has its next rocket in)
+      if (this.loaded) return;
+      this.loaded = true;
+      this.reload = 0;
+      this.sliding = false;
+      this.inset = -1;
+      this.main.setArt(rpgArt(true));
+      return;
+    }
     this.loaded = false;
     this.reload = Math.max(0, x.reload);
     this.main.setArt(rpgArt(false));

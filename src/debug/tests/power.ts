@@ -49,9 +49,16 @@ export default function tests({ game, kit }: TestCtx): Test[] {
       kit.advance(0.1);
       if (!motor.powered) return 'recharged, the motor isn’t powered again';
       game.fuel.mode = 'infinite';
-      const c1 = bat.charge;
       kit.advance(2);
-      if (bat.charge !== c1) return `with infinite fuel the battery still ran down (${c1} → ${bat.charge})`;
+      if (bat.charge !== bat.capacity) return `with infinite fuel the battery isn’t kept full (${bat.charge} of ${bat.capacity})`;
+      // (one run flat before infinite fuel was chosen came back no more: flat it stayed, its motor dead)
+      game.fuel.mode = 'free';
+      bat.charge = 50;
+      kit.advance(1);
+      if (bat.charge > 0 || motor.powered) return 'the battery should be flat again, the motor stopped';
+      game.fuel.mode = 'infinite';
+      kit.advance(1);
+      if (bat.charge !== bat.capacity || !motor.powered) return `flat, then infinite fuel chosen: ${bat.charge.toFixed(0)} J, the motor ${motor.powered ? '' : 'not '}powered`;
       return true;
     })],
     ['extra: power: a solar panel facing the sun charges a flat battery and lights a lamp; face down, or at night, it makes nothing', () => withMode('free', () => {

@@ -167,7 +167,7 @@ export function registerRocketry(): void {
   const seatShapes = rects(24, 22, [[0, 18, 24, 4], [3, 12, 13, 4], [0, 1, 5, 12], [18, 7, 4, 11]]);
   const ej = lazyArt(R.ejectionSeatArt);
   item('ejection-seat', 'Ejection Seat',
-    `A cockpit seat that throws its pilot clear: on the eject key ' (or F, or a pulse) it tears free of the craft and rockets up, then lets them go under a parachute (strapped on them if they’ve none). ${FLY}`,
+    `A cockpit seat that throws its pilot clear: on the eject key / (or F, or a pulse) it tears free of the craft and rockets up, then lets them go under a parachute (strapped on them if they’ve none). ${FLY}`,
     ej, (game, def, x, y, opts) => new EjectionSeat(game, def, cfg(ej, MAT.metal, seatShapes, 30), x, y, opts),
     ['eject', 'ejection', 'seat', 'cockpit', 'pilot', 'escape', 'parachute', 'plane']);
   const cap = lazyArt(R.capsuleSeatArt);

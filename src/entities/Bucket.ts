@@ -299,7 +299,7 @@ export class Vessel extends Prop implements LiquidCatcher {
   }
 
   contextActions(): ContextAction[] {
-    return [{ label: `${Math.round(Math.min(1, this.level) * 100)}% full`, action: () => {} }];
+    return [{ label: `${Math.round(Math.min(1, this.level) * 100)}% full`, disabled: true, action: () => {} }];
   }
 
   protected serializeExtra(): Record<string, unknown> {

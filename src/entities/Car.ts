@@ -57,6 +57,8 @@ export interface CarConfig {
   /** The body drawn again over whoever sits inside, windows cut out (see seeThrough()), and that of another look of the body. */
   front: () => PixelArt;
   frontOf: (body: PixelArt) => PixelArt;
+  /** The body with its landing gear drawn in (an aircraft whose gear retracts: see Aircraft.setGear()). */
+  bodyUp?: () => PixelArt;
   /** The stripe of the hull painted in its team's colour (a tank's: art px x0, y0, x1, y1, the ends left out). */
   band?: [number, number, number, number];
   /** The burnt-out body after it blows up (see wreckOf()), and its front layer. */

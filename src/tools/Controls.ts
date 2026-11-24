@@ -683,7 +683,9 @@ export class Powers {
 const PILOT_DEAF: Record<PilotCommand, string> = {
   stage: 'No stages left (give parts a stage in their menus)',
   assist: '',
-  gear: 'No landing legs or gear in what you fly',
+  gear: 'No landing legs or gear that retract in what you fly (an aircraft’s only go up in the air)',
+  flaps: 'No flaps on what you fly',
+  reload: 'Nothing to reload: what’s selected is loaded',
   chutes: 'No parachutes left in what you fly',
   eject: 'No ejection seat with a pilot in it',
   lights: 'No headlights in what you fly',
@@ -692,6 +694,7 @@ const PILOT_DEAF: Record<PilotCommand, string> = {
   bombs: 'No bomb bay in what you fly',
   flares: 'No flares left in what you fly',
   rockets: 'No rockets left in what you fly',
+  missiles: 'No heat-seeking missiles left in what you fly',
 };
 
 export class Controls {
@@ -1704,6 +1707,21 @@ export class Controls {
     return heard;
   }
 
+  /** ' (0.5.1): everything that fires in what's selected or flown, and in what it's built with, loaded again. */
+  private reloadOrder(): void {
+    const sel = this.grab ? [] : [...new Set([...this.flown(), ...this.targets()])];
+    if (!sel.length) {
+      this.ui.toast('Select what to reload');
+      return;
+    }
+    if (this.net) {
+      this.net.send({ op: 'pilotCmd', ids: this.net.ids(sel), cmd: 'reload' });
+      return;
+    }
+    const n = this.game.piloting.reload(sel);
+    this.ui.toast(n ? `Reloaded ${n === 1 ? 'one weapon' : `${n} weapons`}` : PILOT_DEAF.reload);
+  }
+
   /**
    * The commands a key gives up to driving (see Bindings' drive keys): with vehicles
    * selected and nothing dragged, A and D drive them rather than turning them, and with
@@ -1711,12 +1729,17 @@ export class Controls {
    */
   private drives(code: string): Set<ActionId> {
     const out = new Set<ActionId>();
+    // (. sets an aircraft's flaps with one selected, and steps time without)
+    // (8 fires an aircraft's heat seeker, and picks tool 8 without one)
+    const air = !this.grab && this.aircraft().length > 0;
+    if (this.bindings.keys('flaps').includes(code)) out.add(air ? 'step' : 'flaps');
+    if (this.bindings.keys('missiles').includes(code)) out.add(air ? 'tool8' : 'missiles');
     const cars = this.grab ? [] : this.vehicles();
     const flying = !this.grab && this.flown().length > 0;
     if (!cars.length && !flying) return out;
     const tanks = this.aims(cars);
     for (const a of ACTIONS) {
-      if (!a.shares || !this.bindings.keys(a.id).includes(code)) continue;
+      if (!a.shares || a.id === 'flaps' || a.id === 'missiles' || !this.bindings.keys(a.id).includes(code)) continue;
       if (a.id === 'driveLeft' || a.id === 'driveRight' || a.id === 'turnLeft' || a.id === 'turnRight' || tanks || flying) out.add(a.shares);
     }
     return out;
@@ -3216,9 +3239,13 @@ export class Controls {
         r.zoomAt(c.x, c.y, id === 'zoomIn' ? 1.25 : 0.8);
         break;
       }
+      case 'reload':
+        this.reloadOrder();
+        break;
       case 'stage':
       case 'assist':
       case 'gear':
+      case 'flaps':
       case 'chutes':
       case 'eject':
       case 'lights':
@@ -3227,6 +3254,7 @@ export class Controls {
       case 'bombs':
       case 'flares':
       case 'rockets':
+      case 'missiles':
         this.pilotOrder(id);
         break;
       case 'chaseCam':

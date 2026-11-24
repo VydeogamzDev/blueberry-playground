@@ -8,6 +8,7 @@ import { Parachute, wearOn } from './Rocketry';
 import { PK } from '../systems/Particles';
 import { getItem } from '../catalog/items';
 import { launchRocket } from './Combat';
+import { launchVolley } from './Missiles';
 import { Shell } from './Tank';
 import { aerialBombArt } from '../art/vehicles2';
 import { missileArt } from '../art/missiles';
@@ -122,6 +123,8 @@ export interface FlightSpec {
   /** Bombs under it (0.5.0: art px of each, dropped in turn on the bombs key) and rockets on rails (fired in turn on the rockets key). */
   bombs?: [number, number][];
   rockets?: [number, number][];
+  /** Heat-seeking air-to-air missiles on rails (0.5.1: art px of each, fired in turn on the missiles key). */
+  missiles?: [number, number][];
   flares?: number;
   eject?: boolean;
   caps?: boolean;
@@ -288,8 +291,9 @@ interface Keys {
  *   pitch; off, the elevator goes back to neutral.
  * - A or D: the wheel brakes (a tiltrotor's: its nacelles, forward or back).
  * - F (Use): starts or stops its engines (a glider: a winch launch).
- * - The pilot's keys: \ fires its gun, ; its afterburner, Caps Lock flares, ' ejects, ] its
- *   parachute (CAPS), [ its flaps, Insert the autopilot (holds its height).
+ * - The pilot's keys: \ fires its gun, ; its afterburner (or W held at full throttle), Caps Lock
+ *   flares, / ejects, ] its parachute (CAPS), [ its gear, . its flaps, ' reloads, Insert the
+ *   autopilot (holds its height).
  */
 export class Aircraft extends Car {
   readonly spec: FlightSpec;
@@ -302,6 +306,11 @@ export class Aircraft extends Car {
   /** Flaps (0 to 1) and where they're going. */
   flaps = 0;
   flapsWant = 0;
+  /** Its gear retracted (0.5.1: see setGear()). */
+  gearUp = false;
+  /** The afterburner lit by holding W at full throttle (see controls()). */
+  private abLatch = false;
+  private abT = 0;
   /** Stability assist: let go of Q and E, it holds the pitch it was at. */
   assist = true;
   autopilot: { alt: number } | null = null;
@@ -325,6 +334,7 @@ export class Aircraft extends Car {
   /** Bombs and rockets left (0.5.0), and the gun of several to fire next. */
   bombsLeft = 0;
   rocketsLeft = 0;
+  missilesLeft = 0;
   private muzzle = 0;
   private stores: Decal[] | null = null;
   capsUsed = false;
@@ -362,6 +372,7 @@ export class Aircraft extends Car {
     this.flaresLeft = spec.flares ?? 0;
     this.bombsLeft = spec.bombs?.length ?? 0;
     this.rocketsLeft = spec.rockets?.length ?? 0;
+    this.missilesLeft = spec.missiles?.length ?? 0;
     this.hold = this.body.body.rotation();
     this.trimMass();
     this.apply();
@@ -430,8 +441,18 @@ export class Aircraft extends Car {
     return ws.windAt(x, y);
   }
 
+  /**
+   * The air it flies in. The World's sky is squeezed ×10 for rockets (half as thick by 600 m),
+   * which left a light aircraft at its ceiling a few hundred metres up and a jet mushy over the
+   * hills; an aircraft feels the true lapse (thinning by e every 8.5 km) to 2.5 km, fading into
+   * the squeezed sky by 6 km (still its ceiling, where the stars come out).
+   */
   protected rhoAt(y: number): number {
-    return this.game.air.densityAt(y);
+    const air = this.game.air;
+    const thin = air.densityAt(y);
+    if (!air.layered) return thin;
+    const h = y + air.base;
+    return Math.max(thin, RHO0 * Math.exp(-Math.max(0, h) / 8500) * (1 - smoothstep(2500, 6000, h)));
   }
 
   /** Its engines running (switched on, and not a wreck). */
@@ -581,7 +602,7 @@ export class Aircraft extends Car {
     for (let i = 0; i < this.wheels.length; i++) {
       const w = this.wheels[i];
       this.contact[i] = false;
-      if (w.destroyed || this.loose.has(i)) continue;
+      if (w.destroyed || this.loose.has(i) || this.gearUp) continue;
       const r = (w.w / 2) * PX;
       if (world.castRay(new RAPIER.Ray({ x: w.x, y: w.y }, { x: 0, y: -1 }), r + 0.12, true, undefined, undefined, undefined, undefined, (o) => !mine(o))) {
         touching = true;
@@ -599,6 +620,14 @@ export class Aircraft extends Car {
   /** The throttle, the flaps, the pitch hold and the autopilot from the keys. */
   private controls(dt: number): void {
     const k = this.keys;
+    // (0.5.1: an afterburner's past full throttle: W held on at full lights it, S puts it out; ; still holds it lit)
+    const pw = this.spec.power;
+    if (pw?.kind === 'jet' && pw.boost && k.t > 0 && this.T >= 1) {
+      if ((this.abT += dt) > 0.4) this.abLatch = true;
+    } else if (k.t < 0 || this.T < 0.99) {
+      this.abT = 0;
+      this.abLatch = false;
+    }
     if (k.t) {
       this.T = clamp(this.T + k.t * THROTTLE_RATE * dt, 0, 1);
       // (throttle opened, its engines start: no need for F first)
@@ -620,7 +649,7 @@ export class Aircraft extends Car {
     const jet = pw.kind === 'jet';
     const up = (1 / pw.spool) * (jet ? 0.3 + this.N : 1);
     this.N += clamp(want - this.N, -dt * up * 1.5, dt * up);
-    const abWant = jet && pw.boost && this.keys.boost && this.N > 0.95 ? 1 : 0;
+    const abWant = jet && pw.boost && (this.keys.boost || this.abLatch) && this.N > 0.95 ? 1 : 0;
     this.ab += clamp(abWant - this.ab, -dt * 4, dt * 3);
     // a rotor or prop spins with its engine (a rotor slowly: it's heavy), and a rotor windmills
     // as it comes down without power (autorotation)
@@ -721,12 +750,21 @@ export class Aircraft extends Car {
     }
     const rotorM = this.rotorAuthority(rho);
     authority += rotorM / (s.trueKg * s.ky * s.ky);
+    // what turns it with the stick let go (the wing's moment and the tail's, its own stability pushing
+    // back against a turn): taken off what the stick has to give, or it never turns as fast as asked
+    // (0.5.1: a pull on Q got half its pitch rate, an airliner's a third, and no plane could loop)
+    let m0 = this.F.m;
+    if (s.tail) {
+      const t0 = this.surface(s.tail, rho, this.tailExtra(0));
+      if (t0) m0 += (t0.x - c.x) * t0.fy - (t0.y - c.y) * t0.fx;
+    }
+    const acc0 = this.flying ? m0 / (s.trueKg * s.ky * s.ky) : 0;
     // the turn asked of what can turn it (a share of full), and the trim that holds it there worked
     // out as it goes (on the ground, slow, nothing to trim: let go of it)
     const held = this.assist || !!this.autopilot;
     let u = held ? this.keys.r : 0;
     if (held && authority > 1e-4) {
-      const k = accWant / authority;
+      const k = (accWant - acc0) / authority;
       if (this.keys.r === 0) this.trim = clamp(this.trim + k * TRIM_K * dt * 0.2, -1, 1);
       u = clamp(k + this.trim, -1, 1);
     }
@@ -751,6 +789,8 @@ export class Aircraft extends Car {
     const V = Math.hypot(vx, vy);
     if (V > 0.3) {
       let CdA = s.dragArea ?? s.cd0 * (s.wing?.area ?? 1);
+      // (its gear down is about a sixth of its drag)
+      if (this.gearUp) CdA *= 0.85;
       // near the speed of sound, shock waves on the wing: the drag rises steeply past its critical Mach
       if (s.mcrit) {
         const M = V / Math.sqrt(1.4 * 287 * (this.game.air.tempAt(b.y) + 273.15));
@@ -810,7 +850,12 @@ export class Aircraft extends Car {
     const rate = this.spec.pitchRate * DEG;
     let want: number;
     if (this.keys.r !== 0) {
-      want = this.keys.r * rate;
+      // (the assist won't pull it past the g its airframe's built for, nor much past the stall)
+      const V = Math.hypot(b.vx, b.vy);
+      let r = rate;
+      if (this.assist && this.flying && V > 5) r = Math.min(r, (Math.max(0.5, this.spec.gLimit * 0.9 - 1) * G0) / V);
+      if (this.assist && this.flying && this.stalled && this.keys.r * b.flip * this.aoa > 0) r *= 0.3;
+      want = this.keys.r * r;
       this.holding = false;
       if (this.autopilot) this.autopilot = null;
     } else if (this.assist || this.autopilot) {
@@ -1115,7 +1160,7 @@ export class Aircraft extends Car {
     const g = this.game;
     const pylons = this.spec.bombs;
     const def = getItem('aerial-bomb');
-    if (!pylons || !def || this.bombsLeft <= 0 || this.wrecked || g.net?.guest) return false;
+    if (!pylons || !def || this.bombsLeft <= 0 || this.wrecked || g.net?.guest || this.body.destroyed) return false;
     const b = this.body;
     const at = pylons[pylons.length - this.bombsLeft];
     const p = b.pixelToWorld(at[0], at[1]);
@@ -1137,14 +1182,50 @@ export class Aircraft extends Car {
     const g = this.game;
     const rails = this.spec.rockets;
     const def = getItem('rocket-70mm');
-    if (!rails || !def || this.rocketsLeft <= 0 || this.wrecked || g.net?.guest) return false;
+    if (!rails || !def || this.rocketsLeft <= 0 || this.wrecked || g.net?.guest || this.body.destroyed) return false;
     const b = this.body;
     const at = rails[rails.length - this.rocketsLeft];
     const p = b.pixelToWorld(at[0], at[1]);
     const tilt = (this.spec.power?.tilt ?? 0) * DEG;
-    const m = launchRocket(g, this, def, p, b.localDir(b.flip * Math.cos(tilt), Math.sin(tilt)), b.flip < 0, this.zBase, this.parts, b.body.linvel());
+    const dir = b.localDir(b.flip * Math.cos(tilt), Math.sin(tilt));
+    const v = b.body.linvel();
+    const m = launchRocket(g, this, def, p, dir, b.flip < 0, this.zBase, this.parts, v);
     if (!m) return false;
+    m.carried = Math.max(0, v.x * dir.x + v.y * dir.y);
     this.rocketsLeft--;
+    return true;
+  }
+
+  /**
+   * Fires its next heat-seeking missile off its rail (0.5.1: an AIM-9 under a modern jet's wing):
+   * it goes after the hottest thing ahead of it, not its own aircraft's flame.
+   */
+  private fireMissile(): boolean {
+    const g = this.game;
+    const rails = this.spec.missiles;
+    const def = getItem('missile-heat');
+    if (!rails || !def || this.missilesLeft <= 0 || this.wrecked || g.net?.guest || this.body.destroyed) return false;
+    const b = this.body;
+    const at = rails[rails.length - this.missilesLeft];
+    // (its rail's drawn over the fuselage, side on: it drops clear under the belly first, or once it
+    // stops passing through its own aircraft, a few metres out, it's still inside it, and goes off)
+    let p = b.pixelToWorld(at[0], at[1]);
+    for (let k = 0; k < 80 && b.colliders.some((c) => c.containsPoint(p)); k++) p = b.pixelToWorld(at[0], at[1] + k * 2);
+    const down = b.localDir(0, -1);
+    p = { x: p.x + down.x * 0.35, y: p.y + down.y * 0.35 };
+    const own = this.parts.filter((q) => !q.destroyed);
+    const [m] = launchVolley(g, {
+      round: def, version: 'standard', at: p, dir: b.localDir(b.flip, 0), inset: 0, flipped: b.flip < 0, zBase: this.zBase,
+      speed: 8, cold: false, guides: [{ kind: 'none' }], own, carry: b.body.linvel(),
+    });
+    if (!m) return false;
+    m.heatSeek = true;
+    m.ignore = new Set([this]);
+    const v = b.body.linvel();
+    const f = b.localDir(b.flip, 0);
+    m.carried = Math.max(0, v.x * f.x + v.y * f.y);
+    this.missilesLeft--;
+    g.sound.play('gun/launcher', { gain: 0.6, x: p.x, rate: 1.3, vary: 0.05 });
     return true;
   }
 
@@ -1152,7 +1233,7 @@ export class Aircraft extends Car {
   private flare(): boolean {
     const g = this.game;
     const def = getItem('decoy-flare');
-    if (!def || this.flaresLeft <= 0 || this.wrecked || g.net?.guest) return false;
+    if (!def || this.flaresLeft <= 0 || this.wrecked || g.net?.guest || this.body.destroyed) return false;
     const b = this.body;
     const v = b.body.linvel();
     const back = b.localDir(-b.flip, 0);
@@ -1172,7 +1253,7 @@ export class Aircraft extends Car {
 
   /** The pilot's ejection seat fires: out through the canopy, rocketed clear, their chute opening at the top of the climb. */
   private eject(): boolean {
-    if (!this.spec.eject || this.ejected || this.ejecting) return false;
+    if (!this.spec.eject || this.ejected || this.ejecting || this.body.destroyed) return false;
     const r = this.riders[0];
     if (!r) return false;
     const who = r.who;
@@ -1303,6 +1384,9 @@ export class Aircraft extends Car {
   // ---- what's said, drawn and heard ---------------------------------------------
 
   pilotCommand(cmd: PilotCommand): boolean {
+    // (0.5.1: an order to one whose airframe's gone touched a body no longer in the world: the
+    // physics engine's panic, and the next step's 'recursive use of an object' crash)
+    if (this.destroyed || this.body.destroyed) return false;
     switch (cmd) {
       case 'assist':
         this.assist = !this.assist;
@@ -1313,9 +1397,13 @@ export class Aircraft extends Car {
         this.holding = false;
         return true;
       case 'gear':
+        return this.setGear(!this.gearUp);
+      case 'flaps':
         if (!this.spec.wing?.flapCl) return false;
         this.flapsWant = this.flapsWant >= 1 ? 0 : this.flapsWant + 0.5;
         return true;
+      case 'reload':
+        return this.rearm();
       case 'chutes':
         return this.pullCaps();
       case 'eject':
@@ -1326,6 +1414,8 @@ export class Aircraft extends Car {
         return this.dropBomb();
       case 'rockets':
         return this.fireRocket();
+      case 'missiles':
+        return this.fireMissile();
       case 'lights':
         this.lights = !this.lights;
         return true;
@@ -1335,6 +1425,51 @@ export class Aircraft extends Car {
       default:
         return false;
     }
+  }
+
+  /**
+   * Its gear up or down (0.5.1: [). Up only in the air, and only an aircraft whose gear
+   * retracts: its wheels drawn in (touching nothing, not drawn) and its legs off its picture.
+   */
+  setGear(up: boolean): boolean {
+    if (up === this.gearUp || this.body.destroyed) return false;
+    if (up && (!this.cfg.bodyUp || !this.flying || this.wrecked)) return false;
+    this.gearUp = up;
+    this.showGear();
+    this.game.sound.impact('metal', 0.35, this.body.x);
+    return true;
+  }
+
+  /** Its wheels and picture as its gear is. */
+  private showGear(): void {
+    const up = this.gearUp;
+    for (let i = 0; i < this.wheels.length; i++) {
+      const w = this.wheels[i];
+      if (w.destroyed) continue;
+      const hide = up && !this.loose.has(i);
+      for (const c of w.colliders) c.setSensor(hide);
+      w.sprite.h = hide ? 0 : (w.h + 2) * PX;
+    }
+    if (this.cfg.bodyUp) this.dressBody(up ? this.cfg.bodyUp() : null);
+  }
+
+  protected shed(i: number): void {
+    super.shed(i);
+    // (torn off with its gear up: out of its bay)
+    if (this.gearUp) this.showGear();
+  }
+
+  /** Everything it fires loaded again: its gun, flares, bombs and rockets (0.5.1: '). */
+  rearm(): boolean {
+    const s = this.spec;
+    if (this.destroyed || this.body.destroyed) return false;
+    const before = this.rounds + this.flaresLeft + this.bombsLeft + this.rocketsLeft + this.missilesLeft;
+    this.rounds = s.gun?.rounds ?? 0;
+    this.flaresLeft = s.flares ?? 0;
+    this.bombsLeft = s.bombs?.length ?? 0;
+    this.rocketsLeft = s.rockets?.length ?? 0;
+    this.missilesLeft = s.missiles?.length ?? 0;
+    return this.rounds + this.flaresLeft + this.bombsLeft + this.rocketsLeft + this.missilesLeft > before;
   }
 
   /** What the pilot's readout shows (see Controls.pilotHud()). */
@@ -1359,6 +1494,7 @@ export class Aircraft extends Car {
   status(): string {
     const out: string[] = [];
     if (this.spec.kind === 'glider') out.push(`airbrakes ${Math.round(this.T * 100)}%`);
+    if (this.cfg.bodyUp) out.push(this.gearUp ? 'gear up' : 'gear down');
     if (this.flaps > 0.02) out.push(`flaps ${Math.round(this.flaps * 100)}%`);
     if (this.ab > 0.5) out.push('afterburner');
     if (this.winch) out.push('winch');
@@ -1366,6 +1502,7 @@ export class Aircraft extends Car {
     if (this.spec.gun) out.push(`${this.rounds} rounds`);
     if (this.spec.bombs) out.push(`${this.bombsLeft} bombs`);
     if (this.spec.rockets) out.push(`${this.rocketsLeft} rockets`);
+    if (this.spec.missiles) out.push(`${this.missilesLeft} missiles`);
     if (this.rotorGone) out.push(this.spec.rotor ? 'ROTOR GONE' : 'PROP GONE');
     if (this.tailGone) out.push('TAIL ROTOR GONE');
     if (this.stalled) out.push('STALL');
@@ -1450,11 +1587,13 @@ export class Aircraft extends Car {
   private drawStores(): void {
     const bombs = this.spec.bombs ?? [];
     const rockets = this.spec.rockets ?? [];
-    if (!bombs.length && !rockets.length) return;
+    const aams = this.spec.missiles ?? [];
+    if (!bombs.length && !rockets.length && !aams.length) return;
     const b = this.body;
     const bomb = aerialBombArt();
     const rocket = missileArt('rocket', 'strike');
-    this.stores ??= [...bombs.map(() => bomb), ...rockets.map(() => rocket)].map((a) => {
+    const aam = missileArt('heat', 'standard');
+    this.stores ??= [...bombs.map(() => bomb), ...rockets.map(() => rocket), ...aams.map(() => aam)].map((a) => {
       const d = new Decal(this.game, a, this.decalZ() + 0.0002);
       this.decals.push(d);
       return d;
@@ -1466,6 +1605,7 @@ export class Aircraft extends Car {
     };
     bombs.forEach((at, i) => show(i, at, bomb, i >= bombs.length - this.bombsLeft));
     rockets.forEach((at, i) => show(bombs.length + i, at, rocket, i >= rockets.length - this.rocketsLeft));
+    aams.forEach((at, i) => show(bombs.length + rockets.length + i, at, aam, i >= aams.length - this.missilesLeft));
   }
 
   /** Which of a blade's frames to show: still, turning, or the blur (see art/aircraft propArt()). */
@@ -1524,15 +1664,17 @@ export class Aircraft extends Car {
     const tl = s.kind === 'glider' ? 'Airbrakes' : s.kind === 'heli' || s.kind === 'tiltrotor' ? 'Collective' : 'Throttle';
     acts.push({ label: `${tl}: ${Math.round(this.T * 100)}% (W, S)`, disabled: true, action: () => {} });
     for (const t of [0, 0.5, 1]) acts.push({ label: `${tl} ${t * 100}%`, checked: Math.abs(this.T - t) < 0.01, action: () => (this.T = t) });
-    if (s.wing?.flapCl) acts.push({ label: `Flaps: ${['up', 'half', 'down'][Math.round(this.flapsWant * 2)]} ([)`, action: () => this.pilotCommand('gear') });
+    if (s.wing?.flapCl) acts.push({ label: `Flaps: ${['up', 'half', 'down'][Math.round(this.flapsWant * 2)]} (.)`, action: () => this.pilotCommand('flaps') });
+    if (this.cfg.bodyUp) acts.push({ label: this.gearUp ? 'Gear down ([)' : 'Gear up ([: in the air)', disabled: !this.gearUp && !this.flying, action: () => this.pilotCommand('gear') });
     acts.push({ label: 'Stability assist (`)', checked: this.assist, action: () => this.pilotCommand('assist') });
     acts.push({ label: 'Autopilot: hold this height (Insert)', checked: !!this.autopilot, action: () => this.pilotCommand('autopilot') });
     if (s.gun) acts.push({ label: `Rearm the gun (${this.rounds} of ${s.gun.rounds})`, action: () => (this.rounds = s.gun!.rounds) });
+    if (s.gun || s.flares || s.bombs || s.rockets) acts.push({ label: 'Reload everything (\')', action: () => this.rearm() });
     if (s.flares) acts.push({ label: `Flares: ${this.flaresLeft} (Caps Lock)`, action: () => this.flare() });
     if (s.bombs) acts.push({ label: `Drop a bomb: ${this.bombsLeft} of ${s.bombs.length} (0)`, disabled: !this.bombsLeft, action: () => this.dropBomb() });
     if (s.rockets) acts.push({ label: `Fire a rocket: ${this.rocketsLeft} of ${s.rockets.length} (9)`, disabled: !this.rocketsLeft, action: () => this.fireRocket() });
-    if (s.bombs || s.rockets) acts.push({ label: 'Load the bombs and rockets again', action: () => { this.bombsLeft = s.bombs?.length ?? 0; this.rocketsLeft = s.rockets?.length ?? 0; } });
-    if (s.eject && this.riders[0]) acts.push({ label: 'Eject the pilot (\')', danger: true, action: () => this.eject() });
+    if (s.missiles) acts.push({ label: `Fire a heat seeker: ${this.missilesLeft} of ${s.missiles.length} (8)`, disabled: !this.missilesLeft, action: () => this.fireMissile() });
+    if (s.eject && this.riders[0]) acts.push({ label: 'Eject the pilot (/)', danger: true, action: () => this.eject() });
     if (s.caps) acts.push({ label: this.capsUsed ? 'Parachute (CAPS) used' : 'Pull the parachute (CAPS: ])', danger: true, disabled: this.capsUsed, action: () => this.pullCaps() });
     if (this.capsUsed || this.ejected) acts.push({ label: 'Repack the parachute and seat', action: () => { this.capsUsed = false; this.ejected = false; } });
     if (this.rotorGone) acts.push({ label: s.rotor ? 'Rotor broken' : 'Propeller broken', disabled: true, action: () => {} });
@@ -1550,6 +1692,11 @@ export class Aircraft extends Car {
     this.flaresLeft = this.spec.flares ?? 0;
     this.bombsLeft = this.spec.bombs?.length ?? 0;
     this.rocketsLeft = this.spec.rockets?.length ?? 0;
+    this.missilesLeft = this.spec.missiles?.length ?? 0;
+    if (this.gearUp) {
+      this.gearUp = false;
+      this.showGear();
+    }
   }
 
   protected serializeExtra(): Record<string, unknown> {
@@ -1558,6 +1705,7 @@ export class Aircraft extends Car {
     x.N = Math.round(this.N * 1000) / 1000;
     x.sp = Math.round(this.spin * 1000) / 1000;
     if (this.flapsWant) x.fl = this.flapsWant;
+    if (this.gearUp) x.gu = true;
     if (!this.assist) x.na = true;
     if (this.rotorGone) x.rg = true;
     if (this.tailGone) x.tg = true;
@@ -1565,6 +1713,7 @@ export class Aircraft extends Car {
     if (this.spec.flares) x.fs = this.flaresLeft;
     if (this.spec.bombs) x.bl = this.bombsLeft;
     if (this.spec.rockets) x.rl = this.rocketsLeft;
+    if (this.spec.missiles) x.ml = this.missilesLeft;
     if (this.capsUsed) x.caps = true;
     if (this.ejected) x.ej = true;
     if (this.ab > 0.05) x.ab = Math.round(this.ab * 100) / 100;
@@ -1578,6 +1727,11 @@ export class Aircraft extends Car {
     this.N = num(x.N, 0);
     this.spin = num(x.sp, 0);
     this.flapsWant = num(x.fl, 0);
+    const gu = !!x.gu && !!this.cfg.bodyUp;
+    if (gu !== this.gearUp) {
+      this.gearUp = gu;
+      this.showGear();
+    }
     this.assist = !x.na;
     this.rotorGone = !!x.rg;
     this.tailGone = !!x.tg;
@@ -1586,6 +1740,7 @@ export class Aircraft extends Car {
     if (this.spec.flares && typeof x.fs === 'number') this.flaresLeft = clamp(Math.round(x.fs), 0, this.spec.flares);
     if (this.spec.bombs && typeof x.bl === 'number') this.bombsLeft = clamp(Math.round(x.bl), 0, this.spec.bombs.length);
     if (this.spec.rockets && typeof x.rl === 'number') this.rocketsLeft = clamp(Math.round(x.rl), 0, this.spec.rockets.length);
+    if (this.spec.missiles && typeof x.ml === 'number') this.missilesLeft = clamp(Math.round(x.ml), 0, this.spec.missiles.length);
     this.capsUsed = !!x.caps;
     this.ejected = !!x.ej;
   }

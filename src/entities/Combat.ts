@@ -29,6 +29,13 @@ export const POD = { rounds: 2, reload: 4 };
  */
 export class HeatSeekerPod extends Prop implements PilotWeapon {
   rounds = POD.rounds;
+
+  /** Loaded again at once (0.5.1: ' reloads everything in a build). */
+  rearm(): boolean {
+    if (this.rounds >= POD.rounds || this.destroyed) return false;
+    this.rounds = POD.rounds;
+    return true;
+  }
   private reloadT = 0;
   private held = false;
   private shown = -1;
@@ -156,6 +163,13 @@ export const DISPENSER = { flares: 12, salvo: 2, speed: 9 };
  */
 export class FlareDispenser extends Prop implements Commanded {
   flares = DISPENSER.flares;
+
+  /** Loaded again at once (0.5.1: ' reloads everything in a build). */
+  rearm(): boolean {
+    if (this.flares >= DISPENSER.flares || this.destroyed) return false;
+    this.flares = DISPENSER.flares;
+    return true;
+  }
   private shown = -1;
   private art: (n: number) => PixelArt;
   private flare: () => ItemDef;
@@ -257,12 +271,15 @@ export class AerialBomb extends Prop {
 
   preStep(dt: number): void {
     const p = this.main;
+    const v = Math.hypot(p.vx, p.vy);
+    // (0.5.1) welded on (or tied, hinged) it's carried, not dropped: it neither arms nor turns what carries it with its
+    // fins. Welded on a car it armed as the car passed 12 m/s, and the next hard knock set it off.
+    const free = v > 4 && this.game.connections.assemblyOf([this]).length < 2;
     // (let go of high up: falling fast, it's live)
-    if (!this.live && Math.hypot(p.vx, p.vy) > 12) this.drop();
+    if (!this.live && v > 12 && free) this.drop();
     if (this.live && this.armT > 0) this.armT -= dt;
     // its fins: turned nose first into the way it's falling
-    const v = Math.hypot(p.vx, p.vy);
-    if (v > 4 && !p.frozen) {
+    if (free && !p.frozen) {
       const want = Math.atan2(p.vy, p.vx) - (p.flip < 0 ? Math.PI : 0);
       let d = want - p.bodyAngle;
       d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -311,6 +328,13 @@ export const BAY = { bombs: 4, open: 0.8, gap: 0.35 };
  */
 export class BombBay extends Prop implements Commanded {
   bombs = BAY.bombs;
+
+  /** Loaded again at once (0.5.1: ' reloads everything in a build). */
+  rearm(): boolean {
+    if (this.bombs >= BAY.bombs || this.destroyed) return false;
+    this.bombs = BAY.bombs;
+    return true;
+  }
   private openT = 0;
   private gapT = 0;
   private shown: boolean | null = null;
@@ -396,6 +420,13 @@ export const ROTARY_GUN = { rounds: 500, rate: 100, spinUp: 0.35, spinDown: 1.4,
  */
 export class RotaryCannon extends Prop implements PilotWeapon {
   rounds = ROTARY_GUN.rounds;
+
+  /** Loaded again at once (0.5.1: ' reloads everything in a build). */
+  rearm(): boolean {
+    if (this.rounds >= ROTARY_GUN.rounds || this.destroyed) return false;
+    this.rounds = ROTARY_GUN.rounds;
+    return true;
+  }
   /** How fast its barrels turn (0 to 1), and how long to its next round (s). */
   spin = 0;
   private pilot = false;
@@ -506,6 +537,13 @@ export const POD_ROCKETS = { rounds: 19, ripple: 8, launch: 30 };
  */
 export class RocketPod extends Prop implements Commanded {
   rounds = POD_ROCKETS.rounds;
+
+  /** Loaded again at once (0.5.1: ' reloads everything in a build). */
+  rearm(): boolean {
+    if (this.rounds >= POD_ROCKETS.rounds || this.destroyed) return false;
+    this.rounds = POD_ROCKETS.rounds;
+    return true;
+  }
   private gap = 0;
   private shown = -1;
   private readonly art: (rows: number) => PixelArt;

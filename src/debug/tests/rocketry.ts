@@ -502,7 +502,7 @@ export default function tests({ game, controls, kit, human }: TestCtx): Test[] {
       const y0 = h.limbs.get('head')!.part.y;
       controls.selection = new Set([seat]);
       kit.advance(0.1);
-      tap('Quote');
+      tap('Slash');
       if (!seat.fired) return 'the eject key didn’t fire the seat';
       if (C.connectionsOf(seat).some((c) => c.kind === 'weld')) return 'fired, the seat is still welded to the plank';
       let top = y0;

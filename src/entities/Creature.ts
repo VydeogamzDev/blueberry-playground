@@ -2470,7 +2470,11 @@ export class Creature extends Entity {
     const hips = this.L('hips');
     if (this.alive || this.deathT > 60 || head.gone || !head.attached || head.part.hp <= 0 || this.L('chest').part.hp <= 0 || hips.gone || !hips.attached) return false;
     this.alive = true;
+    this.deathT = 0;
     this.lifeDose = 0;
+    // (as a person's: the poison or sedative that stopped it is what the shock beats, and it's
+    // gone; a poisoned dog brought back died of the rest of it again a few seconds later)
+    this.drugs.poison = this.drugs.knockout = 0;
     this.blood = Math.max(this.blood, 70);
     this.consciousness = 0.5;
     this.pain = Math.min(this.pain, 0.5);
@@ -2890,6 +2894,10 @@ export class Creature extends Entity {
   // ---------------------------------------------------------------- UI / state
 
   heal(): void {
+    // (without a head nothing brings it back, as with a person: it yelped and died again the next step)
+    const head = this.L('head');
+    if (!this.alive && (head.gone || !head.attached)) return;
+    this.deathT = 0;
     this.rouse();
     for (const k of Object.keys(this.drugs) as (keyof typeof this.drugs)[]) this.drugs[k] = 0;
     this.stiffen(false);
@@ -2927,7 +2935,8 @@ export class Creature extends Entity {
       // lying down where it is, still (picked again, it's let up)
       acts.push({ label: 'Flat pose', checked: this.pose === 'flat', action: () => { this.pose = this.pose ? null : 'flat'; this.stopFighting(); this.rouse(); this.setState('down'); this.updateMotors(true); } });
     }
-    acts.push({ label: this.alive ? 'Heal' : 'Revive', action: () => this.heal() });
+    const headless = this.L('head').gone || !this.L('head').attached;
+    acts.push({ label: this.alive ? 'Heal' : 'Revive', disabled: !this.alive && headless, action: () => this.heal() });
     // the limb right-clicked: its bone broken, or mended (not the skull: but a gorse's
     // jaw, broken, stops it spitting)
     const l = part ? this.limbOf(part) : undefined;
@@ -2968,22 +2977,27 @@ export class Creature extends Entity {
       broken: this.order.filter((l) => l.broken).map((l) => l.spec.key),
       standing: this.state === 'stand',
       drugs: { ...this.drugs },
+      pain: this.pain,
+      shock: this.shock,
       ...(this.stunned > 0 ? { stunned: this.stunned } : {}),
       ...(this.breath.air < 1 || this.breath.spent > 0 ? { breath: [this.breath.air, this.breath.starved, this.breath.spent] } : {}),
       ...(this.infection > 0 ? { infection: this.infection } : {}),
       ...(this.zombie ? { zombie: true } : {}),
       ...(this.pose ? { pose: this.pose } : {}),
+      ...(this.alive ? {} : { deathT: this.deathT }),
+      // each limb's wounds, as a person's (see Human): where, which way, how fast they bleed, whether they spurt
+      wounds: Object.fromEntries(this.order.filter((l) => !l.gone && l.wounds.length).map((l) => [l.spec.key, l.wounds.map((w) => [w.ix, w.iy, w.dx, w.dy, w.rate, w.spurt ? 1 : 0])])),
       ...(this.team ? { team: this.team } : {}),
     };
   }
 
   protected restoreExtra(x: Record<string, unknown>): void {
-    this.blood = (x.blood as number) ?? 100;
-    this.consciousness = (x.consciousness as number) ?? 1;
+    const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+    // (out cold or dead as saved before the severing below: one whose head was cut off isn't heard to die again)
+    this.consciousness = num(x.consciousness, 1);
     this.limp = !!x.limp;
     Object.assign(this.drugs, (x.drugs as Partial<typeof this.drugs>) ?? {});
     this.stunned = typeof x.stunned === 'number' ? x.stunned : 0;
-    const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
     const br: unknown[] = Array.isArray(x.breath) ? x.breath : [];
     this.breath.air = clamp(num(br[0], 1), 0, 1);
     this.breath.starved = Math.max(0, num(br[1], 0));
@@ -3002,7 +3016,26 @@ export class Creature extends Entity {
       const l = this.limbs.get(k);
       if (l) l.broken = true;
     }
-    if (x.alive === false) this.die();
+    // (after the severing: cutting a lost leg off again opened fresh stumps, and put it in
+    // agony, every time a hurt animal was duplicated, flipped, undone to or loaded)
+    this.blood = num(x.blood, 100);
+    this.consciousness = num(x.consciousness, 1);
+    this.pain = num(x.pain, this.pain);
+    this.shock = num(x.shock, this.shock);
+    const wounds = x.wounds as Record<string, unknown[][]> | undefined;
+    if (wounds && typeof wounds === 'object') {
+      for (const l of this.order) {
+        if (l.gone) continue;
+        const list = Array.isArray(wounds[l.spec.key]) ? wounds[l.spec.key] : [];
+        l.wounds = list
+          .filter((w) => Array.isArray(w) && w.slice(0, 5).every((v) => typeof v === 'number' && Number.isFinite(v)))
+          .map((w) => ({ ix: w[0] as number, iy: w[1] as number, dx: w[2] as number, dy: w[3] as number, rate: Math.max(0, w[4] as number), spurt: !!w[5] }));
+      }
+    }
+    if (x.alive === false) {
+      this.die();
+      this.deathT = num(x.deathT, 0);
+    }
     this.setState(x.standing && this.alive && this.consciousness > 0.5 ? 'stand' : 'down');
     this.updateMotors(true);
     if (this.drugs.freeze > 0) this.stiffen(true, true);

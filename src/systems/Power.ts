@@ -87,7 +87,15 @@ export class Power {
         if (isStore(e) && (e as { on?: boolean }).on !== false && e.works) stores.push(e);
       }
       this.last.set(s, { draw, made });
-      if (g.fuel.mode === 'infinite') continue;
+      if (g.fuel.mode === 'infinite') {
+        // (kept full: one run flat before infinite fuel was chosen comes back, its power with it)
+        for (const e of circuit) {
+          if (!isStore(e) || e.charge >= e.capacity) continue;
+          if (e.charge <= 0) changed = true;
+          e.charge = e.capacity;
+        }
+        continue;
+      }
       let net = (made - draw) * span;
       if (!stores.length || Math.abs(net) < 1e-9) continue;
       // evenly from (or into) the batteries that can give (or take) it

@@ -224,6 +224,13 @@ function blastFor(damage: number): ExplosionOpts {
  * use it like a gun, lobbing it at whoever they fight from out of its blast.
  */
 export class GrenadeLauncher extends Firearm {
+  /** Loaded at once (0.5.1: ' reloads everything in a build): the reload's own end (its look, its sound) next step. */
+  rearm(): boolean {
+    if (this.loaded || this.destroyed) return false;
+    this.reload = Math.min(this.reload, 1e-3);
+    return true;
+  }
+
   loaded = true;
   /** Seconds until the next round is in. */
   reload = 0;

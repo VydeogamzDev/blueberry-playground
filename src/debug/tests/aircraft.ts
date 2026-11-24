@@ -40,11 +40,11 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
   };
 
   return [
-    ['aircraft: the Aircraft shelf has the seven FAA categories, two each of airliners, light aircraft and military jets', () => {
+    ['aircraft: the Aircraft shelf has the seven FAA categories, two each of airliners and light aircraft, three military jets (0.5.1: the F-15EX)', () => {
       const list = ITEMS.filter((i) => i.category === 'Aircraft');
       const groups = new Map<string, number>();
       for (const i of list) groups.set(i.group ?? '', (groups.get(i.group ?? '') ?? 0) + 1);
-      for (const g of ['Airplane · Commercial', 'Airplane · General aviation', 'Airplane · Military']) if (groups.get(g) !== 2) return `${g}: ${groups.get(g) ?? 0}`;
+      for (const [g, n] of [['Airplane · Commercial', 2], ['Airplane · General aviation', 2], ['Airplane · Military', 3]] as const) if (groups.get(g) !== n) return `${g}: ${groups.get(g) ?? 0}`;
       for (const g of ['Rotorcraft', 'Powered-lift', 'Glider', 'Lighter-than-air', 'Powered parachute', 'Weight-shift-control']) if (!groups.get(g)) return `no ${g}`;
       return true;
     }],
@@ -155,7 +155,7 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       kit.advance(0.3);
       e.on = true;
       e.T = 0.7;
-      e.pilotCommand('gear');
+      e.pilotCommand('flaps');
       kit.advance(1);
       const s = saveToString(game);
       kit.reset();
@@ -165,6 +165,150 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       if (!g) return 'gone';
       if (Math.abs(g.T - 0.7) > 0.02 || !g.on) return `throttle ${g.T}, on ${g.on}`;
       if (g.flapsWant !== 0.5) return `flaps ${g.flapsWant}`;
+      return true;
+    }],
+    // ---- 0.5.1
+    ['aircraft: Q held half-loops an F-16 and an F-15EX (at 210 m/s on afterburner) round to fly back the other way, and pulls a Cessna up through 90° (0.5.1: the stick got half its pitch rate)', () => {
+      for (const [id, v, past] of [['f-16', 210, 175], ['f-15ex', 210, 175], ['cessna-172', 60, 90]] as const) {
+        world();
+        const e = place(id, -150);
+        e.translate(0, 250);
+        for (const p of e.parts) p.body.setLinvel({ x: v, y: 0 }, true);
+        e.on = true;
+        e.T = e.N = 1;
+        controls.selection = new Set([e]);
+        const b = e.parts[0];
+        let turned = 0;
+        let last = b.bodyAngle;
+        kit.key('KeyQ', true);
+        kit.key('Semicolon', true);
+        fly(e, 12, () => {
+          const a = b.bodyAngle;
+          turned += Math.atan2(Math.sin(a - last), Math.cos(a - last));
+          last = a;
+        });
+        kit.key('KeyQ', false);
+        kit.key('Semicolon', false);
+        if (e.destroyed || e.wrecked) return `${id} came apart`;
+        if (deg(turned) < past) return `${id}: in 12 s of Q it turned ${deg(turned).toFixed(0)}°`;
+      }
+      return true;
+    }],
+    ['aircraft: [ puts an F-15EX’s gear up only in the air (its wheels touch nothing and aren’t drawn), [ again brings it down; saved, it stays up', () => {
+      world();
+      const e = place('f-15ex', -150);
+      kit.advance(1);
+      controls.selection = new Set([e]);
+      kit.press('BracketLeft');
+      if (e.gearUp) return 'the gear went up on the ground';
+      if ((e as unknown as { cfg: { bodyUp?: unknown } }).cfg.bodyUp === undefined) return 'no gear-up art';
+      e.translate(0, 200);
+      for (const p of e.parts) p.body.setLinvel({ x: 120, y: 0 }, true);
+      e.on = true;
+      e.T = e.N = 0.8;
+      kit.advance(0.6);
+      const body = e.parts[0];
+      const legs = body.art;
+      kit.press('BracketLeft');
+      if (!e.gearUp) return 'the gear stayed down in the air';
+      if (body.art === legs) return 'its picture kept its legs';
+      const wheels = e.parts.slice(1, 3);
+      if (wheels.some((w) => w.sprite.h !== 0 || !w.colliders.every((c) => c.isSensor()))) return 'a wheel still drawn or touching';
+      if (!e.status().includes('gear up')) return `readout: ${e.status()}`;
+      const s = saveToString(game);
+      kit.press('BracketLeft');
+      if (e.gearUp || wheels.some((w) => w.sprite.h === 0 || w.colliders.some((c) => c.isSensor()))) return '[ again left it up';
+      kit.reset();
+      loadFromString(game, s);
+      kit.advance(0.1);
+      const g = game.entities.find((x) => x.def.id === 'f-15ex') as Aircraft | undefined;
+      if (!g?.gearUp) return 'loaded, its gear was down';
+      if (g.parts.slice(1, 3).some((w) => w.sprite.h !== 0)) return 'loaded, its wheels showed';
+      return true;
+    }],
+    ['aircraft: an F-15EX’s heat seeker goes on 8 (not tool 8), . sets its flaps (not a step), W held at full lights its afterburner and S puts it out', () => {
+      world();
+      const e = place('f-15ex', -150);
+      e.translate(0, 300);
+      for (const p of e.parts) p.body.setLinvel({ x: 150, y: 0 }, true);
+      e.on = true;
+      e.T = e.N = 1;
+      kit.advance(0.3);
+      controls.selection = new Set([e]);
+      const tool = controls.tool;
+      const n = game.entities.length;
+      kit.press('Digit8');
+      if (controls.tool !== tool) return `8 picked a tool (${controls.tool})`;
+      if (e.missilesLeft !== 3) return `8: ${e.missilesLeft} missiles left of 4`;
+      if (game.entities.length <= n) return 'no missile flew';
+      kit.press('Period');
+      if (e.flapsWant !== 0.5) return `.: flaps ${e.flapsWant}`;
+      fly(e, 1, () => {});
+      if (e.wrecked || e.destroyed) return 'its own heat seeker hit it';
+      kit.key('KeyW', true);
+      fly(e, 1.5, () => {});
+      if (e.ab < 0.5) return `W held at full: afterburner ${e.ab.toFixed(2)}`;
+      kit.key('KeyW', false);
+      fly(e, 0.5, () => {});
+      if (e.ab < 0.5) return 'let go of W, the afterburner went out';
+      kit.key('KeyS', true);
+      fly(e, 0.3, () => {});
+      kit.key('KeyS', false);
+      fly(e, 0.6, () => {});
+      if (e.ab > 0.2) return `S: afterburner still ${e.ab.toFixed(2)}`;
+      return true;
+    }],
+    ['aircraft: \' reloads everything in what’s selected and what it’s built with: an F-15EX’s stores, a pod welded to a crate, a launcher', () => {
+      world();
+      const e = place('f-15ex', -150);
+      e.translate(0, 300);
+      for (const p of e.parts) p.body.setLinvel({ x: 150, y: 0 }, true);
+      e.on = true;
+      kit.advance(0.3);
+      e.pilotCommand('missiles');
+      e.pilotCommand('bombs');
+      e.pilotCommand('rockets');
+      e.pilotCommand('flares');
+      e.rounds = 3;
+      controls.selection = new Set([e]);
+      kit.press('Quote');
+      const s = e.spec;
+      if (e.missilesLeft !== s.missiles!.length || e.bombsLeft !== s.bombs!.length || e.rocketsLeft !== s.rockets!.length) return `stores ${e.missilesLeft}/${e.bombsLeft}/${e.rocketsLeft}`;
+      if (e.rounds !== s.gun!.rounds || e.flaresLeft !== s.flares) return `gun ${e.rounds}, flares ${e.flaresLeft}`;
+      // a heat-seeker pod welded to a crate: the crate selected, the pod reloads
+      const x = -100 - game.origin.x;
+      const crate = kit.spawn('crate', x, game.env.groundAt(x, 1e6) + 0.6);
+      const pod = kit.spawn('heat-seeker-pod', x, game.env.groundAt(x, 1e6) + 1.4) as unknown as { rounds: number; fire(): unknown } & import('../../world/Entity').Entity;
+      kit.advance(0.3);
+      game.connections.create('weld', crate.parts[0], { x: crate.parts[0].x, y: crate.parts[0].y + 0.4 }, pod.parts[0], { x: pod.parts[0].x, y: pod.parts[0].y });
+      pod.fire();
+      pod.fire();
+      if ((pod.rounds as number) !== 0) return `the pod has ${pod.rounds} after firing both`;
+      controls.selection = new Set([crate]);
+      kit.press('Quote');
+      if (pod.rounds !== 2) return `the welded pod reloaded to ${pod.rounds}`;
+      return true;
+    }],
+    ['aircraft: orders to an aircraft whose airframe has gone are refused, and nothing breaks the physics (0.5.1: a crash report)', () => {
+      world();
+      const e = place('f-15ex', -150);
+      kit.advance(0.5);
+      controls.selection = new Set([e]);
+      game.remove(e);
+      kit.advance(0.05);
+      for (const c of ['gear', 'flaps', 'rockets', 'bombs', 'missiles', 'flares', 'eject', 'reload', 'lights', 'autopilot'] as const) {
+        if (e.pilotCommand(c)) return `${c} was heard by a removed aircraft`;
+      }
+      for (const k of ['BracketLeft', 'Period', 'Quote', 'Digit8', 'Digit9', 'Digit0', 'CapsLock', 'Slash']) kit.press(k);
+      kit.advance(0.2);
+      if (game.halted) return 'the game halted';
+      const tank = kit.spawn('fuel-tank', -140 - game.origin.x, game.env.groundAt(-140 - game.origin.x, 1e6) + 1);
+      kit.advance(0.5);
+      try {
+        tank.parts[0].body.setAdditionalMassProperties(1, { x: 0, y: 0 }, 0.1, true);
+      } catch (err) {
+        return `the physics was left broken: ${String(err).slice(0, 80)}`;
+      }
       return true;
     }],
   ];

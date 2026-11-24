@@ -56,6 +56,9 @@ async function boot(): Promise<void> {
   await synced;
   const canvas = document.getElementById('view') as HTMLCanvasElement;
   const game = new Game(canvas);
+  // (a physics panic outside a frame, in a key or click handler: stopped at once, the panic itself reported)
+  window.addEventListener('error', (ev) => game.panicked(ev.error ?? ev.message));
+  window.addEventListener('unhandledrejection', (ev) => game.panicked(ev.reason));
   if (desktop) {
     // (its animation frames may run unthrottled: the screen's refresh is told, not measured)
     game.setDisplayHz(desktop.displayHz);

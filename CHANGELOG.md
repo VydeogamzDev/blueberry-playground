@@ -4,6 +4,84 @@ Versions are 0.MINOR.PATCH until 1.0: a new MINOR for a release with new things 
 that only fixes. The version is `package.json`'s; the main menu shows it, and the builds copied to Downloads
 carry it in their names (`Blueberry Playground 0.2.0.html`, `Blueberry Playground 0.2.0.exe`).
 
+## 0.5.1 — 2026-11-23
+
+Aircraft fly properly now, the modern jets carry bombs, rockets and heat seekers, there's an F-15EX, a key
+reloads everything, and a crash is fixed.
+
+### New
+
+- **F-15EX Eagle II** on the Aircraft shelf (Military): a 23 t two-seat twin-engined fighter with two F110
+  turbofans (76 kN each, 129 kN on afterburner), an M61 cannon with 940 rounds, four heat seekers, four
+  bombs, four rockets, flares and ejection seats. It's built for 9 g.
+- **Stores for the modern jets.** The F-16, A-10 and F-15EX carry bombs, rockets and heat-seeking missiles
+  under them, drawn until they go:
+  - 0 drops a bomb.
+  - 9 fires a rocket.
+  - 8 fires a heat seeker, which goes after the hottest thing ahead of it (not its own aircraft's flame). 8
+    still picks tool 8 when no aircraft is selected.
+- **Retractable gear.** [ raises and lowers the landing gear of the 737, ATR 72, F-16, A-10, F-15EX, V-22,
+  the three warbirds and the ASK 21 glider. It only goes up in the air. Up, the wheels are drawn in, the
+  legs come off the picture and drag falls by a sixth. The readout says which. It's saved, and a hard
+  enough crash still tears a wheel out.
+- **Reload key ('),** for everything in what's selected or flown and everything it's built with: guns,
+  rifles, launchers, rocket and missile pods, bomb bays, flare dispensers, an aircraft's gun and stores.
+  The menus have it too.
+- **Afterburner on full throttle.** Hold W at full throttle on the F-16 or F-15EX and the afterburner
+  lights. S puts it out. Holding ; still works.
+
+### Changed
+
+- **Keys.**
+
+  | What | Key |
+  |---|---|
+  | Landing gear and legs | [ |
+  | Flaps (with an aircraft selected; it steps time otherwise) | . |
+  | Reload | ' |
+  | Eject (was ') | / |
+  | Horn (was /) | no key: set one in Settings › Keys |
+
+- **Pitch.** Q and E now turn an aircraft as fast as it's built to. The assist used to ignore the
+  aircraft's own stability, so the elevator barely moved: a pull got half its pitch rate (an airliner a
+  third) and nothing could loop. Now an F-16 or F-15EX on afterburner pulls up and over to fly back
+  the other way in about 10 s, turning as fast as the real ones do. The assist also won't pull past the
+  g the airframe is built for, and eases off near the stall.
+- **Air for aircraft.** The World's sky is squeezed ×10 for rockets, so it's half as thick by 600 m. That
+  left a Cessna at its ceiling a few hundred metres up and the jets mushy over the hills. Aircraft now feel
+  the real thinning up to 2.5 km, fading into the squeezed sky by 6 km.
+- The 737 and ATR 72 rotate a little quicker on take-off.
+- Rockets and missiles fired from an aircraft add its speed to their own, so a fast jet doesn't overtake
+  them.
+
+### Fixed
+
+- **A crash: "recursive use of an object detected which would lead to unsafe aliasing in rust"** (seen in
+  Safari). An order from a key to an aircraft whose airframe had just gone touched a body no longer in the
+  physics world. That panicked the physics engine outside a frame, and the next step died with that
+  message. Orders to a destroyed aircraft are now refused. If the physics engine panics anywhere outside a
+  frame, the game stops cleanly and reports the error that started it.
+- A battery run flat before choosing Infinite fuel stayed dead, and so did what it powered. Now it fills
+  up.
+- A hurt animal went back into agony every time it was duplicated, flipped, undone to or loaded: its lost
+  leg was cut off again, with fresh bleeding. Its pain, shock, wounds and time dead are now saved.
+- Revive on a headless animal brought it back for a moment, then it died again. It's greyed out now, as
+  for a person.
+- An animal dead of poison and shocked back with a defibrillator died again 12 s later of the same
+  poison. Coming back clears it, as it does for a person.
+- Duplicate mirrored on something hanging from a rope tied the copy to the original's hook, so it swung
+  over into it.
+- Lines in the menus that only show something (how full a bucket, flask or syringe is, a first-aid kit's
+  uses) could be clicked and did nothing. They're greyed out now.
+- Radar-guided Ballistic and ICBM missiles flew over a target 120 m off and went off in the ground past
+  it. They now turn, and stop sliding sideways, in proportion to their speed, and start their dive
+  further out.
+- In multiplayer, a guest's missile launcher or RPG stayed at "Reloading…" forever once it had reloaded.
+- A radar's lock didn't show for a guest, and a save and load or an undo dropped it. It's saved now, and
+  a guest sees the lock and its readout.
+- An aerial bomb welded onto a vehicle armed itself once the vehicle passed 12 m/s, and its fins steered
+  the vehicle. A bomb only arms, and steers, once it's free.
+
 ## 0.5.0 — 2026-11-19
 
 Ballistic missiles and ICBMs, a heat-seeker launcher, a radar that locks on and guides missiles, a T-90A, a

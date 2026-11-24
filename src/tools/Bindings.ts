@@ -13,7 +13,7 @@ export type ActionId =
   | 'menu' | 'toybox' | 'toggleUi' | 'help' | 'layout'
   | 'panLeft' | 'panRight' | 'panUp' | 'panDown' | 'zoomIn' | 'zoomOut' | 'recenter'
   | 'driveLeft' | 'driveRight' | 'aimUp' | 'aimDown' | 'turnLeft' | 'turnRight'
-  | 'stage' | 'assist' | 'gear' | 'chutes' | 'eject' | 'pilotFire' | 'boost' | 'chaseCam' | 'lights' | 'horn' | 'autopilot' | 'bombs' | 'flares' | 'rockets'
+  | 'stage' | 'assist' | 'gear' | 'flaps' | 'chutes' | 'eject' | 'reload' | 'pilotFire' | 'boost' | 'chaseCam' | 'lights' | 'horn' | 'autopilot' | 'bombs' | 'flares' | 'rockets' | 'missiles'
   | 'com' | 'rewind' | 'layerFront' | 'layerBack' | 'gridSize' | 'angleStep';
 
 export interface ActionSpec {
@@ -93,17 +93,23 @@ export const ACTIONS: ActionSpec[] = [
   // (0.4.0: every letter's taken, so the flying orders are on the keys round Enter)
   { id: 'stage', label: 'Fire the next stage of what you fly (decouplers, boosters, chutes: see each part’s Stage)', group: 'Vehicles', keys: ['Enter'] },
   { id: 'assist', label: 'Stability assist on or off for what you fly (holds its angle, stops it spinning)', group: 'Vehicles', keys: ['Backquote'] },
-  { id: 'gear', label: 'Landing legs and gear up or down', group: 'Vehicles', keys: ['BracketLeft'] },
+  { id: 'gear', label: 'Landing gear and legs up or down (an aircraft’s only off the ground)', group: 'Vehicles', keys: ['BracketLeft'] },
+  // (0.5.1: the flaps had [ and the gear none; with an aircraft selected, . sets its flaps rather than stepping time)
+  { id: 'flaps', label: 'Flaps of the selected aircraft: up, half, down', group: 'Vehicles', keys: ['Period'], shares: 'step' },
   { id: 'chutes', label: 'Open the parachutes (again: cut them away)', group: 'Vehicles', keys: ['BracketRight'] },
-  { id: 'eject', label: 'Eject (the pilot of an ejection seat)', group: 'Vehicles', keys: ['Quote'] },
+  // (0.5.1: ' reloads; eject moved to /, the horn to no key)
+  { id: 'eject', label: 'Eject (the pilot of an ejection seat)', group: 'Vehicles', keys: ['Slash'] },
+  { id: 'reload', label: 'Reload every weapon in what’s selected or flown, and in what it’s built with (guns, rockets, bombs, missiles, flares)', group: 'Vehicles', keys: ['Quote'] },
   { id: 'pilotFire', label: 'Hold: fire the guns built into what you fly', group: 'Vehicles', keys: ['Backslash'] },
   { id: 'boost', label: 'Hold: boost (nitro, afterburners)', group: 'Vehicles', keys: ['Semicolon'] },
   { id: 'lights', label: 'Headlights on or off in what you fly', group: 'Vehicles', keys: ['Comma'] },
-  { id: 'horn', label: 'Sound the horn of what you fly', group: 'Vehicles', keys: ['Slash'] },
+  { id: 'horn', label: 'Sound the horn of what you fly', group: 'Vehicles', keys: [] },
   { id: 'autopilot', label: 'Autopilot on or off for what you fly (holds its height and heading)', group: 'Vehicles', keys: ['Insert'] },
   { id: 'bombs', label: 'Drop a bomb from the bomb bays of what you fly', group: 'Vehicles', keys: ['Digit0'] },
   { id: 'flares', label: 'Fire flares from what you fly (heat-seeking missiles chase them instead)', group: 'Vehicles', keys: ['CapsLock'] },
   { id: 'rockets', label: 'Fire a rocket from the rocket pods of what you fly', group: 'Vehicles', keys: ['Digit9'] },
+  // (0.5.1: with an aircraft selected, 8 fires a heat seeker rather than picking tool 8)
+  { id: 'missiles', label: 'Fire a heat-seeking missile from the selected aircraft', group: 'Vehicles', keys: ['Digit8'], shares: 'tool8' },
   { id: 'chaseCam', label: 'Chase camera on or off (follows what you fly, zooming out with speed)', group: 'Camera', keys: ['End'] },
   // building (not People Playground's keys: it has no layers, grids or checkpoints to reach)
   { id: 'com', label: 'Hold: connection ends go at the centre of mass', group: 'Building', keys: ['KeyM'] },

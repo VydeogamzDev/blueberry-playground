@@ -163,8 +163,13 @@ function mirrorLinks(l: Record<string, unknown> | undefined): Record<string, unk
   return out;
 }
 
-/** Mirrors a snapshot left-right around x = cx. */
-export function mirror(snap: Snapshot, cx: number): Snapshot {
+/**
+ * Mirrors a snapshot left-right around x = cx. `copy`: a mirrored copy beside the
+ * original (Duplicate mirrored), whose ropes and springs hang from the mirrored
+ * spot, not the original's (the copy was tied to the original's hook, and swung
+ * over into it).
+ */
+export function mirror(snap: Snapshot, cx: number, copy = false): Snapshot {
   return {
     entities: snap.entities.map((s) => ({
       ...s,
@@ -177,7 +182,7 @@ export function mirror(snap: Snapshot, cx: number): Snapshot {
       la: mirrorLocal(c.la),
       // ropes and springs keep hanging from the same spot; pins and welds to the
       // background follow the object
-      lb: c.b ? mirrorLocal(c.lb) : RIGID.has(c.kind) ? { x: 2 * cx - c.lb.x, y: c.lb.y } : { ...c.lb },
+      lb: c.b ? mirrorLocal(c.lb) : RIGID.has(c.kind) || copy ? { x: 2 * cx - c.lb.x, y: c.lb.y } : { ...c.lb },
       ...(c.end ? { end: c.b ? mirrorLocal(c.end) : { x: 2 * cx - c.end.x, y: c.end.y } } : {}),
       // (mirroring turns every angle the other way)
       ...(c.ref !== undefined ? { ref: -c.ref } : {}),

@@ -114,6 +114,13 @@ function cull(game: Game): void {
  * on a pulse down a wire.
  */
 export class Crossbow extends Firearm {
+  /** Loaded at once (0.5.1: ' reloads everything in a build): the reload's own end (its look, its sound) next step. */
+  rearm(): boolean {
+    if (this.loaded || this.destroyed) return false;
+    this.reload = Math.min(this.reload, 1e-3);
+    return true;
+  }
+
   loaded = true;
   /** Seconds until the next bolt is in. */
   reload = 0;

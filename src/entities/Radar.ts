@@ -301,6 +301,8 @@ export class Radar extends Prop implements MissileGuidance {
   /** The green overlay on its holder's or owner's screen (see Overlay): brackets flashing as it looks, the box on its lock. */
   drawOverlay(lines: LineBatch, me: number): void {
     const g = this.game;
+    // (a guest's copy: the lock kept on what it's on as that's shown moving here)
+    if (g.net?.guest && this.lock && !this.lock.destroyed && !this.lostT) this.lastAt = this.lock.center();
     const px = 1 / g.renderer.zoom;
     const t = g.time;
     const corners = (x0: number, y0: number, x1: number, y1: number, arm: number, col: number) => {
@@ -324,7 +326,8 @@ export class Radar extends Prop implements MissileGuidance {
       lines.seg(c.x - 4 * px, c.y, c.x + 4 * px, c.y, 1.4 * px, col);
       lines.seg(c.x, c.y - 4 * px, c.x, c.y + 4 * px, 1.4 * px, col);
     }
-    if (this.activeHeld && this.holder === me && !this.lock) {
+    // (held by them: on a guest's copy, which isn't held, as the host says)
+    if (this.holder === me && !this.lock) {
       const c = g.cursor;
       if (!c) return;
       // (the brackets flash while it looks; the box round what it's locking on flashes faster as the lock nears)
@@ -347,6 +350,73 @@ export class Radar extends Prop implements MissileGuidance {
       { label: t ? `Locked: ${t.name}, ${(t.range / 1000).toFixed(2)} km` : 'Lock: hold F on a target, let go once locked', disabled: true, action: () => {} },
       { label: 'Drop the lock', disabled: !this.lock, action: () => this.drop() },
     ];
+  }
+
+  /**
+   * (0.5.1) Who locked it and how long it's been out of sight; for a host's guests (who
+   * see the host's radar, not run their own: see restoreExtra()) also who holds F on it,
+   * what's under its gate and how far it's got locking on, and what it's locked on (by
+   * their net ids). Never nothing: a host tells its guests only of an extra that's there.
+   */
+  protected serializeExtra(): Record<string, unknown> {
+    const x: Record<string, unknown> = {};
+    const net = this.game.net && !this.game.net.guest;
+    if (this.lock) {
+      x.owner = this.owner;
+      if (this.lostT > 0) {
+        x.lost = Math.round(this.lostT * 100) / 100;
+        if (this.lastAt) x.at = [this.lastAt.x, this.lastAt.y];
+      }
+      if (net && this.lock.netId) x.lockNet = this.lock.netId;
+    }
+    if (net && this.holder) {
+      x.holder = this.holder;
+      if (!this.lock && this.candidate?.netId) {
+        x.cand = this.candidate.netId;
+        x.locking = Math.round(this.locking * 20) / 20;
+      }
+    }
+    return x;
+  }
+
+  /**
+   * A save's or an undo's lock is put back by restoreLinks(). A guest's copy is shown
+   * as the host has it: who holds F on it (its brackets are drawn round their own
+   * cursor), what's under its gate, and the lock (its box and readout on the screen of
+   * whoever locked it). Before, a guest who locked a radar saw nothing of it at all.
+   */
+  protected restoreExtra(x: Record<string, unknown>): void {
+    const guest = !!this.game.net?.guest;
+    this.lostT = typeof x.lost === 'number' && x.lost > 0 ? x.lost : 0;
+    // (a lock kept from a game with others in it, loaded alone: it's this player's now)
+    if (typeof x.owner === 'number') this.owner = this.game.net ? x.owner : 1;
+    if (!guest) return;
+    const byNet = (id: unknown): Entity | null => (typeof id === 'number' && id > 0 ? this.game.entities.find((e) => e.netId === id && !e.destroyed) ?? null : null);
+    this.holder = typeof x.holder === 'number' ? x.holder : 0;
+    this.lock = byNet(x.lockNet);
+    this.candidate = this.lock ? null : byNet(x.cand);
+    this.locking = typeof x.locking === 'number' ? x.locking : 0;
+    const at = x.at as number[] | undefined;
+    this.lastAt = this.lock && Array.isArray(at) && at.length === 2 && at.every(Number.isFinite) ? { x: at[0], y: at[1] } : this.lock?.center() ?? null;
+    if (this.holder || this.lock) overlay(this.game).on.add(this);
+  }
+
+  /** What it's locked on (by snapshot index): saves, undo and copies keep the lock. */
+  serializeLinks(ref: (e: Entity) => number): Record<string, unknown> | undefined {
+    const i = this.lock && !this.lock.destroyed ? ref(this.lock) : -1;
+    return i >= 0 ? { lock: i } : undefined;
+  }
+
+  restoreLinks(links: Record<string, unknown>, get: (i: number) => Entity | undefined): void {
+    const e = typeof links.lock === 'number' ? get(links.lock) : undefined;
+    if (!e || e.destroyed || e === this) return;
+    this.lock = e;
+    this.candidate = null;
+    this.locking = 0;
+    if (!this.lostT || !this.lastAt) this.lastAt = e.center();
+    this.lookT = LOOK_EVERY;
+    if (!this.owner) this.owner = 1;
+    overlay(this.game).on.add(this);
   }
 
   protected onDestroy(): void {
@@ -408,7 +478,7 @@ class Overlay {
     const me = this.game.net?.me ?? 1;
     L.begin();
     for (const r of this.on) {
-      const live = !r.destroyed && (r.lock || (r.activeHeld && r.holder));
+      const live = !r.destroyed && (r.lock || r.holder);
       if (!live) {
         this.on.delete(r);
         this.tag(r, null);

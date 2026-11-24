@@ -132,7 +132,7 @@ export class Flask extends Prop {
   contextActions(): ContextAction[] {
     return [
       { label: this.corked ? 'Uncork' : 'Cork', hint: 'F', action: () => this.activate() },
-      { label: `${Math.round(this.amount * 100)}% full`, action: () => {} },
+      { label: `${Math.round(this.amount * 100)}% full`, disabled: true, action: () => {} },
     ];
   }
 

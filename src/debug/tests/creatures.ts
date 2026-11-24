@@ -179,5 +179,47 @@ export default function tests({ game, controls, kit, human, arm }: TestCtx): Tes
       if (e.rush > 1.85 || e.rush < 1.75) return `three doses of adrenaline: rush ${e.rush.toFixed(2)}`;
       return true;
     }],
+    ['extra: creatures: a dog that lost a leg a while ago, saved and loaded, is as calm and bleeds as little as before; a headless one can’t be revived', () => {
+      kit.reset();
+      const d = kit.spawn('dog', 0, 0.6) as Creature;
+      kit.advance(1);
+      d.sever(d.limbs.get('lowerFrontB')!, 'cut');
+      kit.advance(25);
+      const bleeding = (c: Creature) => [...c.limbs.values()].reduce((n, l) => n + (l.gone ? 0 : l.wounds.reduce((s, w) => s + w.rate, 0)), 0);
+      const pain0 = d.pain;
+      const rate0 = bleeding(d);
+      if (pain0 > 0.5) return `25 s on, the dog is still in pain (${pain0.toFixed(2)}), as the test needs it not to be`;
+      // (the leg was cut off again as it was made: in agony, its stumps bleeding afresh)
+      loadFromString(game, saveToString(game));
+      const e = game.entities.find((x) => x.def.id === 'dog' && !x.destroyed) as Creature | undefined;
+      if (!e) return 'no dog after loading';
+      if (!e.limbs.get('lowerFrontB')!.severed) return 'loaded, its leg is back on';
+      if (e.pain > pain0 + 0.1) return `loaded, its pain went from ${pain0.toFixed(2)} to ${e.pain.toFixed(2)}`;
+      if (bleeding(e) > rate0 * 1.1 + 0.01) return `loaded, its stumps bleed ${bleeding(e).toFixed(2)}, against ${rate0.toFixed(2)} before`;
+      const h = kit.spawn('dog', -3, 0.6) as Creature;
+      kit.advance(0.5);
+      h.sever(h.limbs.get('head')!, 'cut');
+      kit.advance(0.5);
+      if (h.alive) return 'its head cut off, the dog is alive';
+      if (!h.contextActions().find((a) => a.label === 'Revive')?.disabled) return 'Revive is offered for a headless dog';
+      h.heal();
+      kit.advance(0.2);
+      if (h.alive) return 'a headless dog was revived';
+      return true;
+    }],
+    ['extra: creatures: a dog dead of poison and shocked back by a defibrillator stays alive, as a person does', () => {
+      kit.reset();
+      const d = kit.spawn('dog', 0, 0.6) as Creature;
+      kit.advance(1);
+      d.inject('poison', 2);
+      for (let t = 0; d.alive && t < 60; t += 0.5) kit.advance(0.5);
+      if (d.alive) return 'the poison never killed the dog, as the test needs';
+      if (!(d.drugs.poison > 15)) return `setup: only ${d.drugs.poison.toFixed(0)} s of poison left as it died`;
+      if (!d.restart()) return 'the defibrillator could not start its heart';
+      // (the rest of the poison killed it again in a dozen seconds)
+      kit.advance(20);
+      if (!d.alive) return `brought back, it died again (blood ${d.blood.toFixed(0)}, poison ${d.drugs.poison.toFixed(0)} s)`;
+      return true;
+    }],
   ];
 }

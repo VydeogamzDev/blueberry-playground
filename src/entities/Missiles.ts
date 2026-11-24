@@ -31,10 +31,13 @@ export interface MissileSpec {
   loft: boolean;
   /**
    * A ballistic missile's climb (0.5.0): it flies at a point this many metres over
-   * its target for each metre it is off it across (past LOFT_FROM), up to the
-   * second number (m), so it goes up high and comes down on it steeply.
+   * its target for each metre it is off it across (past LOFT_FROM, or ARC_FROM
+   * of its turning circle's radius), up to the second number (m), so it goes up
+   * high and comes down on it steeply.
    */
   arc?: [number, number];
+  /** How fast (1/s) its fins take out its sideways slide, if not LIFT's (a faster version's bite harder: see catalog/missiles). */
+  lift?: number;
   /** A proximity fuse: within this (m) of what it's after, it goes off (an aircraft needn't be struck). */
   prox?: number;
   /** An unguided rocket: it falls under its motor too, its nose into the way it's going. */
@@ -80,7 +83,7 @@ const JETS_AFTER = 0.14;
 const JET_TURN = 7;
 const JETS_MAX = 0.6;
 /** How fast its fins take out any way it's sliding sideways (1/s): it flies where it points, a little behind on a hard turn. */
-const LIFT = 10;
+export const LIFT = 10;
 /**
  * Burnt out, it glides (see glide()): its fins still bend its way toward what
  * it's after, at GLIDE of its turn rate at its motor's speed and less as it
@@ -112,6 +115,8 @@ const DETOUR_HOLD = 0.1;
 const LOFT_FROM = 8;
 const LOFT = 0.3;
 const LOFT_MAX = 6;
+/** A ballistic missile's climb starts this many of its turning circles' radii off its target, if that's further than LOFT_FROM (see Missile.climb()). */
+const ARC_FROM = 2;
 /** A warhead: its blast, and its shaped charge's jet into what it struck (see WARHEAD). */
 export type Warhead = ExplosionOpts & { jet: number };
 /**
@@ -219,6 +224,11 @@ export class Missile extends Entity {
   private tail: V2 | null = null;
   /** Heat-seeking (an air-to-air missile's, 0.4.0): it goes after the hottest thing ahead of it, a flare over an engine (see seekHeat()). */
   heatSeek = false;
+  /**
+   * The speed (m/s) of what fired it, on top of its own (0.5.1: one off a jet at 150 m/s, its
+   * motor holding it to 110, fell back under its aircraft and went off in it).
+   */
+  carried = 0;
   /** What it won't go after (what fired it, and who flies that). */
   ignore: Set<Entity> | null = null;
   private seekT = 0;
@@ -424,7 +434,7 @@ export class Missile extends Entity {
       const sp = Math.hypot(v.x, v.y);
       const h = sp > 3 ? Math.atan2(v.y, v.x) : this.heading();
       this.setHeading(h);
-      const along = Math.min(s.cruise, sp + s.accel * dt);
+      const along = Math.min(s.cruise + this.carried, sp + s.accel * dt);
       if (sp > 3) p.body.setLinvel({ x: (v.x / sp) * along, y: (v.y / sp) * along }, true);
       else p.body.setLinvel({ x: Math.cos(h) * along, y: Math.sin(h) * along }, true);
       return;
@@ -439,8 +449,9 @@ export class Missile extends Entity {
     let along = v.x * hx + v.y * hy;
     const sx = v.x - hx * along;
     const sy = v.y - hy * along;
-    along = along < s.cruise ? Math.min(s.cruise, along + s.accel * dt) : Math.max(s.cruise, along - s.accel * dt);
-    const k = Math.exp(-LIFT * dt);
+    const cruise = s.cruise + this.carried;
+    along = along < cruise ? Math.min(cruise, along + s.accel * dt) : Math.max(cruise, along - s.accel * dt);
+    const k = Math.exp(-(s.lift ?? LIFT) * dt);
     p.body.setLinvel({ x: hx * along + sx * k, y: hy * along + sy * k }, true);
   }
 
@@ -501,7 +512,10 @@ export class Missile extends Entity {
     const s = this.spec;
     const [k, most] = s.arc ?? (s.loft ? [LOFT, LOFT_MAX] : [0, 0]);
     if (!k || this.heatSeek) return 0;
-    return clamp((Math.abs(x - this.main.x) - LOFT_FROM) * k, 0, most);
+    // (a ballistic missile dives from as far off as its turn takes it round two of its circles (m: its speed over its
+    // turn rate, each): a fast one turning in from LOFT_FROM came down on a car too late, and went off in the ground past it)
+    const from = s.arc ? Math.max(LOFT_FROM, (ARC_FROM * s.cruise) / s.turn) : LOFT_FROM;
+    return clamp((Math.abs(x - this.main.x) - from) * k, 0, most);
   }
 
   /** What it's after now (a target's, a radar's lock), or null. */
@@ -956,6 +970,13 @@ function cellTop(p: Part, cell: number): V2 {
  * undo and copies; the menu makes it again the other way for its launch.
  */
 export abstract class GuidedLauncher extends Prop {
+  /** Loaded at once (0.5.1: ' reloads everything in a build): the reload's own end (its look, its sound) next step. */
+  rearm(): boolean {
+    if (this.loaded || this.destroyed) return false;
+    this.reload = Math.min(this.reload, 1e-3);
+    return true;
+  }
+
   readonly kind: MissileKind;
   readonly vertical: boolean;
   version: MissileVersion;
@@ -1094,19 +1115,22 @@ export abstract class GuidedLauncher extends Prop {
     ];
   }
 
-  protected serializeExtra(): Record<string, unknown> | undefined {
+  /**
+   * (Never nothing, loaded or not: a host tells its guests only of an extra that's
+   * there, and a guest's copy told it was reloading kept looking empty, its menu
+   * "Reloading…", once the host's had its next missile in.)
+   */
+  protected serializeExtra(): Record<string, unknown> {
     const x: Record<string, unknown> = {};
     if (!this.loaded) x.reload = this.reload;
     if (this.cell) x.cell = 1;
-    return Object.keys(x).length ? x : undefined;
+    return x;
   }
 
   protected restoreExtra(x: Record<string, unknown>): void {
     this.cell = x.cell === 1 ? 1 : 0;
-    if (typeof x.reload === 'number') {
-      this.loaded = false;
-      this.reload = clamp(x.reload, 0, RELOAD);
-    }
+    this.loaded = typeof x.reload !== 'number';
+    this.reload = this.loaded ? 0 : clamp(x.reload as number, 0, RELOAD);
     this.show();
   }
 }

@@ -8,6 +8,7 @@ import { ICBM_COUNT } from '../../entities/Missiles';
 import { ITEMS, getItem } from '../../catalog/items';
 import { WORLD_MAP } from '../../world/Maps';
 import { battleTanks } from '../../ui/ArmyPanel';
+import { saveToString, loadFromString } from '../../world/SaveLoad';
 
 /**
  * The 0.5.0 arsenal: the Ballistic and ICBM missiles, the heat-seeker launcher, the radar
@@ -231,6 +232,60 @@ export default function tests({ game, controls, kit }: TestCtx): Test[] {
       });
       kit.advance(0.2);
       if (!ces.wrecked && !ces.destroyed) return `the plane flew on (the missile ${m.destroyed ? 'went off' : 'still flying'})`;
+      return true;
+    })],
+    ['arsenal: (0.5.1) a radar-guided Ballistic, and an ICBM, wreck a car 120 m off (they overshot it into the ground)', () => tidy(() => {
+      for (const v of ['ballistic', 'icbm']) {
+        world();
+        const L = onGround('radar-launcher', 0, { config: { missile: v } }) as RadarLauncher;
+        const car = onGround('car', 120) as Car;
+        kit.advance(0.5);
+        // (a radar's lock on the car, without the radar)
+        L.fire({ kind: 'radar', radar: { destroyed: false, lockPoint: () => car.center(), lockEntity: () => car } });
+        const ms = flyingNow(`missile-radar-${v}`);
+        if (!ms.length) return `the ${v} launcher fired nothing`;
+        run(6, () => {
+          const up = ms.filter((m) => !m.destroyed);
+          if (up.length) {
+            r.camX = up[0].main.x;
+            r.camY = up[0].main.y;
+          }
+          return !up.length;
+        });
+        kit.advance(0.2);
+        if (!car.wrecked && !car.destroyed) return `the ${v} missiles missed the car (hp ${car.body.hp.toFixed(0)})`;
+      }
+      return true;
+    })],
+    ['arsenal: (0.5.1) a radar\'s lock survives save and load, and undo', () => tidy(() => {
+      kit.reset();
+      const radar = kit.spawn('radar', -10, (getItem('radar')?.halfHeight ?? 1) + 0.05) as Radar;
+      const car = kit.spawn('car', 15, 0.8) as Car;
+      kit.advance(0.5);
+      controls.selection = new Set([radar]);
+      kit.view(0, 5, 20);
+      kit.key('KeyF', true);
+      run(2, () => {
+        game.cursor = car.center();
+        return !!radar.lock;
+      });
+      kit.key('KeyF', false);
+      controls.clearSelection();
+      if (radar.lock !== car) return 'the radar didn\'t lock the car';
+      const locked = () => {
+        const rd = game.entities.find((e) => e.def.id === 'radar' && !e.destroyed) as Radar | undefined;
+        return rd?.lockEntity()?.def.id ?? 'nothing';
+      };
+      loadFromString(game, saveToString(game));
+      kit.advance(0.3);
+      if (locked() !== 'car') return `saved and loaded, it's locked on ${locked()}`;
+      controls.history.clear();
+      controls.history.record('Box');
+      kit.spawn('metal-box', 0, 3);
+      kit.advance(0.1);
+      controls.undo();
+      kit.advance(0.3);
+      if (locked() !== 'car') return `undone, it's locked on ${locked()}`;
       return true;
     })],
     ['arsenal: the T-90A is a tank a side can bring', () => {

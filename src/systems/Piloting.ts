@@ -151,8 +151,8 @@ function isDecoupler(e: Entity): e is Entity & { fired: boolean; readonly decoup
 }
 
 /** A pilot's one-off orders (0.4.0): the next stage, stability assist, the landing gear, the parachutes, ejecting. */
-export type PilotCommand = 'stage' | 'assist' | 'gear' | 'chutes' | 'eject' | 'lights' | 'horn' | 'autopilot' | 'bombs' | 'flares' | 'rockets';
-export const PILOT_COMMANDS: PilotCommand[] = ['stage', 'assist', 'gear', 'chutes', 'eject', 'lights', 'horn', 'autopilot', 'bombs', 'flares', 'rockets'];
+export type PilotCommand = 'stage' | 'assist' | 'gear' | 'flaps' | 'chutes' | 'eject' | 'lights' | 'horn' | 'autopilot' | 'bombs' | 'flares' | 'rockets' | 'missiles' | 'reload';
+export const PILOT_COMMANDS: PilotCommand[] = ['stage', 'assist', 'gear', 'flaps', 'chutes', 'eject', 'lights', 'horn', 'autopilot', 'bombs', 'flares', 'rockets', 'missiles', 'reload'];
 
 /** Something a pilot's orders reach (see PilotCommand): legs and gear, parachutes, ejection seats. */
 export interface Commanded {
@@ -702,6 +702,7 @@ export class Piloting {
    * heard it. The next stage fires every part of the lowest stage number not yet fired.
    */
   command(sel: readonly Entity[], cmd: PilotCommand): boolean {
+    if (cmd === 'reload') return this.reload(sel) > 0;
     // (an aircraft's its own: see entities/Planes; a guest's order to one comes here)
     const air = sel.filter((e): e is Entity & { pilotCommand(c: PilotCommand): boolean } => (e as { aircraft?: boolean }).aircraft === true);
     if (air.length) return air.map((a) => a.pilotCommand(cmd)).some(Boolean);
@@ -725,6 +726,19 @@ export class Piloting {
     let heard = false;
     for (const e of c.commanded) if (!e.destroyed && e.pilotCommand(cmd)) heard = true;
     return heard;
+  }
+
+  /**
+   * Everything that fires in `sel` and in what it's built with or holds loaded again at once
+   * (0.5.1: '): guns, launchers, pods, bomb bays, flares, an aircraft's stores. How many were.
+   */
+  reload(sel: readonly Entity[]): number {
+    let n = 0;
+    for (const e of this.game.connections.assemblyOf(sel, false)) {
+      const r = (e as { rearm?: () => boolean }).rearm;
+      if (typeof r === 'function' && !e.destroyed && r.call(e)) n++;
+    }
+    return n;
   }
 
   /**
